@@ -157,7 +157,7 @@ namespace Dotnetarium.Config
                     .Select(method =>
                         ((MethodMatcher)((name, args) => name == method.Name &&
                             (!method.ArgumentCount.HasValue || args.Length == method.ArgumentCount.Value)),
-                         method.InOut.Where(pair => pair.outArgumentName != TaintedTargetValue.Return)
+                         method.InOut
                                      .Select(pair => (pair.inArgumentName, pair.outArgumentName))
                                      .ToImmutableHashSet()))
                     .ToImmutableHashSet();

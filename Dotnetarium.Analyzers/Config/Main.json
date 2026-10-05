@@ -1282,6 +1282,11 @@
       ]
     },
     {
+      "Type": "Microsoft.AspNetCore.Authentication.AuthenticationProperties",
+      "TaintTypes": [ "OpenRedirect" ],
+      "Properties": [ "RedirectUri" ]
+    },
+    {
       "Type": "Microsoft.AspNetCore.Http.HttpResponse",
       "TaintTypes": [
         "OpenRedirect"

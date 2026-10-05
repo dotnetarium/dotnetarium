@@ -185,6 +185,10 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 foreach (IOperation childOperation in operation.Children)
                 {
                     TaintedDataAbstractValue childValue = Visit(childOperation, argument);
+                    // Predicate inputs select a record; they are not its payload.
+                    if (operation is IInvocationOperation invocation && childOperation is IArgumentOperation input &&
+                        IsSelectionPredicate(invocation, input))
+                        continue;
                     if (childValue.Kind == TaintedDataAbstractValueKind.Tainted)
                     {
                         if (taintedValues == null)
@@ -211,6 +215,22 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 {
                     return ValueDomain.UnknownOrMayBeValue;
                 }
+            }
+
+            private static bool IsSelectionPredicate(IInvocationOperation invocation, IArgumentOperation argument) =>
+                argument.Parameter?.Name == "predicate" &&
+                invocation.TargetMethod.ContainingType.ToDisplayString() is "System.Linq.Enumerable" or "System.Linq.Queryable" &&
+                invocation.TargetMethod.Name is "Where" or "First" or "FirstOrDefault" or "Single" or "SingleOrDefault" or "Last" or "LastOrDefault";
+
+            public override TaintedDataAbstractValue ComputeValueForCompoundAssignment(
+                ICompoundAssignmentOperation operation, TaintedDataAbstractValue targetValue,
+                TaintedDataAbstractValue assignedValue, ITypeSymbol? targetType, ITypeSymbol? assignedValueType)
+            {
+                if (operation.OperatorKind == BinaryOperatorKind.Add && operation.OperatorMethod == null &&
+                    targetType?.SpecialType == SpecialType.System_String)
+                    return ValueDomain.Merge(targetValue, ShouldSanitizeConversion(SpecialType.System_String, operation.Value)
+                        ? TaintedDataAbstractValue.NotTainted : assignedValue);
+                return base.ComputeValueForCompoundAssignment(operation, targetValue, assignedValue, targetType, assignedValueType);
             }
 
             private bool ShouldSanitizeConversion(SpecialType type, IOperation operand)
@@ -324,6 +344,9 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
 
             protected override TaintedDataAbstractValue ComputeAnalysisValueForReferenceOperation(IOperation operation, TaintedDataAbstractValue defaultValue)
             {
+                // Also applies to identifiers inside request DTOs and Nullable<Guid>.
+                if (TaintedDataSymbolMapExtensions.IsGuidIdentifier(operation.Type))
+                    return TaintedDataAbstractValue.NotTainted;
                 // If the property/field reference itself is a tainted data source
                 if (operation is IPropertyReferenceOperation propertyReferenceOperation
                     && this.DataFlowAnalysisContext.SourceInfos.IsSourceProperty(propertyReferenceOperation))
@@ -413,6 +436,17 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
 
                 ProcessTaintedDataEnteringInvocationOrCreation(method, visitedArguments, taintedArguments, originalOperation);
 
+                // Filtering does not copy predicate inputs into a row. Projection
+                // does copy the selector's returned payload, including captures.
+                if (method.ContainingType.ToDisplayString() is "System.Linq.Enumerable" or "System.Linq.Queryable" &&
+                    method.Name == "Select")
+                {
+                    foreach (var selector in visitedArguments.Where(input => input.Parameter?.Name == "selector"))
+                        foreach (var lambda in selector.Value.DescendantsAndSelf().OfType<IFlowAnonymousFunctionOperation>())
+                            result = ValueDomain.Merge(result, VisitInvocation_Lambda(lambda,
+                                ImmutableArray<IArgumentOperation>.Empty, selector.Value, ValueDomain.UnknownOrMayBeValue));
+                }
+
                 PooledHashSet<string>? taintedTargets = null;
                 PooledHashSet<(string, string)>? taintedParameterPairs = null;
                 PooledHashSet<(string, string)>? sanitizedParameterPairs = null;
@@ -483,6 +517,15 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                     {
                         foreach ((string ifTaintedParameter, string thenTaintedTarget) in taintedParameterPairs)
                         {
+                            var sourceValue = this.GetCachedAbstractValue(
+                                visitedInstance != null && ifTaintedParameter == TaintedTargetValue.This
+                                    ? visitedInstance
+                                    : visitedArguments.First(o => o.Parameter.Name == ifTaintedParameter));
+                            if (thenTaintedTarget == TaintedTargetValue.Return)
+                            {
+                                result = ValueDomain.Merge(result, sourceValue);
+                                continue;
+                            }
                             IOperation thenTaintedTargetOperation = visitedInstance != null && thenTaintedTarget == TaintedTargetValue.This
                                 ? visitedInstance
                                 : visitedArguments.FirstOrDefault(o => o.Parameter.Name == thenTaintedTarget);
@@ -490,10 +533,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                             {
                                 SetTaintedForEntity(
                                     thenTaintedTargetOperation,
-                                    this.GetCachedAbstractValue(
-                                        visitedInstance != null && ifTaintedParameter == TaintedTargetValue.This
-                                            ? visitedInstance
-                                            : visitedArguments.FirstOrDefault(o => o.Parameter.Name == ifTaintedParameter)));
+                                    sourceValue);
                             }
                             else
                             {

@@ -246,6 +246,9 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
         /// <returns></returns>
         public static bool IsSourceParameter(this TaintedDataSymbolMap<SourceInfo> sourceSymbolMap, IParameterSymbol parameterSymbol, WellKnownTypeProvider wellKnownTypeProvider)
         {
+            // Injection entry points treat strongly typed identifiers as selectors.
+            // A separately modeled stored string payload remains an independent source.
+            if (IsGuidIdentifier(parameterSymbol.Type)) return false;
             ISymbol containingSymbol = parameterSymbol.ContainingSymbol;
             foreach (SourceInfo sourceInfo in sourceSymbolMap.GetInfosForType(containingSymbol.ContainingType))
             {
@@ -256,6 +259,14 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
             }
 
             return false;
+        }
+
+        internal static bool IsGuidIdentifier(ITypeSymbol? type)
+        {
+            if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+                type = nullable.TypeArguments[0];
+            return type?.Name == "Guid" && type.ContainingNamespace?.ToDisplayString() == "System" &&
+                type.ContainingAssembly?.Identity.Name is "System.Private.CoreLib" or "System.Runtime" or "mscorlib";
         }
 
         /// <summary>

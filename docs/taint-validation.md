@@ -192,3 +192,85 @@ coverage limitation. The synthetic console-input probe demonstrated incomplete
 analysis, but did not establish an attack against the normal game-launch workflow.
 Do not raise the global budget or treat all operator-supplied game commands as
 untrusted solely to recover that synthetic finding.
+
+## Identifier selection and URL/file boundaries
+
+The LANCommander finding review led to these shared engine policies. They apply
+to both the main scanner and the build-independent loading experiment.
+
+| Pattern | Scanner behavior |
+| --- | --- |
+| `Guid`, `Guid?`, or a GUID member inside a request DTO | Treated as a strongly typed identifier, not an injection payload. Lookup and standard-conversion results do not acquire taint solely from that identifier. |
+| LINQ/EF Core `Where`, `First[OrDefault]`, `Single[OrDefault]`, or `Last[OrDefault]` predicate | Predicate inputs select records; they do not become the returned record's stored contents. Existing taint in the collection is retained. |
+| LINQ `Select` returning a captured request string | The projected payload remains tainted. Inline selector return values are analyzed under the existing interprocedural limits. |
+| Explicit stored-content source model | Remains a source even when a GUID selects the content. There is no blanket database sanitizer or automatic stored-content source. |
+| Redirect to `/Login?ReturnUrl=` plus request data | Fixed local destination; no open-redirect warning at this sink. This does not validate a later redirect that consumes the query value. |
+| Appending strings to a fixed redirect destination with `+=` or `url = url + suffix` | Preserves the destination proof. Replacement, prepending, ref aliases and tuple mutation invalidate it. String appends elsewhere preserve payload taint. |
+| Redirect to a complete literal HTTP(S) origin followed by a path | Appended data does not change the authority. A bare host prefix without a terminating path boundary is insufficient. |
+| Redirect beginning with only `/`, `//`, backslash ambiguity, or control characters | Remains reportable. Dynamic configured origins are not assumed to be validated HTTP(S) URLs. |
+| `AuthenticationProperties.RedirectUri = requestValue` | A default DNA0005 sink at the authentication state boundary. A consuming `IsLocalUrl` guard or a fixed destination can establish safety. |
+| Guarded filename combined with a constant root | Accepted only when guards reject `..` and platform-invalid filename characters, or both slash forms and `:`. Ignored checks, mutation and a separately tainted root do not establish safety. |
+| `Path.GetFileName` or `Path.GetFullPath` alone | Normalization does not establish the required boundary. |
+| Environment-selected data root or executable discovered through `PATH` | Local-only input scope; no automatic privilege or deployment-permission inference. |
+
+The identifier policy is intentional: these rules target injection payloads,
+not unauthorized record selection or transformations of typed identifiers.
+String DTO members, request filenames, request paths, and independently modeled
+stored content retain their own taint. An explicit `.Return` transfer preserves
+the specified input's taint rather than relying on an opaque call's fallback.
+
+For authentication returns, validate the actual value before storing it:
+
+```csharp
+if (!Url.IsLocalUrl(returnUrl))
+    return BadRequest();
+
+properties.RedirectUri = returnUrl;
+```
+
+For filenames under a fixed root, consume complete checks before use:
+
+```csharp
+if (name.Contains("..") ||
+    name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+    return BadRequest();
+
+var path = Path.Combine("/srv/uploads/", name);
+```
+
+Use canonical containment when subdirectories are allowed. Ensure the storage
+root is trusted and not writable by an attacker who can introduce symlinks or
+junctions. Cross-callback execution and arbitrary validation helpers remain
+outside these local proofs; use explicit local validation or a narrowly scoped
+reviewed suppression rather than declaring all file/database results safe.
+
+### Precision verification (2026-10-05)
+
+Both scanner branches pass all 815 unit tests, including fixtures compiled
+against real ASP.NET Core and EF Core APIs. The installed analyzer package and
+CLI agree on the .NET 8 and .NET 10 fixture in
+`tests/TaintPrecisionSmoke/Test.ps1`: four path flows, two redirect flows, no
+GUID-origin reports or analyzer crashes. Main loading has complete coverage for
+this fixture. Direct loading intentionally reports partial coverage because it
+does not execute the installed dependency analyzer package.
+
+The final main-scanner run used the same unchanged LANCommander revision cited
+above, with the existing 10,000-work budget and migration exclusions:
+
+| Scope | Previous findings | Findings | Cutoffs | Time | Peak process memory |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Remote | 22 | 13 | 1,886 | 73.1 s | 1.38 GiB |
+| Remote and local | 27 | 18 | 1,690 | 97.9 s | 2.98 GiB |
+
+Fourteen previous remote flows disappeared: eleven GUID-origin flows and three
+fixed-destination redirects. Eight previous flows remain and five unchecked
+authentication return-URL assignments are newly reported. The five local-only
+finding identities are unchanged. The fixed login URL built with `+=` is not
+reported; separately supplied server paths, upload filenames and launcher paths
+remain reportable.
+
+Both corpus runs analyzed 32 project compilations and remain partial because of
+project-loading/compiler errors and analysis budgets. These cutoff counts are
+coverage notices, not counts of missed vulnerabilities. This precision change
+does not establish complete analysis or meet the earlier 60-second performance
+target for the full corpus.

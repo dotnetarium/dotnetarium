@@ -142,6 +142,7 @@ public sealed partial class SinkCoverageTests
         yield return P("System.DirectoryServices.DirectoryEntry", "DNA0006", "Path", "new System.DirectoryServices.DirectoryEntry(\"fixed\").Path = input;");
 
         yield return M("Microsoft.AspNetCore.Http.HttpResponse", "DNA0005", "Redirect", "new Microsoft.AspNetCore.Http.DefaultHttpContext().Response.Redirect(input);");
+        yield return P("Microsoft.AspNetCore.Authentication.AuthenticationProperties", "DNA0005", "RedirectUri", "new Microsoft.AspNetCore.Authentication.AuthenticationProperties().RedirectUri = input;");
         foreach (var member in new[] { "Redirect", "RedirectPermanent", "RedirectPreserveMethod", "RedirectPermanentPreserveMethod" })
         {
             yield return M("Microsoft.AspNetCore.Mvc.ControllerBase", "DNA0005", member, $"_ = {member}(input);");

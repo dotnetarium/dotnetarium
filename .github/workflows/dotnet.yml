@@ -52,6 +52,9 @@ jobs:
       - name: Scan through installed global tool
         shell: pwsh
         run: ./tests/CliSmoke/Test.ps1
+      - name: Check identifier and boundary precision on .NET 8 and 10
+        shell: pwsh
+        run: ./tests/TaintPrecisionSmoke/Test.ps1 -ExperimentalDirect
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dotnetarium-2-packages
@@ -95,3 +98,6 @@ jobs:
       - name: Scan with lowercase project config
         shell: pwsh
         run: ./tests/CliSmoke/Test.ps1
+      - name: Check identifier and boundary precision on .NET 8 and 10
+        shell: pwsh
+        run: ./tests/TaintPrecisionSmoke/Test.ps1 -ExperimentalDirect

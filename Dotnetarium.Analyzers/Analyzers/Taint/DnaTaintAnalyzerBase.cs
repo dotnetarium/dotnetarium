@@ -129,10 +129,12 @@ namespace Dotnetarium.Analyzers.Taint
                     if (!IsSinkRelevant(pair.Sink.Location, block.Compilation)) continue;
                     if (BoundaryValidation.HasConstantAllowlist(pair.Sink.Location, block.Compilation)) continue;
                     if (kind == (SinkKind)(int)TaintType.PathEscape && BoundaryValidation.HasCanonicalPathRoot(pair.Sink.Location, block.Compilation)) continue;
+                    if (kind == (SinkKind)(int)TaintType.PathEscape && BoundaryValidation.HasValidatedFileName(pair.Sink.Location, block.Compilation)) continue;
                     if (kind == (SinkKind)(int)TaintType.ServerSideRequestForgery && BoundaryValidation.HasFixedRequestAuthority(pair.Sink.Location, block.Compilation)) continue;
 
                     if (kind == (SinkKind)(int)TaintType.OpenRedirect &&
-                        LocalRedirectGuard.Protects(pair.Sink.Location, block.Compilation))
+                        (LocalRedirectGuard.Protects(pair.Sink.Location, block.Compilation) ||
+                         BoundaryValidation.HasFixedRedirectDestination(pair.Sink.Location, block.Compilation)))
                         continue;
 
                     foreach (var origin in pair.SourceOrigins)

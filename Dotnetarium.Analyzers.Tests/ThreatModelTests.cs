@@ -10,6 +10,39 @@ namespace Dotnetarium.Analyzers.Tests;
 
 public sealed class ThreatModelTests
 {
+    [Fact]
+    public async Task Explicit_return_transfer_is_applied_to_a_readable_callee()
+    {
+        var findings = await Analyze("""
+            using Microsoft.AspNetCore.Mvc;
+            public class Mapper { public string Map(string value) => "fixed"; }
+            public class DemoController : ControllerBase {
+                public void Read(string input) => System.IO.File.ReadAllText(new Mapper().Map(input));
+            }
+            """, models: """
+            "Transfers":[{"Type":"Mapper","Methods":[{"Name":"Map","InOut":[{"value":".Return"}]}]}]
+            """, analyzer: new PathTraversalTaintAnalyzer());
+        Assert.Single(findings);
+    }
+
+    [Theory]
+    [InlineData("\"TaintSources\":[{\"Type\":\"IRepository\",\"IsInterface\":true,\"Methods\":[\"Get\"]}]")]
+    public async Task Explicit_stored_payload_models_override_identifier_lookup_defaults(string models)
+    {
+        var findings = await Analyze("""
+            using System;
+            using System.IO;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IRepository { string Get(Guid id); }
+            public class DemoController : ControllerBase {
+                private readonly IRepository repository;
+                public DemoController(IRepository repository) => this.repository = repository;
+                public void Read(Guid id) => System.IO.File.ReadAllText(repository.Get(id));
+            }
+            """, models: models, analyzer: new PathTraversalTaintAnalyzer());
+        Assert.Single(findings);
+    }
+
     [Theory]
     [InlineData(null, 1)]
     [InlineData("remote", 1)]

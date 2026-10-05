@@ -38,6 +38,7 @@ public sealed partial class SinkCoverageTests
         new("System.DirectoryServices.DirectorySearcher", "DNA0006", "_ = new System.DirectoryServices.DirectorySearcher(input);"),
         new("System.DirectoryServices.DirectoryEntry", "DNA0006", "_ = new System.DirectoryServices.DirectoryEntry(input);"),
         new("Microsoft.AspNetCore.Http.HttpResponse", "DNA0005", "new Microsoft.AspNetCore.Http.DefaultHttpContext().Response.Redirect(input);"),
+        new("Microsoft.AspNetCore.Authentication.AuthenticationProperties", "DNA0005", "new Microsoft.AspNetCore.Authentication.AuthenticationProperties().RedirectUri = input;"),
         new("Microsoft.AspNetCore.Mvc.ControllerBase", "DNA0005", "_ = Redirect(input);"),
         new("Microsoft.AspNetCore.Mvc.RazorPages.PageModel", "DNA0005", "_ = new TestPage().DoRedirect(input);"),
         new("Microsoft.AspNetCore.Mvc.RedirectResult", "DNA0005", "_ = new Microsoft.AspNetCore.Mvc.RedirectResult(input);"),

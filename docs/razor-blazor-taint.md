@@ -39,3 +39,10 @@ metadata-only child components, and arbitrary JavaScript interop input are not
 currently summarized. State across possible events is conservative: a separate
 reset handler cannot prove that every future render is clean. Prefer encoded
 output instead of relying on callback ordering to make raw HTML safe.
+
+For stored chat/article content, Markdown transfers, explicit property-source
+contracts and CLI generator coverage, see [stored HTML and Markdown](stored-html.md).
+The CLI uses Roslyn 5.9 for current SDK generator compatibility and reports
+analyzer/generator assembly load failures as incomplete coverage. The analyzer
+package keeps its Roslyn 5.0 minimum. Mapped console/SARIF locations point to
+Razor source; hidden generated sections retain physical C# locations.

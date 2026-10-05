@@ -119,6 +119,12 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 yield break;
             }
 
+            // C# 14 extension blocks expose members on a synthetic extension
+            // declaration. Models name the enclosing static class, just as for
+            // classic extension methods. Ordinary nested types are unrelated.
+            if (namedTypeSymbol.IsExtension && namedTypeSymbol.ContainingType is { } extensionContainer)
+                namedTypeSymbol = extensionContainer;
+
             if (!this.InterfaceInfos.IsEmpty)
             {
                 if (namedTypeSymbol.TypeKind == TypeKind.Interface

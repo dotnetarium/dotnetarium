@@ -59,6 +59,7 @@ internal static class Program
             await Parallel.ForEachAsync(inputs.Projects,
                 new ParallelOptions { MaxDegreeOfParallelism = projectConcurrency }, async (project, cancellationToken) =>
             {
+                GeneratorCoverage.Observe(project, report);
                 Compilation? compilation;
                 try { compilation = await project.GetCompilationAsync(); }
                 catch (Exception error) when (error is not OperationCanceledException)
@@ -164,7 +165,7 @@ internal static class Program
                 await SarifWriter.WriteAsync(options.SarifPath, target, findings, report,
                     options.ExperimentalDirect ? "direct" : "project");
             if (inventory != null) await inventory.WriteAsync(options.InputInventoryPath!, report, inputs);
-            if (report.HasFailures) return 2;
+            if (report.HasIncompleteAnalysis) return 2;
             return options.Fail && findings.Length > 0 ? 1 : 0;
         }
         catch (System.Text.Json.JsonException error)

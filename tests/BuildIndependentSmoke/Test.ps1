@@ -122,12 +122,13 @@ $budgetConfig = Join-Path $budgetRoot 'dotnetarium.json'
 & dotnet restore $budgetProject --nologo -v quiet 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Budget fixture restore failed.' }
 foreach ($budgetDirect in @($false, $true)) {
-    $budgetReport = Scan $budgetProject $budgetDirect 1 $true @('--config', $budgetConfig)
+    $budgetReport = Scan $budgetProject $budgetDirect 2 $true @('--config', $budgetConfig)
     $budgetFindings = @($budgetReport.runs[0].results)
     if ($budgetFindings.Count -ne 2 -or @($budgetFindings | Where-Object ruleId -eq 'DNA0002').Count -ne 1 -or
         @($budgetFindings | Where-Object ruleId -eq 'DNA0014').Count -ne 1 -or
         -not (HasNotice $budgetReport 'analysis-budget') -or
-        $budgetReport.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'partial') {
+        $budgetReport.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'partial' -or
+        $budgetReport.runs[0].invocations[0].executionSuccessful -ne $false) {
         throw 'Budget exhaustion lost independent findings or was not represented as partial coverage.'
     }
     $budgetNotice = @($budgetReport.runs[0].invocations[0].toolExecutionNotifications |
@@ -470,3 +471,4 @@ if (@($generatorAware.inputInventory.projects[0].sources | Where-Object origin -
 & (Join-Path $PSScriptRoot '../ThreatModelSmoke/Test.ps1') -ToolDll $ToolDll -ExperimentalDirect
 
 "Build-independent CLI checks passed. Reports and logs: $scratch" | Write-Output
+exit 0

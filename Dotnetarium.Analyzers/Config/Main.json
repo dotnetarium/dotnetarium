@@ -156,6 +156,10 @@
     }
   },
   "TaintSources": [
+    {
+      "Type": "SharpCompress.Common.IEntry", "IsInterface": true,
+      "Scope": "independent", "TaintTypes": [ "PathEscape" ], "Properties": [ "Key" ]
+    },
     { "Type": "Microsoft.AspNetCore.Http.EndpointFilterInvocationContext", "Scope": "remote", "Properties": [] },
     { "Type": "System.Collections.Generic.IList`1", "Scope": "remote", "IsInterface": true, "Properties": [] },
     { "Type": "MassTransit.ConsumeContext`1", "Scope": "remote", "IsInterface": true, "Properties": [] },
@@ -316,6 +320,13 @@
     }
   ],
   "Sanitizers": [
+    {
+      "Type": "System.Net.WebUtility", "TaintTypes": [ "CrossSiteScripting" ],
+      "Methods": [
+        { "Name": "HtmlEncode", "ArgumentCount": 1 },
+        { "Name": "HtmlEncode", "ArgumentCount": 2, "InOut": [ { "value": "output" } ] }
+      ]
+    },
     {
       "Type": "Microsoft.Security.Application.Encoder",
       "TaintTypes": [
@@ -926,6 +937,13 @@
     }
   ],
   "Transfers": [
+    {
+      "Type": "Markdig.Markdown",
+      "Methods": [
+        { "Name": "ToHtml", "InOut": [ { "markdown": ".Return" }, { "document": ".Return" }, { "markdown": "writer" }, { "document": "writer" } ] },
+        { "Name": "Parse", "InOut": [ { "markdown": ".Return" } ] }
+      ]
+    },
     {
       "Type": "System.Net.WebSockets.WebSocket",
       "Methods": [ { "Name": "ReceiveAsync", "InOut": [ { ".This": "buffer" } ] } ]
@@ -1828,6 +1846,27 @@
             "destinationDirectoryName"
           ]
         }
+      ]
+    },
+    {
+      "Type": "SharpCompress.Archives.IArchiveEntryExtensions", "TaintTypes": [ "PathEscape" ],
+      "Methods": [
+        { "Name": "WriteToFile", "Arguments": [ "destinationFileName" ] },
+        { "Name": "WriteToFileAsync", "Arguments": [ "destinationFileName" ] }
+      ]
+    },
+    {
+      "Type": "SharpCompress.Readers.IReaderExtensions", "TaintTypes": [ "PathEscape" ],
+      "Methods": [
+        { "Name": "WriteEntryToFile", "Arguments": [ "destinationFileName" ] },
+        { "Name": "WriteEntryTo", "Arguments": [ "filePath" ] }
+      ]
+    },
+    {
+      "Type": "SharpCompress.Readers.IAsyncReaderExtensions", "TaintTypes": [ "PathEscape" ],
+      "Methods": [
+        { "Name": "WriteEntryToFileAsync", "Arguments": [ "destinationFileName" ] },
+        { "Name": "WriteEntryToAsync", "Arguments": [ "destinationFileName", "destinationFileInfo" ] }
       ]
     },
     {

@@ -947,7 +947,10 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 taintedParameterPairs = null;
                 PointsToAnalysisResult? pointsToAnalysisResult = null;
                 ValueContentAnalysisResult? valueContentAnalysisResult = null;
-                foreach (SanitizerInfo sanitizerInfo in this.DataFlowAnalysisContext.SanitizerInfos.GetInfosForType(receiverType ?? method.ContainingType))
+                // An extension block's receiver does not own its methods. Use
+                // the extension container contract, not a same-named receiver API.
+                var sanitizerType = method.ContainingType.IsExtension ? method.ContainingType : receiverType ?? method.ContainingType;
+                foreach (SanitizerInfo sanitizerInfo in this.DataFlowAnalysisContext.SanitizerInfos.GetInfosForType(sanitizerType))
                 {
                     if (method.MethodKind == MethodKind.Constructor
                         && sanitizerInfo.IsConstructorSanitizing)

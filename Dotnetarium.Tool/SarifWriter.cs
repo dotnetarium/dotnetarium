@@ -48,7 +48,7 @@ internal static class SarifWriter
     {
         json.WriteStartArray("invocations");
         json.WriteStartObject();
-        json.WriteBoolean("executionSuccessful", !report.HasFailures);
+        json.WriteBoolean("executionSuccessful", !report.HasIncompleteAnalysis);
         json.WriteStartObject("properties");
         json.WriteString("dotnetarium.loadingMode", loadingMode);
         json.WriteString("dotnetarium.coverage", report.IsPartial ? "partial" : "complete");

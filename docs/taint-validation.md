@@ -246,6 +246,9 @@ reviewed suppression rather than declaring all file/database results safe.
 
 ### Precision verification (2026-10-05)
 
+This is the corpus snapshot before the later Markdown/archive and generator
+loading follow-up below; it is not a scan with the updated CLI Roslyn runtime.
+
 Both scanner branches pass all 846 unit tests, including fixtures compiled
 against real ASP.NET Core and EF Core APIs. The installed analyzer package and
 CLI agree on the .NET 8 and .NET 10 fixture in
@@ -344,8 +347,8 @@ policy checks; suppressing GUID overtaint does not dismiss them.
 
 | Lead | Scanner assessment / proposed next step |
 | --- | --- |
-| Stored chat Markdown/raw HTML | Highest-value follow-up. The existing XSS rule detects a modeled source through Markdig and `MarkupString`. Stored message content needs an explicit source contract or a bounded write/read summary; do not taint all database strings. |
-| Archive import path escape | High-value API gap. Add SharpCompress entry-key sources and direct-file extraction sinks, with real-library containment negatives. C# extension-block methods also need normalized containing-type matching. |
+| Stored chat Markdown/raw HTML | Explicit source-contract recipe and real-library/component tests added; Markdig transfers and HTML encoding are modeled. Automatic persistence correlation remains outside scope; do not taint all database strings. |
+| Archive import path escape | SharpCompress entry-key sources and direct-file extraction sinks added, with real-library containment negatives. C# extension-block model matching covers sinks, sources, transfers and sanitizers. |
 | Anonymous logging hub | Authorization review, not a default missing-attribute vulnerability. Effective fallback policies, route groups, middleware and intended public access must be considered. |
 | Known-GUID anonymous archive download | Authorization/capability policy review. A GUID is not assumed guessable and remains safe for injection analysis. |
 | Credentialed unrestricted CORS | A focused configuration rule can detect an always-true origin predicate plus credentials on the same policy; effective authentication/cookie behavior still determines impact. |
@@ -371,8 +374,30 @@ as traversal or infer remote code execution from an adjacent-file write.
 A separate Razor coverage experiment found a loader limitation: the installed
 analyzer reported modeled stored-content and query-input flows across source
 components, while the main CLI did not report those same generated-component
-flows. The real LANCommander UI load was partial due to its frontend build step.
-The isolated discrepancy needs a generated-code/diagnostic loading investigation;
-it does not establish that the component taint engine itself cannot propagate
-the flow. This PR does not resolve that independent loader gap or implement the
-new library/configuration candidates listed above.
+flows. The .NET 10.0.401 SDK's Razor generator was rejected with
+`ReferencesNewerCompiler` by the tool's Roslyn 5.0 runtime. Updating the CLI
+runtime to 5.9 restored the same two isolated flows. Generator load failures now
+produce a partial-coverage notice and exit 2; CLI/SARIF locations use Razor source
+mapping. The analyzer package retains its Roslyn 5.0 minimum.
+
+`tests/MarkupArchiveSmoke/Test.ps1` compares the installed analyzer and CLI on
+.NET 8/10: three HTML flows, three archive flows, safe encoding/directory and
+canonical-containment controls, mapped Razor locations and a broken-generator
+negative coverage check. The same test runs on Windows and Linux CI. The 35
+dedicated unit cases use real Markdig and SharpCompress assemblies and verify
+extension-block models without matching unrelated nested types or borrowing
+receiver contracts. Ten compiled inventory witnesses cover every new sink type,
+member and additional argument, including the FileInfo overload.
+
+The real LANCommander UI still has a separate frontend build-step failure; this
+follow-up does not claim a complete scan of that application. Automatic stored
+write/read correlation, endpoint authorization policies, CORS/OIDC configuration
+rules and blanket mutable HTML-sanitizer trust are not implemented in this slice.
+The build-independent loader still requires supplied generated C# and reports
+its generation limitation. See [stored HTML and Markdown](stored-html.md).
+
+Both branches pass 891 unit tests. Installed analyzer/global-tool checks pass
+on .NET 8/10, including the shared Markdown/archive fixture and existing CLI
+scope, relative-SARIF and compiler-error checks. The experimental branch also
+aligns budget-cutoff exit code 2 and SARIF `executionSuccessful: false` with the
+main scanner; unrelated direct-loading coverage notices retain their policy.

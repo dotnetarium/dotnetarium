@@ -41,7 +41,8 @@ public sealed partial class SinkCoverageTests
         new("System.IO.File", "Move", "destFileName", "System.IO.File.Move(\"fixed\", input);"),
         new("System.IO.File", "Replace", "destinationFileName", "System.IO.File.Replace(\"fixed\", input, \"backup\");"),
         new("System.IO.File", "Replace", "destinationBackupFileName", "System.IO.File.Replace(\"fixed\", \"destination\", input);"),
-        new("System.IO.FileInfo", "Replace", "destinationBackupFileName", "_ = new System.IO.FileInfo(\"fixed\").Replace(\"destination\", input);")
+        new("System.IO.FileInfo", "Replace", "destinationBackupFileName", "_ = new System.IO.FileInfo(\"fixed\").Replace(\"destination\", input);"),
+        new("SharpCompress.Readers.IAsyncReaderExtensions", "WriteEntryToAsync", "destinationFileInfo", "_ = SharpCompress.Readers.IAsyncReaderExtensions.WriteEntryToAsync((SharpCompress.Readers.IAsyncReader)null!, new System.IO.FileInfo(input));")
     ];
 
     [Fact]
@@ -91,6 +92,15 @@ public sealed partial class SinkCoverageTests
 
     private static IEnumerable<MemberProbe> CreateMemberProbes()
     {
+        foreach (var member in new[] { "WriteToFile", "WriteToFileAsync" })
+            yield return M("SharpCompress.Archives.IArchiveEntryExtensions", "DNA0004", member,
+                $"{(member.EndsWith("Async", StringComparison.Ordinal) ? "_ = " : "")}SharpCompress.Archives.IArchiveEntryExtensions.{member}((SharpCompress.Archives.IArchiveEntry)null!, input);");
+        foreach (var member in new[] { "WriteEntryToFile", "WriteEntryTo" })
+            yield return M("SharpCompress.Readers.IReaderExtensions", "DNA0004", member,
+                $"SharpCompress.Readers.IReaderExtensions.{member}((SharpCompress.Readers.IReader)null!, input);");
+        foreach (var member in new[] { "WriteEntryToFileAsync", "WriteEntryToAsync" })
+            yield return M("SharpCompress.Readers.IAsyncReaderExtensions", "DNA0004", member,
+                $"_ = SharpCompress.Readers.IAsyncReaderExtensions.{member}((SharpCompress.Readers.IAsyncReader)null!, input);");
         static MemberProbe M(string type, string rule, string member, string statement) =>
             new(type, rule, "M", member, statement);
         static MemberProbe P(string type, string rule, string member, string statement) =>

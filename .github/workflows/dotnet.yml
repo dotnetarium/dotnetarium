@@ -55,6 +55,9 @@ jobs:
       - name: Check identifier and boundary precision on .NET 8 and 10
         shell: pwsh
         run: ./tests/TaintPrecisionSmoke/Test.ps1 -ExperimentalDirect
+      - name: Check Markdown, archive extraction and generated Razor CLI coverage
+        shell: pwsh
+        run: ./tests/MarkupArchiveSmoke/Test.ps1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dotnetarium-2-packages
@@ -101,3 +104,6 @@ jobs:
       - name: Check identifier and boundary precision on .NET 8 and 10
         shell: pwsh
         run: ./tests/TaintPrecisionSmoke/Test.ps1 -ExperimentalDirect
+      - name: Check Markdown, archive extraction and generated Razor CLI coverage
+        shell: pwsh
+        run: ./tests/MarkupArchiveSmoke/Test.ps1

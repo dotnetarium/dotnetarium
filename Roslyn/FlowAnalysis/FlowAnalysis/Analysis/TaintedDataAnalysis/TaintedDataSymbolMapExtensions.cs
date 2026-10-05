@@ -323,7 +323,11 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                             taintedParameterPairs = PooledHashSet<(string, string)>.GetInstance();
                         }
 
-                        taintedParameterPairs.UnionWith(sourceToEnds.Where(s => taintedParameterNames.Contains(s.source)));
+                        // A model can cover overloads with different output
+                        // parameters. Only transfer to targets on this overload.
+                        taintedParameterPairs.UnionWith(sourceToEnds.Where(s => taintedParameterNames.Contains(s.source) &&
+                            (s.end is TaintedTargetValue.Return or TaintedTargetValue.This ||
+                             arguments.Any(argument => argument.Parameter?.Name == s.end))));
                     }
                 }
             }

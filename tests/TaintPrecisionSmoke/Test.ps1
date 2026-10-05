@@ -40,10 +40,21 @@ using System;
 using System.IO;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.Options;
+public class Settings { public string Origin { get; set; } public string LogRoot { get; set; } }
 public interface IRepository { string Get(Guid id); }
 public class PrecisionController : ControllerBase {
     private readonly IRepository repository;
-    public PrecisionController(IRepository repository) => this.repository = repository;
+    private readonly IOptions<Settings> options;
+    public PrecisionController(IRepository repository, IOptions<Settings> options) {
+        this.repository = repository; this.options = options;
+    }
+    public IActionResult ConfiguredRedirect(string input) => Redirect($"{options.Value.Origin.TrimEnd('/')}/items/{input}");
+    public void LogName(string input) {
+        input = Path.GetFileName(input);
+        if (!input.StartsWith("log-") || !input.EndsWith(".txt")) return;
+        System.IO.File.ReadAllText(Path.Combine(options.Value.LogRoot, input));
+    }
     public void Identifier(Guid id) => System.IO.File.ReadAllText(repository.Get(id));
     public IActionResult FixedRedirect(string input) {
         var url = "/Login?ReturnUrl=" + Uri.EscapeDataString(input);

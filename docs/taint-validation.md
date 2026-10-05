@@ -246,7 +246,7 @@ reviewed suppression rather than declaring all file/database results safe.
 
 ### Precision verification (2026-10-05)
 
-Both scanner branches pass all 815 unit tests, including fixtures compiled
+Both scanner branches pass all 846 unit tests, including fixtures compiled
 against real ASP.NET Core and EF Core APIs. The installed analyzer package and
 CLI agree on the .NET 8 and .NET 10 fixture in
 `tests/TaintPrecisionSmoke/Test.ps1`: four path flows, two redirect flows, no
@@ -259,18 +259,120 @@ above, with the existing 10,000-work budget and migration exclusions:
 
 | Scope | Previous findings | Findings | Cutoffs | Time | Peak process memory |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Remote | 22 | 13 | 1,886 | 73.1 s | 1.38 GiB |
-| Remote and local | 27 | 18 | 1,690 | 97.9 s | 2.98 GiB |
+| Remote | 22 | 11 | 1,640 | 92.7 s | 2.30 GiB |
+| Remote and local | 27 | 16 | 1,705 | 100.7 s | 2.71 GiB |
 
-Fourteen previous remote flows disappeared: eleven GUID-origin flows and three
-fixed-destination redirects. Eight previous flows remain and five unchecked
+Sixteen previous remote flows disappeared: eleven GUID-origin flows, three
+fixed-destination redirects, the configured-origin redirect and the constrained
+log basename. Six previous remote flows remain and five unchecked
 authentication return-URL assignments are newly reported. The five local-only
 finding identities are unchanged. The fixed login URL built with `+=` is not
 reported; separately supplied server paths, upload filenames and launcher paths
 remain reportable.
+
+The final follow-up comparison removed exactly the configured-origin redirect
+and constrained log basename in each scope, with no other finding changes from
+the previous precision run (13 remote / 18 combined). The five local-only
+finding identities and five new authentication return-URL witnesses were retained.
+The 31 additional tests cover configuration contracts, explicit source overrides,
+mutation, helper calls, path boundaries, basename extraction and consumed guards.
 
 Both corpus runs analyzed 32 project compilations and remain partial because of
 project-loading/compiler errors and analysis budgets. These cutoff counts are
 coverage notices, not counts of missed vulnerabilities. This precision change
 does not establish complete analysis or meet the earlier 60-second performance
 target for the full corpus.
+
+### Remaining false-positive review
+
+The follow-up adds two narrow contracts, shared by the analyzer and both scanner
+branches:
+
+- Trusted application configuration origins followed by a fixed nonempty path
+  do not let an appended request path choose the redirect authority. Supported
+  roots are `IOptions<T>.Value`, `IOptionsMonitor<T>.CurrentValue` and constant-key
+  `IConfiguration` lookups, including standard LINQ record selection. This assumes
+  a valid trusted HTTP(S) origin; it is not a URL validation rule. Explicit source
+  models, local request mutation, unknown helper calls and incomplete boundaries
+  retain findings.
+- `Path.GetFileName` followed by a consumed constant prefix/suffix containing an
+  ASCII letter or digit excludes the remaining `..` basename. Combining that
+  stable leaf with a constant/configured root establishes lexical containment.
+  An ignored check, conditional extraction, different checked variable, later
+  reassignment or independently untrusted root retains findings. Access policy,
+  symlinks and alternate data streams remain separate concerns.
+
+For example, this limits ordinary traversal without declaring all basenames safe:
+
+```csharp
+name = Path.GetFileName(name);
+if (!name.StartsWith("log-") || !name.EndsWith(".txt"))
+    return BadRequest();
+var path = Path.Combine(options.Value.LogRoot, name);
+```
+
+All original 27 source-to-sink reports have a disposition below. The numbering
+refers to the supplied scan, not stable finding identifiers. Several reports
+share one sink with different source witnesses.
+
+| Original # | Location/pattern | Analyzer disposition and reason |
+| --- | --- | --- |
+| 1 | AppPaths:99, environment data root | Local opt-in only. Operator authority cannot be inferred. |
+| 2 | MediaClient:54, configured root and GUID search | Local opt-in only; GUID is not an injection payload. |
+| 3 | IConfigurationBuilderExtensions:28, settings path | Local opt-in only; configured root is a deployment decision. |
+| 4 | MediaService:403, ffmpeg executable discovery | Local opt-in only. Controlled PATH may matter across a privilege boundary; not proven shell injection. |
+| 5 | MediaToolService:338, executable version probe | Local opt-in only, for the same reason. |
+| 6, 8, 10, 14, 16, 17, 20, 22–25 | GUID record/key selection | Removed as identifier overtaint. String payloads and explicitly modeled stored content still propagate. |
+| 7 | ServerController:46, configured-origin redirect | Suppressed under the valid trusted origin contract; appended path cannot select authority. |
+| 9, 11 | ServerController:78/85, request-selected file path | Retained. No established root containment. |
+| 12 | UploadController:37, multipart filename | Retained. Administrator status is not filename validation; effective route reachability and intended authority need review. |
+| 13 | UploadController:37, administrator-selected directory | Retained as a review candidate. Intentional file-manager authority may justify a targeted suppression; no automatic role-based sanitizer. |
+| 15, 26, 27 | Fixed local login redirects | Removed as fixed-destination redirects. Unchecked authentication return destinations remain separate findings. |
+| 18, 19 | DownloadEndpoints:138/147, launcher path | Retained. Separator/dot-dot rejection still accepts Windows drive-relative `C:outside.zip`, which discards the configured root. |
+| 21 | LogEndpoints:39, basename and log affixes | Suppressed by basename plus consumed affix containment. Log-viewing authorization and ADS hardening are separate concerns. |
+
+The known-GUID archive download's authorization policy is not traversal. These
+changes do not infer endpoint authorization, exploitability, or source trust from
+an administrator attribute. Treat an intended arbitrary-directory operation as
+a documented targeted suppression after reviewing the actual caller boundary.
+
+### Separate AI-review leads
+
+The additional AI/reviewer leads are not part of the original 27 traversal and
+redirect reports. They need separate source models, API coverage or deployment
+policy checks; suppressing GUID overtaint does not dismiss them.
+
+| Lead | Scanner assessment / proposed next step |
+| --- | --- |
+| Stored chat Markdown/raw HTML | Highest-value follow-up. The existing XSS rule detects a modeled source through Markdig and `MarkupString`. Stored message content needs an explicit source contract or a bounded write/read summary; do not taint all database strings. |
+| Archive import path escape | High-value API gap. Add SharpCompress entry-key sources and direct-file extraction sinks, with real-library containment negatives. C# extension-block methods also need normalized containing-type matching. |
+| Anonymous logging hub | Authorization review, not a default missing-attribute vulnerability. Effective fallback policies, route groups, middleware and intended public access must be considered. |
+| Known-GUID anonymous archive download | Authorization/capability policy review. A GUID is not assumed guessable and remains safe for injection analysis. |
+| Credentialed unrestricted CORS | A focused configuration rule can detect an always-true origin predicate plus credentials on the same policy; effective authentication/cookie behavior still determines impact. |
+| OIDC issuer validation disabled | A focused configuration candidate, accounting for an explicit custom `IssuerValidator`. This does not imply a signature-validation bypass. |
+| Antiforgery disabled / default HTTP | Opt-in configuration review. Cookie authentication, other cross-origin controls, HTTPS redirection and TLS termination prevent a reliable vulnerability verdict from either setting alone. |
+| External-login callback return URL | Already covered by the default authentication return-destination sink added in this PR. Fixed local login redirects are separate and should stay suppressed. |
+
+Runtime probes against Markdig 0.44.0 preserved both raw event-handler HTML and
+`javascript:` links by default. `DisableHtml()` encoded raw HTML but still emitted
+the unsafe link. It must not be modeled as a complete XSS sanitizer. The
+[pinned default pipeline](https://github.com/xoofx/markdig/blob/0.44.0/src/Markdig/MarkdownPipelineBuilder.cs)
+includes HTML parsing; sanitization and chat authorization/membership are
+separate application controls. Browser execution and victim delivery were not
+demonstrated in this review.
+
+SharpCompress 0.50.0's
+[direct-file extraction](https://github.com/adamhathcock/sharpcompress/blob/0.50.0/src/SharpCompress/Archives/IArchiveEntryExtensions.cs)
+accepts a requested destination. Its
+[directory extraction helpers](https://github.com/adamhathcock/sharpcompress/blob/0.50.0/src/SharpCompress/Common/IEntryExtensions.cs)
+apply destination containment. Do not report every extraction under a fixed root
+as traversal or infer remote code execution from an adjacent-file write.
+
+A separate Razor coverage experiment found a loader limitation: the installed
+analyzer reported modeled stored-content and query-input flows across source
+components, while the main CLI did not report those same generated-component
+flows. The real LANCommander UI load was partial due to its frontend build step.
+The isolated discrepancy needs a generated-code/diagnostic loading investigation;
+it does not establish that the component taint engine itself cannot propagate
+the flow. This PR does not resolve that independent loader gap or implement the
+new library/configuration candidates listed above.

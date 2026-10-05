@@ -122,6 +122,113 @@ namespace Dotnetarium.Analyzers.Taint
                 HasFixedHttpAuthority(prefix);
         }
 
+        internal static bool HasConfiguredRedirectOrigin(Location sink, Compilation compilation, Func<IOperation, bool> isTainted)
+        {
+            var value = Unwrap(SinkValue(sink, compilation));
+            if (value is ILocalReferenceOperation local) value = Unwrap(StableInitializer(local.Local, compilation));
+            while (value is IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, OperatorMethod: null } concatenate &&
+                concatenate.Type?.SpecialType == SpecialType.System_String)
+            {
+                if (IsPathBoundary(concatenate.RightOperand.ConstantValue.Value as string) &&
+                    TrustedConfiguration(concatenate.LeftOperand, compilation, isTainted)) return true;
+                value = Unwrap(concatenate.LeftOperand);
+            }
+            return value is IInterpolatedStringOperation interpolation && interpolation.Parts.Length >= 2 &&
+                interpolation.Parts[0] is IInterpolationOperation origin &&
+                interpolation.Parts[1] is IInterpolatedStringTextOperation text && IsPathBoundary(text.Text.ConstantValue.Value as string) &&
+                TrustedConfiguration(origin.Expression, compilation, isTainted);
+
+            static bool IsPathBoundary(string? text) => text is { Length: >= 2 } && text[0] == '/' &&
+                text[1] is not ('/' or '\\') && !text.Any(char.IsControl);
+        }
+
+        // Configuration is a trusted origin/root contract, not a sanitizer for
+        // arbitrary strings. Preserve source models and reject local mutation.
+        private static bool TrustedConfiguration(IOperation? value, Compilation compilation, Func<IOperation, bool> isTainted)
+        {
+            var symbols = new System.Collections.Generic.HashSet<ISymbol>(SymbolEqualityComparer.Default);
+            var original = value;
+            if (!FromConfiguration(value, 0) || original == null) return false;
+            var owner = original.Syntax.Ancestors().FirstOrDefault(node => node is BaseMethodDeclarationSyntax or LambdaExpressionSyntax or LocalFunctionStatementSyntax);
+            if (owner == null) return false;
+            var model = compilation.GetSemanticModel(owner.SyntaxTree);
+            return !owner.DescendantNodes().Select(node => model.GetOperation(node)).Any(operation =>
+                symbols.Any(symbol => Writes(operation, symbol)) || operation is IInvocationOperation call && !IsSelection(call) &&
+                call.Arguments.Any(argument => argument.Value.Type?.SpecialType != SpecialType.System_String &&
+                    symbols.Any(symbol => TargetContains(argument.Value, symbol))));
+
+            bool FromConfiguration(IOperation? operation, int depth)
+            {
+                if (depth > 16) return false;
+                operation = Unwrap(operation);
+                if (operation == null || isTainted(operation)) return false;
+                switch (operation)
+                {
+                    case ILocalReferenceOperation local:
+                        symbols.Add(local.Local);
+                        return FromConfiguration(StableInitializer(local.Local, compilation), depth + 1);
+                    case IPropertyReferenceOperation property:
+                        symbols.Add(property.Property);
+                        if (property.Property.Name is "Value" or "CurrentValue" &&
+                            property.Property.ContainingType.OriginalDefinition.ToDisplayString() is
+                                "Microsoft.Extensions.Options.IOptions<TOptions>" or "Microsoft.Extensions.Options.IOptionsMonitor<TOptions>")
+                        {
+                            if (ReferencedSymbol(Unwrap(property.Instance)) is { } receiver) symbols.Add(receiver);
+                            return property.Instance != null && !isTainted(property.Instance);
+                        }
+                        if (property.Property.IsIndexer && property.Property.ContainingType.ToDisplayString() == "Microsoft.Extensions.Configuration.IConfiguration" &&
+                            property.Arguments.Length == 1 && property.Arguments[0].Value.ConstantValue.Value is string) return true;
+                        return FromConfiguration(property.Instance, depth + 1);
+                    case IInvocationOperation call when call.TargetMethod.ContainingType.SpecialType == SpecialType.System_String &&
+                        call.TargetMethod.Name == "TrimEnd" && call.Arguments.All(argument =>
+                            argument.Value.ConstantValue.Value is char character && character == '/'):
+                        return FromConfiguration(call.Instance, depth + 1);
+                    case IInvocationOperation call when IsSelection(call):
+                        return FromConfiguration(call.Instance ?? call.Arguments.FirstOrDefault()?.Value, depth + 1);
+                    default: return false;
+                }
+            }
+
+            static bool IsSelection(IInvocationOperation call) =>
+                call.TargetMethod.ContainingType.ToDisplayString() is "System.Linq.Enumerable" or "System.Linq.Queryable" &&
+                call.TargetMethod.Name is "Where" or "First" or "FirstOrDefault" or "Single" or "SingleOrDefault" or "Last" or "LastOrDefault";
+        }
+
+        internal static bool HasContainedBaseName(Location sink, Compilation compilation, Func<IOperation, bool> isTainted)
+        {
+            var value = Unwrap(SinkValue(sink, compilation));
+            if (value is ILocalReferenceOperation path) value = Unwrap(StableInitializer(path.Local, compilation));
+            if (value is not IInvocationOperation combine || combine.TargetMethod.ContainingType.ToDisplayString() != "System.IO.Path" ||
+                combine.TargetMethod.Name != "Combine" || combine.Arguments.Length != 2) return false;
+            var root = Unwrap(combine.Arguments[0].Value);
+            if (root is ILocalReferenceOperation rootLocal) root = Unwrap(StableInitializer(rootLocal.Local, compilation));
+            if (root?.ConstantValue.Value is not string && !TrustedConfiguration(root, compilation, isTainted)) return false;
+            var leaf = Unwrap(combine.Arguments[1].Value);
+            var name = ReferencedSymbol(leaf);
+            if (name is not (ILocalSymbol or IParameterSymbol)) return false;
+            var owner = leaf!.Syntax.Ancestors().FirstOrDefault(node => node is BaseMethodDeclarationSyntax or LambdaExpressionSyntax or LocalFunctionStatementSyntax);
+            if (owner == null) return false;
+            var model = compilation.GetSemanticModel(owner.SyntaxTree);
+            var writes = owner.DescendantNodes().Select(node => model.GetOperation(node)).Where(operation => Writes(operation, name)).ToArray();
+            IOperation? basename;
+            if (writes.Length == 0 && name is ILocalSymbol nameLocal) basename = StableInitializer(nameLocal, compilation);
+            else if (writes.Length == 1 && writes[0] is ISimpleAssignmentOperation assignment &&
+                assignment.Syntax.Parent is ExpressionStatementSyntax { Parent: BlockSyntax block } && block.Parent == owner &&
+                assignment.Syntax.Span.End < combine.Syntax.SpanStart) basename = assignment.Value;
+            else return false;
+            if (Unwrap(basename) is not IInvocationOperation extract || extract.TargetMethod.ContainingType.ToDisplayString() != "System.IO.Path" ||
+                extract.TargetMethod.Name != "GetFileName" || extract.Arguments.Length != 1) return false;
+
+            // GetFileName removes platform separators, but '..' still denotes
+            // the parent. A consumed ASCII alphanumeric affix excludes it.
+            return Guarded(sink, compilation, (condition, symbol, outcome) =>
+                outcome && condition is IInvocationOperation check && check.TargetMethod.ContainingType.SpecialType == SpecialType.System_String &&
+                check.TargetMethod.Name is "StartsWith" or "EndsWith" && check.Arguments.Length is 1 or 2 &&
+                check.Arguments[0].Value.ConstantValue.Value is string affix &&
+                affix.Any(character => character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9') &&
+                SymbolEqualityComparer.Default.Equals(ReferencedSymbol(Unwrap(check.Instance)), symbol), name);
+        }
+
         internal static bool HasValidatedFileName(Location sink, Compilation compilation)
         {
             var value = Unwrap(SinkValue(sink, compilation));

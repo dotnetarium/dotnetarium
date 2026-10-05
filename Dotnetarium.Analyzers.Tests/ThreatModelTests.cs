@@ -11,6 +11,47 @@ namespace Dotnetarium.Analyzers.Tests;
 public sealed class ThreatModelTests
 {
     [Fact]
+    public async Task Explicit_configuration_sources_are_not_trusted_as_redirect_origins()
+    {
+        var findings = await Analyze("""
+            using Microsoft.AspNetCore.Mvc;
+            using Microsoft.Extensions.Options;
+            public class Settings { public string Address { get; set; } }
+            public class DemoController : ControllerBase {
+                private readonly IOptions<Settings> options;
+                public DemoController(IOptions<Settings> options) => this.options = options;
+                public IActionResult Go(string input) => Redirect($"{options.Value.Address}/items/{input}");
+            }
+            """, models: """
+            "TaintSources":[{"Type":"Settings","Properties":["Address"]}]
+            """, analyzer: new OpenRedirectTaintAnalyzer());
+        Assert.Equal(2, findings.Length);
+    }
+
+    [Fact]
+    public async Task Explicit_configuration_sources_are_not_trusted_as_file_roots()
+    {
+        var findings = await Analyze("""
+            using System.IO;
+            using Microsoft.AspNetCore.Mvc;
+            using Microsoft.Extensions.Options;
+            public class Settings { public string Root { get; set; } }
+            public class DemoController : ControllerBase {
+                private readonly IOptions<Settings> options;
+                public DemoController(IOptions<Settings> options) => this.options = options;
+                public void Read(string name) {
+                    name = Path.GetFileName(name);
+                    if (!name.StartsWith("log-")) return;
+                    System.IO.File.ReadAllText(Path.Combine(options.Value.Root, name));
+                }
+            }
+            """, models: """
+            "TaintSources":[{"Type":"Settings","Properties":["Root"]}]
+            """, analyzer: new PathTraversalTaintAnalyzer());
+        Assert.Equal(2, findings.Length);
+    }
+
+    [Fact]
     public async Task Explicit_return_transfer_is_applied_to_a_readable_callee()
     {
         var findings = await Analyze("""

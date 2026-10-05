@@ -122,6 +122,10 @@ namespace Dotnetarium.Analyzers.Taint
                 if (result == null)
                     return;
 
+                bool IsTainted(IOperation operation) => result[operation.Kind, operation.Syntax].Kind == TaintedDataAbstractValueKind.Tainted ||
+                    operation is IPropertyReferenceOperation property && sources.IsSourceProperty(property) ||
+                    operation is IFieldReferenceOperation field && sources.IsSourceField(field);
+
                 foreach (var pair in result.TaintedDataSourceSinks)
                 {
                     if (!pair.SinkKinds.Contains(kind))
@@ -130,11 +134,13 @@ namespace Dotnetarium.Analyzers.Taint
                     if (BoundaryValidation.HasConstantAllowlist(pair.Sink.Location, block.Compilation)) continue;
                     if (kind == (SinkKind)(int)TaintType.PathEscape && BoundaryValidation.HasCanonicalPathRoot(pair.Sink.Location, block.Compilation)) continue;
                     if (kind == (SinkKind)(int)TaintType.PathEscape && BoundaryValidation.HasValidatedFileName(pair.Sink.Location, block.Compilation)) continue;
+                    if (kind == (SinkKind)(int)TaintType.PathEscape && BoundaryValidation.HasContainedBaseName(pair.Sink.Location, block.Compilation, IsTainted)) continue;
                     if (kind == (SinkKind)(int)TaintType.ServerSideRequestForgery && BoundaryValidation.HasFixedRequestAuthority(pair.Sink.Location, block.Compilation)) continue;
 
                     if (kind == (SinkKind)(int)TaintType.OpenRedirect &&
                         (LocalRedirectGuard.Protects(pair.Sink.Location, block.Compilation) ||
-                         BoundaryValidation.HasFixedRedirectDestination(pair.Sink.Location, block.Compilation)))
+                         BoundaryValidation.HasFixedRedirectDestination(pair.Sink.Location, block.Compilation) ||
+                         BoundaryValidation.HasConfiguredRedirectOrigin(pair.Sink.Location, block.Compilation, IsTainted)))
                         continue;
 
                     foreach (var origin in pair.SourceOrigins)

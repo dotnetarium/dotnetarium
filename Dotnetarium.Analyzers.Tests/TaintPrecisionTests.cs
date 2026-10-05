@@ -5,6 +5,112 @@ namespace Dotnetarium.Analyzers.Tests;
 public sealed class TaintPrecisionTests
 {
     [Theory]
+    [InlineData("Redirect($\"{options.Value.Address.TrimEnd('/')}/items/{input}\")", 0)]
+    [InlineData("Redirect(options.Value.Address + \"/items/\" + input)", 0)]
+    [InlineData("Redirect(options.Value.Address + input)", 1)]
+    [InlineData("Redirect($\"{input}/items/{input}\")", 1)]
+    [InlineData("Redirect($\"{options.Value.Address}//{input}\")", 1)]
+    [InlineData("Redirect($\"{options.Value.Address}/{input}\")", 1)]
+    [InlineData("Redirect($\"{options.Value.Address}/\\\\{input}\")", 1)]
+    [InlineData("Redirect($\"{options.Value.Address}/\\t{input}\")", 1)]
+    public async Task Configured_origin_requires_a_trusted_root_and_nonempty_path_boundary(string expression, int expected)
+    {
+        var findings = await FrameworkProbe.Analyze($$"""
+            using Microsoft.AspNetCore.Mvc;
+            using Microsoft.Extensions.Options;
+            public class Settings { public string Address { get; set; } }
+            public class DemoController : ControllerBase {
+                private readonly IOptions<Settings> options;
+                public DemoController(IOptions<Settings> options) => this.options = options;
+                public IActionResult Go(string input) => {{expression}};
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Equal(expected, findings.Length);
+    }
+
+    [Theory]
+    [InlineData("monitor.CurrentValue.Address", 0)]
+    [InlineData("configuration[\"Origin\"]", 0)]
+    [InlineData("configuration[input]", 1)]
+    [InlineData("GetAddress(input)", 1)]
+    public async Task Only_known_configuration_contracts_establish_origins(string origin, int expected)
+    {
+        var findings = await FrameworkProbe.Analyze($$"""
+            using Microsoft.AspNetCore.Mvc;
+            using Microsoft.Extensions.Options;
+            using Microsoft.Extensions.Configuration;
+            public class Settings { public string Address { get; set; } }
+            public class DemoController : ControllerBase {
+                private readonly IOptionsMonitor<Settings> monitor;
+                private readonly IConfiguration configuration;
+                public DemoController(IOptionsMonitor<Settings> monitor, IConfiguration configuration) {
+                    this.monitor = monitor; this.configuration = configuration;
+                }
+                public IActionResult Go(string input) => Redirect({{origin}} + "/items/" + input);
+                private static string GetAddress(string input) => input;
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Equal(expected, findings.Length);
+    }
+
+    [Theory]
+    [InlineData("var host = options.Value.Hosts.FirstOrDefault(item => item.Id == id); return Redirect($\"{host.Address.TrimEnd('/')}/Server/{id}/{input}\");", 0)]
+    [InlineData("var host = options.Value.Hosts.FirstOrDefault(item => item.Id == id); host.Address = input; return Redirect($\"{host.Address}/items/{input}\");", 1)]
+    [InlineData("var host = options.Value.Hosts.FirstOrDefault(item => item.Id == id); Change(host, input); return Redirect($\"{host.Address}/items/{input}\");", 1)]
+    [InlineData("var host = options.Value.Hosts.FirstOrDefault(item => item.Id == id); return Redirect($\"{host.Address.TrimEnd('/')}/items/\" + input);", 0)]
+    [InlineData("var host = options.Value.Hosts.Select(item => new Host { Address = input }).First(); return Redirect($\"{host.Address}/items/{input}\");", 1)]
+    public async Task Configured_record_selection_does_not_allow_request_mutation(string body, int expected)
+    {
+        var findings = await FrameworkProbe.Analyze($$"""
+            using System;
+            using System.Linq;
+            using Microsoft.AspNetCore.Mvc;
+            using Microsoft.Extensions.Options;
+            public class Host { public Guid Id { get; set; } public string Address { get; set; } }
+            public class Settings { public Host[] Hosts { get; set; } }
+            public class DemoController : ControllerBase {
+                private readonly IOptions<Settings> options;
+                public DemoController(IOptions<Settings> options) => this.options = options;
+                public IActionResult Go(Guid id, string input) { {{body}} }
+                private static void Change(Host host, string value) => host.Address = value;
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Equal(expected, findings.Length);
+    }
+
+    [Theory]
+    [InlineData("name = Path.GetFileName(name); if (!name.StartsWith(\"log-\") || !name.EndsWith(\".txt\")) return;", "options.Value.Root", 0)]
+    [InlineData("name = Path.GetFileName(name); if (!name.EndsWith(\".txt\")) return;", "\"/logs/\"", 0)]
+    [InlineData("name = Path.GetFileName(name);", "\"/logs/\"", 1)]
+    [InlineData("if (!name.StartsWith(\"log-\") || !name.EndsWith(\".txt\")) return;", "\"/logs/\"", 1)]
+    [InlineData("name = Path.GetFileName(name); name.StartsWith(\"log-\");", "\"/logs/\"", 1)]
+    [InlineData("name = Path.GetFileName(name); if (!name.StartsWith(\"log-\")) return; name = other;", "\"/logs/\"", 1)]
+    [InlineData("if (other.Length > 0) name = Path.GetFileName(name); if (!name.StartsWith(\"log-\")) return;", "\"/logs/\"", 1)]
+    [InlineData("name = Path.GetFileName(name); if (!name.StartsWith(\"log-\")) return;", "other", 2)]
+    [InlineData("name = Path.GetFileName(name); if (!other.StartsWith(\"log-\")) return;", "\"/logs/\"", 1)]
+    [InlineData("name = Path.GetFileName(name); if (!name.StartsWith(\"..\")) return;", "\"/logs/\"", 1)]
+    [InlineData("name = Path.GetFileName(name); if (!name.StartsWith(\"\\u00ad\")) return;", "\"/logs/\"", 1)]
+    [InlineData("name = Path.GetFileName(name); if (!name.StartsWith(\"log-\")) return; options.Value.Root = other;", "options.Value.Root", 2)]
+    public async Task Basename_and_consumed_affix_prevent_root_escape(string guard, string root, int expected)
+    {
+        var findings = await FrameworkProbe.Analyze($$"""
+            using System.IO;
+            using Microsoft.AspNetCore.Mvc;
+            using Microsoft.Extensions.Options;
+            public class Settings { public string Root { get; set; } }
+            public class DemoController : ControllerBase {
+                private readonly IOptions<Settings> options;
+                public DemoController(IOptions<Settings> options) => this.options = options;
+                public void Read(string name, string other) {
+                    {{guard}}
+                    System.IO.File.ReadAllText(Path.Combine({{root}}, name));
+                }
+            }
+            """, new PathTraversalTaintAnalyzer());
+        Assert.Equal(expected, findings.Length);
+    }
+
+    [Theory]
     [InlineData("Guid", "id", "Guid")]
     [InlineData("Guid?", "id.Value", "Guid")]
     [InlineData("Payload", "id.Id", "Guid")]

@@ -218,7 +218,7 @@ public sealed class SourceReachabilityTests
     }
 
     private static TaintConfiguration Configuration(CSharpCompilation compilation) =>
-        new(new ConfigurationReader().GetBuiltinConfiguration(), compilation, new AnalyzerOptions([]));
+        new(ConfigurationManager.GetProjectConfiguration(LocalSourceTestOptions.Files), compilation, LocalSourceTestOptions.Options);
     private static SourceReachability Checker(CSharpCompilation compilation) =>
         Configuration(compilation).GetSourceReachability((SinkKind)(int)TaintType.CommandInjection);
     private static ControlFlowGraph Graph(CSharpCompilation compilation, string method) =>

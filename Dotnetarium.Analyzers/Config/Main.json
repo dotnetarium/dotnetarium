@@ -1,9 +1,15 @@
 {
+  "ThreatModels": [ "remote" ],
   "MaxInterproceduralMethodCallChain": 5,
   "MaxInterproceduralLambdaOrLocalFunctionCallChain": 5,
   "MaxTaintAnalysisWork": 10000,
   "TaintFlowVisualizationEnabled": true,
   "TaintEntryPoints": {
+    "CommandLine": {
+      "SourceType": "System.Object",
+      "Scope": "local",
+      "Parameter": { "Binding": "CommandLine" }
+    },
     "System.Object": {
       "Dependency": [
         "Microsoft.AspNetCore.Mvc.ControllerBase",
@@ -150,36 +156,36 @@
     }
   },
   "TaintSources": [
-    { "Type": "Microsoft.AspNetCore.Http.EndpointFilterInvocationContext", "Properties": [] },
-    { "Type": "System.Collections.Generic.IList`1", "IsInterface": true, "Properties": [] },
-    { "Type": "MassTransit.ConsumeContext`1", "IsInterface": true, "Properties": [] },
-    { "Type": "MassTransit.MessageContext", "IsInterface": true, "Properties": [] },
-    { "Type": "RabbitMQ.Client.IChannel", "IsInterface": true, "Methods": [ "BasicGetAsync" ] },
-    { "Type": "Confluent.Kafka.IConsumer`2", "IsInterface": true, "Methods": [ "Consume" ] },
+    { "Type": "Microsoft.AspNetCore.Http.EndpointFilterInvocationContext", "Scope": "remote", "Properties": [] },
+    { "Type": "System.Collections.Generic.IList`1", "Scope": "remote", "IsInterface": true, "Properties": [] },
+    { "Type": "MassTransit.ConsumeContext`1", "Scope": "remote", "IsInterface": true, "Properties": [] },
+    { "Type": "MassTransit.MessageContext", "Scope": "remote", "IsInterface": true, "Properties": [] },
+    { "Type": "RabbitMQ.Client.IChannel", "Scope": "remote", "IsInterface": true, "Methods": [ "BasicGetAsync" ] },
+    { "Type": "Confluent.Kafka.IConsumer`2", "Scope": "remote", "IsInterface": true, "Methods": [ "Consume" ] },
     {
-      "Type": "Microsoft.Azure.Functions.Worker.Http.HttpRequestData",
+      "Type": "Microsoft.Azure.Functions.Worker.Http.HttpRequestData", "Scope": "remote",
       "Properties": [ "Body", "Headers", "Cookies", "Url", "Query" ]
     },
     {
-      "Type": "Microsoft.Azure.Functions.Worker.Http.HttpRequestDataExtensions",
+      "Type": "Microsoft.Azure.Functions.Worker.Http.HttpRequestDataExtensions", "Scope": "remote",
       "Methods": [ "ReadAsString", "ReadAsStringAsync", "ReadFromJsonAsync" ]
     },
     {
-      "Type": "Microsoft.AspNetCore.Http.WebSocketManager",
+      "Type": "Microsoft.AspNetCore.Http.WebSocketManager", "Scope": "remote",
       "Methods": [ "AcceptWebSocketAsync" ]
     },
     {
-      "Type": "Grpc.Core.ServerCallContext",
+      "Type": "Grpc.Core.ServerCallContext", "Scope": "remote",
       "Properties": [ "RequestHeaders" ]
     },
     {
-      "Type": "Microsoft.AspNetCore.Mvc.RazorPages.PageModel",
+      "Type": "Microsoft.AspNetCore.Mvc.RazorPages.PageModel", "Scope": "remote",
       "PropertyAttributes": [
         "Microsoft.AspNetCore.Mvc.BindPropertyAttribute"
       ]
     },
     {
-      "Type": "Microsoft.AspNetCore.Components.ComponentBase",
+      "Type": "Microsoft.AspNetCore.Components.ComponentBase", "Scope": "remote",
       "TaintTypes": [
         "CrossSiteScripting"
       ],
@@ -193,6 +199,7 @@
     },
     {
       "Type": "Microsoft.AspNetCore.Components.MarkupString",
+      "Scope": "independent",
       "TaintTypes": [
         "CrossSiteScripting"
       ],
@@ -200,18 +207,26 @@
     },
     {
       "Type": "System.Console",
+      "Scope": "local",
+      "Properties": [ "In" ],
       "Methods": [
-        "ReadLine"
+        "ReadLine", "OpenStandardInput"
       ]
     },
     {
-      "Type": "System.Net.Sockets.TcpClient",
+      "Type": "System.Environment",
+      "Scope": "local",
+      "Properties": [ "CommandLine" ],
+      "Methods": [ "GetCommandLineArgs", "GetEnvironmentVariable", "GetEnvironmentVariables" ]
+    },
+    {
+      "Type": "System.Net.Sockets.TcpClient", "Scope": "remote",
       "Methods": [
         "GetStream"
       ]
     },
     {
-      "Type": "System.Net.Sockets.UdpClient",
+      "Type": "System.Net.Sockets.UdpClient", "Scope": "remote",
       "Methods": [
         "EndReceive",
         "Receive",
@@ -219,40 +234,40 @@
       ]
     },
     {
-      "Type": "Microsoft.AspNetCore.Http.IHeaderDictionary",
+      "Type": "Microsoft.AspNetCore.Http.IHeaderDictionary", "Scope": "remote",
       "IsInterface": true,
       "Properties": [
         "Items"
       ]
     },
     {
-      "Type": "Microsoft.AspNetCore.Http.HostString",
+      "Type": "Microsoft.AspNetCore.Http.HostString", "Scope": "remote",
       "Properties": [
         "Host",
         "Value"
       ]
     },
     {
-      "Type": "Microsoft.AspNetCore.Http.HttpContext",
+      "Type": "Microsoft.AspNetCore.Http.HttpContext", "Scope": "remote",
       "Properties": [
         "Request"
       ]
     },
     {
-      "Type": "Microsoft.AspNetCore.Http.DefaultHttpContext",
+      "Type": "Microsoft.AspNetCore.Http.DefaultHttpContext", "Scope": "remote",
       "Properties": [
         "Request"
       ]
     },
     {
-      "Type": "Microsoft.AspNetCore.Http.IRequestCookieCollection",
+      "Type": "Microsoft.AspNetCore.Http.IRequestCookieCollection", "Scope": "remote",
       "IsInterface": true,
       "Properties": [
         "Item"
       ]
     },
     {
-      "Type": "Microsoft.AspNetCore.Http.IFormCollection",
+      "Type": "Microsoft.AspNetCore.Http.IFormCollection", "Scope": "remote",
       "IsInterface": true,
       "Properties": [
         "Files",
@@ -260,7 +275,7 @@
       ]
     },
     {
-      "Type": "Microsoft.AspNetCore.Http.HttpRequest",
+      "Type": "Microsoft.AspNetCore.Http.HttpRequest", "Scope": "remote",
       "Properties": [
         "Body",
         "BodyReader",
@@ -281,19 +296,20 @@
     },
     {
       "Type": "System.IO.Compression.ZipArchiveEntry",
+      "Scope": "independent",
       "Properties": [
         "FullName",
         "Name"
       ]
     },
     {
-      "Type": "System.Net.DownloadDataCompletedEventArgs",
+      "Type": "System.Net.DownloadDataCompletedEventArgs", "Scope": "remote",
       "Properties": [
         "Result"
       ]
     },
     {
-      "Type": "System.Net.OpenReadCompletedEventArgs",
+      "Type": "System.Net.OpenReadCompletedEventArgs", "Scope": "remote",
       "Properties": [
         "Result"
       ]

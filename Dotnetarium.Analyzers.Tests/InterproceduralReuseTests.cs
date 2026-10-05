@@ -103,7 +103,7 @@ public sealed class InterproceduralReuseTests
                     {{sink}}
                 }
             }
-            """, new CommandInjectionTaintAnalyzer());
+            """, new CommandInjectionTaintAnalyzer(), includeLocalSources: true);
         Assert.Contains(diagnostics, finding => finding.Id == "DNA0002");
     }
 
@@ -117,7 +117,7 @@ public sealed class InterproceduralReuseTests
                 static string Read(int depth) => depth > 0 ? Read(depth - 1) : Console.ReadLine();
                 public static void Run(int depth) => Process.Start(Read(depth));
             }
-            """, new CommandInjectionTaintAnalyzer());
+            """, new CommandInjectionTaintAnalyzer(), includeLocalSources: true);
         var finding = Assert.Single(diagnostics.Where(finding => finding.Id == "DNA0002"));
         Assert.Equal("true", finding.Properties["dotnetarium.flow"]);
         Assert.True(finding.AdditionalLocations.Count >= 2);

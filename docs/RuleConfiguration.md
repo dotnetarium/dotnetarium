@@ -44,6 +44,43 @@ Project models add to the built-ins. Configure severity and suppression with `.e
 
 Configuration cannot express arbitrary code flow or whole-application dependency injection resolution. Review findings involving reflection, runtime registrations, and external assemblies with the appropriate deployment context.
 
+## Input scope
+
+Remote sources are enabled by default. To include console input, process
+arguments and environment values, add:
+
+```json
+{
+  "Version": "2.0",
+  "ThreatModels": [ "remote", "local" ]
+}
+```
+
+`ThreatModels` replaces the default selection; `["local"]` scans local sources
+only. The CLI uses the same configuration through project discovery or `--config`;
+no separate CLI flag is needed. Source and entry-point models accept `Scope`
+(`remote`, `local`, or `independent`). An omitted `Scope` defaults to `remote`,
+including existing custom models. `independent` is for intentionally unconditional
+origins or propagation models and cannot appear in `ThreatModels`. Unknown values,
+numeric scopes and an empty selection are rejected.
+
+For a custom local source:
+
+```json
+{
+  "Version": "2.0",
+  "ThreatModels": [ "remote", "local" ],
+  "TaintSources": [
+    { "Type": "Example.Settings", "Scope": "local", "Methods": [ "ReadCommand" ] }
+  ]
+}
+```
+
+See [input origin and threat scope](taint-validation.md#input-origin-and-threat-scope)
+for the covered APIs, trust boundaries and implementation plan. The default
+changed: stdin-based flows require opting into local sources. Local scope does
+not automatically treat all files or database reads as sources.
+
 ## EF migration scope
 
 Entity Framework migrations and model snapshots are excluded from taint analysis.

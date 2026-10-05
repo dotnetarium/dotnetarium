@@ -6,9 +6,12 @@ using Dotnetarium.Analyzers.Taint;
 
 namespace Dotnetarium.Config
 {
+    internal enum SourceScope { Remote, Local, Independent }
+
     internal sealed class ConfigData
     {
         public string Version { get; set; }
+        public HashSet<SourceScope> ThreatModels { get; set; }
         public uint? MaxInterproceduralMethodCallChain { get; set; }
         public uint? MaxInterproceduralLambdaOrLocalFunctionCallChain { get; set; }
         public uint? MaxTaintAnalysisWork { get; set; }
@@ -23,6 +26,7 @@ namespace Dotnetarium.Config
     internal sealed class TaintSource
     {
         public string Type { get; set; }
+        public SourceScope Scope { get; set; }
         public HashSet<TaintType> TaintTypes { get; set; }
         public bool? IsInterface { get; set; }
         public string[] Properties { get; set; }
@@ -78,6 +82,7 @@ namespace Dotnetarium.Config
 
     internal sealed class TaintEntryPointData
     {
+        public SourceScope Scope { get; set; }
         public string SourceType { get; set; }
         public HashSet<string> Dependency { get; set; }
         public Class Class { get; set; }

@@ -34,7 +34,7 @@ public sealed class XmlExternalEntityTests
             using System.Xml;
             using System.Xml.Resolvers;
             public static class Demo { public static void Run(bool enabled) { var input = Console.ReadLine();
-            """ + body + "}}", new XmlExternalEntityTaintAnalyzer());
+            """ + body + "}}", new XmlExternalEntityTaintAnalyzer(), includeLocalSources: true);
         Assert.True(expected == findings.Length, $"{body}: expected {expected}, actual {findings.Length}");
         Assert.All(findings, finding => Assert.NotEmpty(finding.AdditionalLocations));
     }

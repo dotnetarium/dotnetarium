@@ -253,6 +253,9 @@ $nugetConfig = Join-Path $scratch 'NuGet.Config'
   </packageSourceMapping>
 </configuration>
 "@ | Set-Content -LiteralPath $nugetConfig -Encoding utf8
+# These sink/flow witnesses intentionally use stdin, so opt into its local scope.
+'{"Version":"2.0","ThreatModels":["remote","local"]}' |
+    Set-Content -LiteralPath (Join-Path $projectPath 'dotnetarium.json') -Encoding utf8
 & dotnet restore $project --configfile $nugetConfig --nologo -v quiet
 if ($LASTEXITCODE -ne 0) { throw 'CLI fixture restore failed.' }
 $buildOutput = & dotnet build $project --no-restore --nologo -v quiet -p:UseSharedCompilation=false 2>&1
@@ -358,6 +361,7 @@ $config = Join-Path $scratch 'custom.json'
 @'
 {
   "Version": "2.0",
+  "ThreatModels": [ "remote", "local" ],
   "Sinks": [
     {
       "Type": "Custom",
@@ -378,7 +382,7 @@ if ($LASTEXITCODE -ne 0 -or ([regex]::Matches(($customOutput -join "`n"), 'DNA00
     throw 'CLI did not discover lowercase dotnetarium.json.'
 }
 $override = Join-Path $scratch 'override.json'
-'{"Version":"2.0","Sinks":[]}' | Set-Content -LiteralPath $override -Encoding utf8
+'{"Version":"2.0","ThreatModels":["remote","local"],"Sinks":[]}' | Set-Content -LiteralPath $override -Encoding utf8
 $overrideOutput = & $tool $project --config $override
 if ($LASTEXITCODE -ne 0 -or ([regex]::Matches(($overrideOutput -join "`n"), 'DNA0001')).Count -ne 2) {
     throw 'Explicit --config did not override the project config.'
@@ -443,5 +447,171 @@ if (-not $incompleteReport.runs[0].invocations[0].executionSuccessful -or
     throw 'Partial SARIF lost findings or omitted its coverage status.'
 }
 
-'Analyzer NuGet package and global tool scan .NET 8/10; custom JSON, relative SARIF, and compiler error checks passed.' | Write-Output
+# A bounded recursive root must not prevent ordinary findings or direct rules.
+$budgetRoot = Join-Path $scratch 'budget'
+New-Item -ItemType Directory -Path $budgetRoot | Out-Null
+$budgetProject = Join-Path $budgetRoot 'Budget.csproj'
+'<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>' |
+    Set-Content -LiteralPath $budgetProject
+@'
+using System;
+using System.Diagnostics;
+using System.Security.Cryptography;
+public static class Demo {
+    static string Walk(string input, int count) {
+        if (count > 0) { input = Walk(input, count - 1); input = Walk(input, count - 1); }
+        return input;
+    }
+    public static void Expensive(int count) => Process.Start(Walk(Console.ReadLine(), count));
+    public static void Ordinary() => Process.Start(Console.ReadLine());
+    public static void Crypto() { using var aes = Aes.Create(); aes.Mode = CipherMode.ECB; }
+}
+'@ | Set-Content -LiteralPath (Join-Path $budgetRoot 'Demo.cs')
+'{"Version":"2.0","ThreatModels":["remote","local"],"MaxTaintAnalysisWork":1000}' |
+    Set-Content -LiteralPath (Join-Path $budgetRoot 'dotnetarium.json')
+& dotnet restore $budgetProject --configfile $nugetConfig --nologo -v quiet
+if ($LASTEXITCODE -ne 0) { throw 'Budget fixture restore failed.' }
+$budgetSarif = Join-Path $scratch 'budget.sarif'
+foreach ($failFlag in @($false, $true)) {
+    $scanArguments = @($budgetProject, '--sarif', $budgetSarif)
+    if ($failFlag) { $scanArguments += '--fail' }
+    $budgetOutput = & $tool @scanArguments 2>&1
+    if ($LASTEXITCODE -ne 2) { throw 'A budget cutoff must return incomplete exit code 2, including with --fail.' }
+    $budgetReport = Get-Content -LiteralPath $budgetSarif -Raw | ConvertFrom-Json
+    $budgetFindings = @($budgetReport.runs[0].results)
+    $budgetNotices = @($budgetReport.runs[0].invocations[0].toolExecutionNotifications |
+        Where-Object { $_.descriptor.id -eq 'analysis-budget' })
+    if ($budgetFindings.Count -ne 2 -or
+        @($budgetFindings | Where-Object ruleId -eq 'DNA0002').Count -ne 1 -or
+        @($budgetFindings | Where-Object ruleId -eq 'DNA0014').Count -ne 1 -or
+        -not ($budgetNotices.message.text -match 'Demo.Expensive') -or
+        -not (@($budgetFindings | Where-Object ruleId -eq 'DNA0002')[0].message.text -match 'Ordinary') -or
+        $budgetReport.runs[0].invocations[0].executionSuccessful -ne $false -or
+        $budgetReport.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'partial' -or
+        @($budgetReport.runs[0].tool.driver.rules | Where-Object id -eq 'DNA9000').Count) {
+        throw 'Budget handling lost independent findings or exposed a coverage notice as a security rule.'
+    }
+}
+
+# Use real EF Core assemblies: exclude migration bodies, retain direct secrets,
+# and continue scanning ordinary callers. Also check the packaged analyzer.
+$migrationRoot = Join-Path $scratch 'migration'
+New-Item -ItemType Directory -Path $migrationRoot | Out-Null
+$migrationProject = Join-Path $migrationRoot 'Migration.csproj'
+'{"Version":"2.0","ThreatModels":["remote","local"]}' |
+    Set-Content -LiteralPath (Join-Path $migrationRoot 'dotnetarium.json') -Encoding utf8
+@"
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+<ItemGroup><PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
+<PackageReference Include="Dotnetarium.Analyzers" Version="$analyzerVersion" /></ItemGroup></Project>
+"@ | Set-Content -LiteralPath $migrationProject
+@'
+using System;
+using System.Diagnostics;
+using System.Net;
+using Microsoft.EntityFrameworkCore.Migrations;
+public class Seed : Migration {
+    protected override void Up(MigrationBuilder builder) {
+        Process.Start(Console.ReadLine());
+        _ = new NetworkCredential("seed", "secret-production-password");
+    }
+    protected override void Down(MigrationBuilder builder) { }
+    public static void Run() => Process.Start(Console.ReadLine());
+}
+public class Outside {
+    public static void Run() { Seed.Run(); Process.Start(Console.ReadLine()); }
+}
+'@ | Set-Content -LiteralPath (Join-Path $migrationRoot 'Seed.cs')
+@'
+// <auto-generated />
+using System;
+using System.Diagnostics;
+using System.Net;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+public class Schema : ModelSnapshot {
+    protected override void BuildModel(ModelBuilder builder) {
+        Process.Start(Console.ReadLine());
+        _ = new NetworkCredential("snapshot", "secret-production-password");
+    }
+}
+'@ | Set-Content -LiteralPath (Join-Path $migrationRoot 'Schema.Designer.cs')
+& dotnet restore $migrationProject --configfile $nugetConfig --nologo -v quiet
+if ($LASTEXITCODE -ne 0) { throw 'Migration fixture restore failed.' }
+$migrationBuild = & dotnet build $migrationProject --no-restore --nologo -v quiet -p:UseSharedCompilation=false 2>&1
+if ($LASTEXITCODE -ne 0 -or
+    @($migrationBuild | Where-Object { $_ -match 'warning DNA0002' } | Sort-Object -Unique).Count -ne 1 -or
+    @($migrationBuild | Where-Object { $_ -match 'warning DNA0009' } | Sort-Object -Unique).Count -ne 2 -or
+    ($migrationBuild -match 'DNA9000|AD0001')) {
+    $migrationBuild | Write-Output
+    throw 'Packaged analyzer migration exclusion or direct secrets regressed.'
+}
+$migrationSarif = Join-Path $scratch 'migration.sarif'
+& $tool $migrationProject --sarif $migrationSarif --fail | Out-Null
+if ($LASTEXITCODE -ne 1) { throw 'Migration CLI fixture must report ordinary findings.' }
+$migrationReport = Get-Content -LiteralPath $migrationSarif -Raw | ConvertFrom-Json
+if (@($migrationReport.runs[0].results).Count -ne 3 -or
+    @($migrationReport.runs[0].results | Where-Object ruleId -eq 'DNA0002').Count -ne 1 -or
+    @($migrationReport.runs[0].results | Where-Object ruleId -eq 'DNA0009').Count -ne 2 -or
+    $migrationReport.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'complete') {
+    throw 'CLI migration fixture must retain two literal secrets and one ordinary command finding.'
+}
+
+$scopeRoot = Join-Path $scratch 'scope'
+New-Item -ItemType Directory -Path $scopeRoot | Out-Null
+$scopeProject = Join-Path $scopeRoot 'Scope.csproj'
+@"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+  <ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" /><PackageReference Include="Dotnetarium.Analyzers" Version="$analyzerVersion" /></ItemGroup>
+</Project>
+"@ | Set-Content -LiteralPath $scopeProject -Encoding utf8
+@'
+using System;
+using System.Diagnostics;
+using Microsoft.AspNetCore.Http;
+public class Origins {
+    public void Remote(HttpRequest request) => Process.Start(request.Query["command"].ToString());
+    public void Stdin() => Process.Start(Console.ReadLine());
+    public void EnvironmentInput() => Process.Start(Environment.GetEnvironmentVariable("COMMAND"));
+}
+'@ | Set-Content -LiteralPath (Join-Path $scopeRoot 'Origins.cs') -Encoding utf8
+& dotnet restore $scopeProject --configfile $nugetConfig --nologo -v quiet
+if ($LASTEXITCODE -ne 0) { throw 'Scope fixture restore failed.' }
+$scopeConfig = Join-Path $scopeRoot 'dotnetarium.json'
+foreach ($scope in @(
+    @{ Name = 'default'; Selection = $null; Count = 1 },
+    @{ Name = 'local'; Selection = @('local'); Count = 2 },
+    @{ Name = 'both'; Selection = @('remote', 'local'); Count = 3 }
+)) {
+    if ($null -eq $scope.Selection) {
+        if (Test-Path -LiteralPath $scopeConfig) { Remove-Item -LiteralPath $scopeConfig }
+    } else {
+        @{ Version = '2.0'; ThreatModels = $scope.Selection } | ConvertTo-Json |
+            Set-Content -LiteralPath $scopeConfig -Encoding utf8
+    }
+    $scopeBuild = & dotnet build $scopeProject --no-restore --nologo -v quiet -t:Rebuild -p:UseSharedCompilation=false 2>&1
+    if ($LASTEXITCODE -ne 0 -or ($scopeBuild -match 'DNA9000|AD0001') -or
+        @($scopeBuild | Where-Object { $_ -match 'warning DNA0002' } | Sort-Object -Unique).Count -ne $scope.Count) {
+        $scopeBuild | Write-Output
+        throw "Packaged analyzer source selection failed: $($scope.Name)"
+    }
+    $scopeSarif = Join-Path $scopeRoot "$($scope.Name).sarif"
+    & $tool $scopeProject --sarif $scopeSarif --fail | Out-Null
+    if ($LASTEXITCODE -ne 1) { throw "CLI scope scan failed: $($scope.Name)" }
+    $scopeReport = Get-Content -LiteralPath $scopeSarif -Raw | ConvertFrom-Json
+    if (@($scopeReport.runs[0].results | Where-Object ruleId -eq 'DNA0002').Count -ne $scope.Count -or
+        $scopeReport.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'complete') {
+        throw "CLI and analyzer source selections disagree: $($scope.Name)"
+    }
+}
+$scopeOverride = Join-Path $scopeRoot 'remote.json'
+'{"Version":"2.0","ThreatModels":["remote"]}' | Set-Content -LiteralPath $scopeOverride -Encoding utf8
+$scopeOverrideSarif = Join-Path $scopeRoot 'override.sarif'
+& $tool $scopeProject --config $scopeOverride --sarif $scopeOverrideSarif --fail | Out-Null
+if ($LASTEXITCODE -ne 1 -or @((Get-Content -LiteralPath $scopeOverrideSarif -Raw | ConvertFrom-Json).runs[0].results).Count -ne 1) {
+    throw 'Explicit CLI configuration did not replace project source selection.'
+}
+
+'Analyzer NuGet package and global tool scan .NET 8/10; source selection, custom JSON, relative SARIF, and compiler error checks passed.' | Write-Output
 exit 0

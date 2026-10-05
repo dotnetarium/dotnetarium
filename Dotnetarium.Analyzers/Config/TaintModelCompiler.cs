@@ -47,6 +47,8 @@ namespace Dotnetarium.Config
     internal sealed class TaintConfiguration
     {
         private readonly ConfigData model;
+        private readonly bool remoteEnabled;
+        private readonly bool localEnabled;
         private readonly Compilation compilation;
         private readonly Lazy<ImmutableDictionary<IMethodSymbol, bool>> minimalApiHandlers;
         private readonly Lazy<SignalRInputModel> signalRInputs;
@@ -64,6 +66,8 @@ namespace Dotnetarium.Config
         public TaintConfiguration(ConfigData model, Compilation compilation, AnalyzerOptions options)
         {
             this.model = model;
+            remoteEnabled = model.ThreatModels == null || model.ThreatModels.Contains(SourceScope.Remote);
+            localEnabled = model.ThreatModels?.Contains(SourceScope.Local) == true;
             this.compilation = compilation;
             minimalApiHandlers = new Lazy<ImmutableDictionary<IMethodSymbol, bool>>(FindMinimalApiHandlers);
             signalRInputs = new Lazy<SignalRInputModel>(() => new SignalRInputModel(compilation));
@@ -92,6 +96,14 @@ namespace Dotnetarium.Config
         private static bool Applies(HashSet<TaintType> contexts, SinkKind kind) =>
             contexts == null || contexts.Any(context => (int)context == (int)kind);
 
+        private bool Includes(SourceScope scope) => scope switch
+        {
+            SourceScope.Remote => remoteEnabled,
+            SourceScope.Local => localEnabled,
+            SourceScope.Independent => true,
+            _ => false
+        };
+
         private ImmutableHashSet<SourceInfo> CompileSources(SinkKind kind)
         {
             var definitions = new Dictionary<string, SourceDefinition>(StringComparer.Ordinal);
@@ -103,10 +115,11 @@ namespace Dotnetarium.Config
             }
 
             foreach (var entry in model.TaintEntryPoints ?? new Dictionary<string, TaintEntryPointData>())
-                For(entry.Value.SourceType ?? entry.Key).EntryPoints.Add(entry.Value);
+                if (Includes(entry.Value.Scope))
+                    For(entry.Value.SourceType ?? entry.Key).EntryPoints.Add(entry.Value);
             foreach (var source in model.TaintSources ?? new List<TaintSource>())
-                if (Applies(source.TaintTypes, kind))
-                    For(source.Type).Source = source;
+                if (Includes(source.Scope) && Applies(source.TaintTypes, kind))
+                    For(source.Type).Sources.Add(source);
             foreach (var transfer in model.Transfers ?? new List<Transfer>())
             {
                 var definition = For(transfer.Type);
@@ -126,15 +139,16 @@ namespace Dotnetarium.Config
             var compiled = ImmutableHashSet.CreateBuilder<SourceInfo>();
             foreach (var (type, definition) in definitions)
             {
-                var source = definition.Source;
+                var sources = definition.Sources;
                 var entries = definition.EntryPoints;
-                bool isInterface = source?.IsInterface == true || definition.IsInterface;
-                var methods = (source?.Methods ?? Array.Empty<string>())
+                bool isInterface = sources.Any(source => source.IsInterface == true) || definition.IsInterface;
+                var methods = sources.SelectMany(source => source.Methods ?? Array.Empty<string>())
+                    .Distinct(StringComparer.Ordinal)
                     .Select<string, (MethodMatcher, ImmutableHashSet<string>)>(name =>
                         ((methodName, _) => methodName == name,
                          ImmutableHashSet<string>.Empty.Add(TaintedTargetValue.Return)))
                     .ToImmutableHashSet();
-                if (type == "Microsoft.AspNetCore.Http.EndpointFilterInvocationContext")
+                if (remoteEnabled && type == "Microsoft.AspNetCore.Http.EndpointFilterInvocationContext")
                     methods = methods.Add(((name, arguments) => name == "GetArgument" && arguments.Length == 1 &&
                         endpointFilters.Value.GetBoundParameters(arguments[0].Parent).Any(parameter => IsMinimalApiInputParameter(parameter, compilation)),
                         ImmutableHashSet<string>.Empty.Add(TaintedTargetValue.Return)));
@@ -148,9 +162,9 @@ namespace Dotnetarium.Config
                                      .ToImmutableHashSet()))
                     .ToImmutableHashSet();
 
-                bool allMembers = source != null && source.Methods == null && source.Properties == null &&
+                bool allMembers = sources.Any(source => source.Methods == null && source.Properties == null &&
                     source.PropertyAttributes == null && source.ServerPropertyAttributes == null &&
-                    source.PreserveTaintOnConversion != true && source.RoutedParameters != true;
+                    source.PreserveTaintOnConversion != true && source.RoutedParameters != true);
                 if (allMembers)
                 {
                     compiled.Add(new SourceInfo(
@@ -175,7 +189,7 @@ namespace Dotnetarium.Config
                 compiled.Add(new SourceInfo(
                     type,
                     isInterface,
-                    taintedProperties: (source?.Properties ?? Array.Empty<string>())
+                    taintedProperties: sources.SelectMany(source => source.Properties ?? Array.Empty<string>())
                         .ToImmutableHashSet(StringComparer.Ordinal),
                     taintedArguments: parameters,
                     taintedMethods: methods,
@@ -188,21 +202,21 @@ namespace Dotnetarium.Config
                     taintConstantArray: false,
                     constantArrayLengthMatcher: null,
                     dependencyFullTypeNames: entries.Count == 1 ? entries[0].Dependency?.ToImmutableArray() : null,
-                    taintedPropertyAttributes: (source?.PropertyAttributes ?? Array.Empty<string>())
+                    taintedPropertyAttributes: sources.SelectMany(source => source.PropertyAttributes ?? Array.Empty<string>())
                         .ToImmutableHashSet(StringComparer.Ordinal),
-                    preserveTaintOnConversion: source?.PreserveTaintOnConversion ?? false,
-                    taintRoutedParameters: source?.RoutedParameters ?? false,
-                    serverBoundPropertyAttributes: (source?.ServerPropertyAttributes ?? Array.Empty<string>())
+                    preserveTaintOnConversion: sources.Any(source => source.PreserveTaintOnConversion == true),
+                    taintRoutedParameters: sources.Any(source => source.RoutedParameters == true),
+                    serverBoundPropertyAttributes: sources.SelectMany(source => source.ServerPropertyAttributes ?? Array.Empty<string>())
                         .ToImmutableHashSet(StringComparer.Ordinal),
-                    propertyReferenceMatcher: property =>
+                    propertyReferenceMatcher: property => remoteEnabled && (
                         (type == "System.Object" && IsMixedAggregateRequestProperty(property)) ||
                         endpointFilters.Value.GetBoundParameters(property).Any(parameter => IsMinimalApiInputParameter(parameter, compilation)) ||
-                        messageInputs.Value.IsPropertyInput(property),
-                    fieldReferenceMatcher: field => messageInputs.Value.IsFieldInput(field),
-                    propertyValueProvider: property => GetBinderPropertyValue(property, kind) ??
-                        (kind == (SinkKind)(int)TaintType.CrossSiteScripting ? componentInputs.Value.GetPropertyInput(property) : null),
-                    fieldValueProvider: field => GetBinderMemberValue(field.Field, field.Instance, kind) ??
-                        (kind == (SinkKind)(int)TaintType.CrossSiteScripting ? componentInputs.Value.GetFieldInput(field) : null)));
+                        messageInputs.Value.IsPropertyInput(property)),
+                    fieldReferenceMatcher: field => remoteEnabled && messageInputs.Value.IsFieldInput(field),
+                    propertyValueProvider: property => remoteEnabled ? GetBinderPropertyValue(property, kind) ??
+                        (kind == (SinkKind)(int)TaintType.CrossSiteScripting ? componentInputs.Value.GetPropertyInput(property) : null) : null,
+                    fieldValueProvider: field => remoteEnabled ? GetBinderMemberValue(field.Field, field.Instance, kind) ??
+                        (kind == (SinkKind)(int)TaintType.CrossSiteScripting ? componentInputs.Value.GetFieldInput(field) : null) : null));
             }
 
             return compiled.ToImmutable();
@@ -216,7 +230,7 @@ namespace Dotnetarium.Config
             if (entry.Dependency != null && entry.Dependency.Any(dependency =>
                 !provider.TryGetOrCreateTypeByMetadataName(dependency, out _)))
                 return false;
-            if (entry.Parameter?.Binding == null && entry.Parameter?.Types == null && entry.Parameter?.Names == null &&
+            if (remoteEnabled && entry.Parameter?.Binding == null && entry.Parameter?.Types == null && entry.Parameter?.Names == null &&
                 IsMinimalApiInputParameter(parameter, compilation))
                 return true;
             if (parameter.ContainingSymbol is not IMethodSymbol method ||
@@ -310,6 +324,8 @@ namespace Dotnetarium.Config
                 "AzureFunctions" => IsAzureFunctionInput(parameter, method),
                 "Messaging" => messageInputs.Value.IsParameterInput(parameter),
                 "Blazor" => componentInputs.Value.IsParameterInput(parameter),
+                "CommandLine" => SymbolEqualityComparer.Default.Equals(method, compilation.GetEntryPoint(default)) &&
+                    parameter.Type is IArrayTypeSymbol { ElementType.SpecialType: SpecialType.System_String },
                 _ => true
             };
         }
@@ -341,6 +357,8 @@ namespace Dotnetarium.Config
 
         private bool IsMinimalApiInputParameter(IParameterSymbol parameter, Compilation compilation)
         {
+            if (!remoteEnabled)
+                return false;
             if (HasServiceBindingAttribute(parameter))
                 return false;
 
@@ -696,7 +714,7 @@ namespace Dotnetarium.Config
         private sealed class SourceDefinition
         {
             public List<TaintEntryPointData> EntryPoints { get; } = new List<TaintEntryPointData>();
-            public TaintSource Source { get; set; }
+            public List<TaintSource> Sources { get; } = new List<TaintSource>();
             public bool IsInterface { get; set; }
             public List<TransferInfo> Transfers { get; } = new List<TransferInfo>();
         }

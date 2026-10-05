@@ -65,7 +65,7 @@ public sealed class MigrationExclusionTests
             .Where(type => !type.IsAbstract && typeof(TaintAnalyzer).IsAssignableFrom(type))
             .Select(type => (DiagnosticAnalyzer)Activator.CreateInstance(type)!)
             .Append(new HardcodedPasswordAnalyzer()).Append(new CryptographyAnalyzer()).ToImmutableArray();
-        var diagnostics = await compilation.WithAnalyzers(analyzers).GetAnalyzerDiagnosticsAsync();
+        var diagnostics = await compilation.WithAnalyzers(analyzers, LocalSourceTestOptions.Options).GetAnalyzerDiagnosticsAsync();
         Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id is "AD0001" or "DNA9000");
         Assert.Equal(2, diagnostics.Count(diagnostic => diagnostic.Id == "DNA0002"));
         Assert.Equal(2, diagnostics.Count(diagnostic => diagnostic.Id == "DNA0009"));

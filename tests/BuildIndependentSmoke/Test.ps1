@@ -47,6 +47,9 @@ public static class Inputs
 & dotnet restore $project --nologo -v quiet 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Baseline fixture restore failed.' }
 
+# Engine/input-loading witnesses intentionally include local stdin sources.
+$localScopeConfig = Join-Path $scratch 'local-sources.json'
+'{"Version":"2.0","ThreatModels":["remote","local"]}' | Set-Content -LiteralPath $localScopeConfig -Encoding utf8
 $script:scanIndex = 0
 function Scan([string]$Target, [bool]$Direct, [int]$ExpectedExit = 0, [bool]$Fail = $false, [string[]]$Selection = @()) {
     $script:scanIndex++
@@ -54,6 +57,8 @@ function Scan([string]$Target, [bool]$Direct, [int]$ExpectedExit = 0, [bool]$Fai
     $log = Join-Path $scratch "scan-$script:scanIndex.log"
     $inventory = Join-Path $scratch "scan-$script:scanIndex.inputs.json"
     $arguments = @($ToolDll, $Target, '--sarif', $sarif, '--experimental-inputs', $inventory)
+    if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $Target) 'dotnetarium.json')) -and
+        $Selection -notcontains '--config') { $arguments += @('--config', $localScopeConfig) }
     if ($Direct) { $arguments += '--experimental-direct' }
     if ($Fail) { $arguments += '--fail' }
     $arguments += $Selection
@@ -113,7 +118,7 @@ public static class Demo {
 }
 '@ | Set-Content -LiteralPath (Join-Path $budgetRoot 'Demo.cs') -Encoding utf8
 $budgetConfig = Join-Path $budgetRoot 'dotnetarium.json'
-'{"Version":"2.0","MaxTaintAnalysisWork":1000}' | Set-Content -LiteralPath $budgetConfig -Encoding utf8
+'{"Version":"2.0","ThreatModels":["remote","local"],"MaxTaintAnalysisWork":1000}' | Set-Content -LiteralPath $budgetConfig -Encoding utf8
 & dotnet restore $budgetProject --nologo -v quiet 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Budget fixture restore failed.' }
 foreach ($budgetDirect in @($false, $true)) {
@@ -197,7 +202,7 @@ public class Custom { public void Execute(string query) { } }
 public static class CustomInput { public static void Run() => new Custom().Execute(Console.ReadLine()!); }
 '@ | Set-Content -LiteralPath (Join-Path $projectRoot 'Custom.cs')
 @'
-{"Version":"2.0","Sinks":[{"Type":"Custom","TaintTypes":["SqlInjection"],"Methods":[{"Name":"Execute","Arguments":["query"]}]}]}
+{"Version":"2.0","ThreatModels":["remote","local"],"Sinks":[{"Type":"Custom","TaintTypes":["SqlInjection"],"Methods":[{"Name":"Execute","Arguments":["query"]}]}]}
 '@ | Set-Content -LiteralPath (Join-Path $projectRoot 'dotnetarium.json')
 $customJson = Scan $project $true
 if (@($customJson.runs[0].results).Count -ne 4 -or
@@ -461,5 +466,7 @@ if (@($generatorAware.inputInventory.projects[0].sources | Where-Object origin -
 . (Join-Path $PSScriptRoot 'Test-Pruning.ps1')
 . (Join-Path $PSScriptRoot 'Test-Selection.ps1')
 . (Join-Path $PSScriptRoot 'Test-GeneratedReuse.ps1')
+
+& (Join-Path $PSScriptRoot '../ThreatModelSmoke/Test.ps1') -ToolDll $ToolDll -ExperimentalDirect
 
 "Build-independent CLI checks passed. Reports and logs: $scratch" | Write-Output

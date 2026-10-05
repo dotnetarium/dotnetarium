@@ -1003,6 +1003,6 @@ public sealed class AnalyzerSmokeTests
         var compilation = CSharpCompilation.Create("Example", new[] { tree }, references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         Assert.DoesNotContain(compilation.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
-        return await compilation.WithAnalyzers(analyzers.ToImmutableArray()).GetAnalyzerDiagnosticsAsync();
+        return await compilation.WithAnalyzers(analyzers.ToImmutableArray(), LocalSourceTestOptions.Options).GetAnalyzerDiagnosticsAsync();
     }
 }

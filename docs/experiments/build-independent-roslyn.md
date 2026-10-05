@@ -9,7 +9,9 @@ The direct loader and its bounded restore validation, input selection and
 explicit generated-C# reuse are ported to the current main-scanner PR. Input
 inventories and SCA exploration remain on this experimental branch. The default
 loader remains project-aware, with compiler/workspace errors returning exit 2;
-the no-build loader treats compiler errors as visible partial coverage.
+the no-build loader treats compiler errors and taint work-limit cutoffs as
+visible partial coverage, returning 0 or 1 with findings and `--fail`.
+Actual analyzer/tool failures remain exit 2 in both modes.
 See [scan modes](../scan-modes.md). `--experimental-direct` remains an alias on
 this branch for existing experimental scripts.
 

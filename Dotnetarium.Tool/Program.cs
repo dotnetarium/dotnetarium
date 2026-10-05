@@ -38,7 +38,7 @@ internal static class Program
                 throw new FileNotFoundException("Project or solution was not found.", target);
             var root = Path.GetDirectoryName(target)!;
             var defaultConfig = Path.Combine(root, "dotnetarium.json");
-            var report = new ScanReport();
+            var report = new ScanReport(allowTaintCutoffs: options.ExperimentalDirect);
             Console.WriteLine(options.ExperimentalDirect
                 ? "Scan mode: no-build (experimental). Targets, restore and source generators are not run."
                 : "Scan mode: project (default).");
@@ -172,7 +172,7 @@ internal static class Program
                 await SarifWriter.WriteAsync(options.SarifPath, target, findings, report,
                     options.ExperimentalDirect ? "no-build" : "project");
             if (inventory != null) await inventory.WriteAsync(options.InputInventoryPath!, report, inputs);
-            if (report.HasIncompleteAnalysis) return 2;
+            if (report.HasExecutionFailures) return 2;
             return options.Fail && findings.Length > 0 ? 1 : 0;
         }
         catch (System.Text.Json.JsonException error)

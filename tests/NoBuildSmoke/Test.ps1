@@ -1,4 +1,4 @@
-param([string]$ToolDll, [string]$ToolPackage)
+param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
@@ -14,8 +14,14 @@ if ($ToolPackage) {
     $feed = [System.Security.SecurityElement]::Escape((Split-Path -Parent $package))
     $installConfig = Join-Path $scratch 'nuget.config'
     "<configuration><packageSources><clear/><add key=`"local`" value=`"$feed`"/></packageSources></configuration>" | Set-Content -LiteralPath $installConfig
-    & dotnet tool install dotnetarium --tool-path $toolPath --configfile $installConfig --version $packageVersion --no-cache > (Join-Path $scratch 'install.log') 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Tool install failed: $scratch/install.log" }
+    # Release versions are reused by local builds. An isolated package cache
+    # prevents a previously published package with the same version winning.
+    $previousPackages = $env:NUGET_PACKAGES
+    try {
+        $env:NUGET_PACKAGES = Join-Path $scratch 'install-cache'
+        & dotnet tool install dotnetarium --tool-path $toolPath --configfile $installConfig --version $packageVersion --no-cache > (Join-Path $scratch 'install.log') 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "Tool install failed: $scratch/install.log" }
+    } finally { $env:NUGET_PACKAGES = $previousPackages }
     $script:command = Join-Path $toolPath $(if ($IsWindows) { 'dotnetarium.exe' } else { 'dotnetarium' })
     $script:prefix = @()
 }
@@ -45,6 +51,11 @@ function AssertMode($Run, [string]$Mode, [string]$Coverage) {
 }
 function HasNotice($Run, [string]$Id) {
     return @($Run.invocations[0].toolExecutionNotifications | Where-Object { $_.descriptor.id -eq $Id }).Count -gt 0
+}
+. (Join-Path $PSScriptRoot 'Test-Budgets.ps1')
+if ($BudgetsOnly) {
+    "No-build budget checks passed. Reports: $scratch"
+    exit 0
 }
 foreach ($framework in @('net8.0', 'net10.0')) {
     $app = Join-Path $scratch $framework

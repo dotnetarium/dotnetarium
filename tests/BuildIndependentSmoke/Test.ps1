@@ -122,13 +122,14 @@ $budgetConfig = Join-Path $budgetRoot 'dotnetarium.json'
 & dotnet restore $budgetProject --nologo -v quiet 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Budget fixture restore failed.' }
 foreach ($budgetDirect in @($false, $true)) {
-    $budgetReport = Scan $budgetProject $budgetDirect 2 $true @('--config', $budgetConfig)
+    $expectedExit = if ($budgetDirect) { 1 } else { 2 }
+    $budgetReport = Scan $budgetProject $budgetDirect $expectedExit $true @('--config', $budgetConfig)
     $budgetFindings = @($budgetReport.runs[0].results)
     if ($budgetFindings.Count -ne 2 -or @($budgetFindings | Where-Object ruleId -eq 'DNA0002').Count -ne 1 -or
         @($budgetFindings | Where-Object ruleId -eq 'DNA0014').Count -ne 1 -or
         -not (HasNotice $budgetReport 'analysis-budget') -or
         $budgetReport.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'partial' -or
-        $budgetReport.runs[0].invocations[0].executionSuccessful -ne $false) {
+        $budgetReport.runs[0].invocations[0].executionSuccessful -ne $budgetDirect) {
         throw 'Budget exhaustion lost independent findings or was not represented as partial coverage.'
     }
     $budgetNotice = @($budgetReport.runs[0].invocations[0].toolExecutionNotifications |

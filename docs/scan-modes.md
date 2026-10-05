@@ -19,7 +19,8 @@ dotnetarium MyApp.csproj --no-build --configuration Release --framework net10.0
 | Restore | Use the SDK workspace's normal project-loading behavior | Never invoked; use existing validated assets and cached compile references |
 | Source generators | Run through the Roslyn workspace when available | Not run; explicitly selected generated C# can be reused |
 | Compiler errors | Preserve findings and return exit 2 | Preserve resolvable findings, warn and mark coverage partial |
-| Analyzer failures or taint cutoffs | Return exit 2 | Return exit 2 |
+| Taint cutoffs | Return exit 2; retain findings | Warn and mark coverage partial; retain findings |
+| Analyzer failures | Return exit 2 | Return exit 2 |
 
 ## Requirements and limits
 
@@ -75,13 +76,14 @@ errors produce `partial` coverage.
 - **0:** analysis finished; findings do not fail the command unless `--fail` is set.
 - **1:** findings were found with `--fail` and no fatal analysis failure occurred.
 - **2:** invalid input/configuration, unusable compilation, no analyzed C# project,
-  analyzer failure or taint work-limit cutoff. Default mode also uses 2 for
-  workspace/compiler errors.
+  or analyzer failure. Default mode also uses 2 for workspace/compiler errors
+  and taint work-limit cutoffs.
 
 In no-build mode, coverage warnings alone can therefore yield exit 0 or 1 with
-partial coverage. Check SARIF coverage when CI requires complete inputs. A taint
-cutoff still sets `executionSuccessful: false`; compiler errors alone do not
-in no-build mode.
+partial coverage. Check SARIF coverage when CI requires complete inputs. Compiler
+errors and taint cutoffs alone set `executionSuccessful: true` in no-build mode,
+with `dotnetarium.coverage: partial` and warning notifications. This accepts
+incomplete analysis; it does not establish that the skipped paths are safe.
 
 ## NuGet analyzer and IDE behavior
 

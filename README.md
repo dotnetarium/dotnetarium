@@ -34,11 +34,13 @@ dotnetarium MyApp.sln --sarif results.sarif --fail
 dotnetarium MyApp.sln -nb --sarif exploratory.sarif
 ```
 
-The tool accepts `.csproj`, `.sln`, and `.slnx` files. `--sarif` writes SARIF 2.1.0 with relative source paths and available data-flow paths. `--fail` returns exit code 1 when there are findings, which is useful in CI. Without it, findings are printed but do not fail the command. An incomplete scan or invalid input returns exit code 2.
+The tool accepts `.csproj`, `.sln`, and `.slnx` files. `--sarif` writes SARIF 2.1.0 with relative source paths and available data-flow paths. `--fail` returns exit code 1 when there are findings, which is useful in CI. Without it, findings are printed but do not fail the command. Default-mode incomplete scans or invalid input return exit code 2.
 
 The tool selects an installed SDK using the scanned project or solution directory, including its `global.json` if present. Run `dotnetarium --help` for the complete CLI.
 
 **Experimental no-build mode:** `-nb` (or `--no-build`) reads conventional SDK projects directly and runs the same Roslyn security analysis without executing build targets, restoring packages, or running source generators. It continues through compiler errors and reports partial coverage. The default remains project-aware loading. Use `--configuration Release` or `--framework net10.0` to select inputs. See [scan modes](docs/scan-modes.md) for requirements, exit codes and analyzer-package behavior.
+
+No-build mode also accepts taint work-limit cutoffs as partial coverage: return 0, or 1 with findings and `--fail`. Cutoffs remain visible warnings. Actual analyzer/tool failures still return 2; default mode remains strict about cutoffs.
 
 ## Configure rules
 

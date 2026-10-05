@@ -51,6 +51,7 @@ internal static class SarifWriter
         json.WriteBoolean("executionSuccessful", !report.HasIncompleteAnalysis);
         json.WriteStartObject("properties");
         json.WriteString("dotnetarium.loadingMode", loadingMode);
+        json.WriteBoolean("dotnetarium.experimental", loadingMode == "no-build");
         json.WriteString("dotnetarium.coverage", report.IsPartial ? "partial" : "complete");
         json.WriteStartArray("dotnetarium.analyzedProjects");
         foreach (var project in report.AnalyzedProjects.Order(StringComparer.Ordinal)) json.WriteStringValue(project);

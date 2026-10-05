@@ -57,7 +57,12 @@ internal static class ProjectLoader
         var workspace = MSBuildWorkspace.Create(globals);
         var inputs = new ScanInputs(workspace, sdk.MSBuildPath);
         workspace.RegisterWorkspaceFailedHandler(diagnostic =>
-            report.Warn("workspace", diagnostic.Diagnostic.Message));
+        {
+            var error = diagnostic.Diagnostic;
+            if (error.Kind == WorkspaceDiagnosticKind.Failure)
+                report.Fail("workspace-error", "Workspace: " + error.Message);
+            else report.Warn("workspace-warning", "Workspace: " + error.Message);
+        });
         try
         {
             foreach (var path in FindProjects(target))
@@ -69,7 +74,7 @@ internal static class ProjectLoader
                 }
                 catch (Exception error) when (error is not OperationCanceledException)
                 {
-                    report.Warn("project-load", $"{path}: {error.Message}");
+                    report.Fail("project-load", $"{path}: {error.Message}");
                     report.SkippedProjects.Add(path);
                 }
             }

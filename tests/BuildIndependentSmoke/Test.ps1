@@ -157,7 +157,7 @@ SameFindings $baseline $partial
 if (-not (HasNotice $partial 'compiler-error') -or $partial.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'partial') {
     throw 'Compiler errors were not recorded as partial coverage.'
 }
-$partialProject = Scan $project $false
+$partialProject = Scan $project $false 2
 SameFindings $baseline $partialProject
 $null = Scan $project $true 1 $true
 
@@ -239,7 +239,8 @@ $brokenProject = Join-Path $scratch 'Broken.csproj'
 $solution = Join-Path $scratch 'Mixed.slnx'
 '<Solution><Project Path="Broken.csproj" /><Project Path="app/App.csproj" /></Solution>' | Set-Content -LiteralPath $solution
 foreach ($mode in @($false, $true)) {
-    $mixed = Scan $solution $mode
+    $expectedExit = if ($mode) { 0 } else { 2 }
+    $mixed = Scan $solution $mode $expectedExit
     if (@($mixed.runs[0].results).Count -ne 3 -or
         -not ((HasNotice $mixed 'project-load') -or (HasNotice $mixed 'compilation-load')) -or
         @($mixed.runs[0].invocations[0].properties.'dotnetarium.skippedProjects').Count -ne 1) { throw 'Mixed solution did not preserve healthy-project analysis.' }

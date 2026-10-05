@@ -39,6 +39,9 @@ internal static class Program
             var root = Path.GetDirectoryName(target)!;
             var defaultConfig = Path.Combine(root, "dotnetarium.json");
             var report = new ScanReport();
+            Console.WriteLine(options.ExperimentalDirect
+                ? "Scan mode: no-build (experimental). Targets, restore and source generators are not run."
+                : "Scan mode: project (default).");
             var selection = new ScanSelection(options.Configuration, options.Framework);
             var inventory = options.InputInventoryPath != null ? new CompilationInputInventory(target, options.ExperimentalDirect, selection) : null;
             using var inputs = options.ExperimentalDirect
@@ -64,21 +67,21 @@ internal static class Program
                 try { compilation = await project.GetCompilationAsync(); }
                 catch (Exception error) when (error is not OperationCanceledException)
                 {
-                    report.Warn("compilation-load", $"{project.Name}: {error.Message}");
+                    report.Fail("compilation-load", $"{project.Name}: {error.Message}");
                     report.SkippedProjects.Add(project.Name);
                     return;
                 }
                 if (compilation == null || !compilation.SyntaxTrees.Any())
                 {
                     if (inventory != null && compilation != null) await inventory.CaptureAsync(project, compilation, project.AnalyzerOptions, inputs);
-                    report.Warn("compilation-load", $"{project.Name}: no usable source compilation.");
+                    report.Fail("compilation-load", $"{project.Name}: no usable source compilation.");
                     report.SkippedProjects.Add(project.Name);
                     return;
                 }
                 if (compilation.GetSpecialType(SpecialType.System_Object).TypeKind == TypeKind.Error)
                 {
                     if (inventory != null) await inventory.CaptureAsync(project, compilation, project.AnalyzerOptions, inputs);
-                    report.Warn("compilation-load", $"{project.Name}: core framework symbols are unavailable; no usable semantic analysis.");
+                    report.Fail("compilation-load", $"{project.Name}: core framework symbols are unavailable; no usable semantic analysis.");
                     report.SkippedProjects.Add(project.Name);
                     return;
                 }
@@ -120,9 +123,13 @@ internal static class Program
                         report.Fail("analyzer-failure", $"{project.Name}: {error}");
                     var compilerErrors = result.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error &&
                         diagnostic.Id != "AD0001" && !diagnostic.Id.StartsWith("DNA", StringComparison.Ordinal)).ToArray();
-                    foreach (var error in compilerErrors.Take(20)) report.Warn("compiler-error", $"{project.Name}: {error}");
+                    foreach (var error in compilerErrors.Take(20))
+                        if (options.ExperimentalDirect) report.Warn("compiler-error", $"{project.Name}: {error}");
+                        else report.Fail("compiler-error", $"{project.Name}: {error}");
                     if (compilerErrors.Length > 20)
-                        report.Warn("compiler-error-summary", $"{project.Name}: {compilerErrors.Length} compiler errors; the first 20 are shown. Semantic coverage is incomplete.");
+                        if (options.ExperimentalDirect)
+                            report.Warn("compiler-error-summary", $"{project.Name}: {compilerErrors.Length} compiler errors; the first 20 are shown. Semantic coverage is incomplete.");
+                        else report.Fail("compiler-error-summary", $"{project.Name}: {compilerErrors.Length} compiler errors; the first 20 are shown.");
                 }
                 catch (Exception error) when (error is not OperationCanceledException)
                 {
@@ -163,7 +170,7 @@ internal static class Program
             Console.WriteLine($"{findings.Length} security finding(s){(report.IsPartial ? " (partial scan)" : string.Empty)}; {report.AnalyzedProjects.Count} project compilation(s) analyzed.");
             if (options.SarifPath != null)
                 await SarifWriter.WriteAsync(options.SarifPath, target, findings, report,
-                    options.ExperimentalDirect ? "direct" : "project");
+                    options.ExperimentalDirect ? "no-build" : "project");
             if (inventory != null) await inventory.WriteAsync(options.InputInventoryPath!, report, inputs);
             if (report.HasIncompleteAnalysis) return 2;
             return options.Fail && findings.Length > 0 ? 1 : 0;
@@ -187,6 +194,7 @@ internal static class Program
         "  --fail                     Return 1 when findings are present\n" +
         "  --configuration <name>     Select project configuration (e.g. Release)\n" +
         "  --framework <tfm>          Select root framework and compatible dependencies\n" +
+        "  -nb, --no-build            Experimental: scan without targets, restore or generators\n" +
         "  --experimental-direct      Reconstruct Roslyn inputs without MSBuild targets\n" +
         "  --experimental-inputs <path> Write compilation input inventory as JSON\n" +
         "  -h, --help                 Show this help");
@@ -220,7 +228,7 @@ internal static class Program
                     case "--sarif": sarif = NextValue(); break;
                     case "--config": config = NextValue(); break;
                     case "--fail": fail = true; break;
-                    case "--experimental-direct": experimentalDirect = true; break;
+                    case "-nb": case "--no-build": case "--experimental-direct": experimentalDirect = true; break;
                     case "--experimental-inputs": inventory = NextValue(); break;
                     case "--configuration": configuration = NextValue(); break;
                     case "--framework": framework = NextValue(); break;

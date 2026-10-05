@@ -302,6 +302,8 @@ internal sealed class DirectProjectLoader(ScanReport report, bool collectPackage
 
     private List<MetadataReference> ReadReferences(ProjectSpec spec, ScanInputs inputs)
     {
+        foreach (var analyzer in spec.Items.Where(item => item.Name.LocalName == "Analyzer"))
+            Warn(spec.Path, "generation", $"Explicit analyzer/source-generator assembly was not executed: {Expand((string?)analyzer.Attribute("Include") ?? "", spec.Properties)}. Supply generated C# explicitly to recover generated bindings.");
         foreach (var generator in spec.Items.Where(item => item.Name.LocalName == "ProjectReference" &&
             string.Equals(Expand(ItemMetadata(item, "OutputItemType") ?? "", spec.Properties), "Analyzer", StringComparison.OrdinalIgnoreCase)))
             Warn(spec.Path, "generation", $"Analyzer/source-generator project was not built or executed: {Expand((string?)generator.Attribute("Include") ?? "", spec.Properties)}. Supply generated C# explicitly to recover generated bindings.");

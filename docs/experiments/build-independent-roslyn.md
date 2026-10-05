@@ -4,7 +4,14 @@ Status: direct-loader prototype, input comparison, bounded restore validation,
 explicit generated-C# reuse, configuration/framework selection and conventional
 framework package pruning implemented.
 Branch: `experiment/build-independent-roslyn`.
-This work must stay off `main` until its coverage and limitations are reviewed.
+The user authorized an opt-in `-nb` / `--no-build` mode for the main scanner.
+The direct loader and its bounded restore validation, input selection and
+explicit generated-C# reuse are ported to the current main-scanner PR. Input
+inventories and SCA exploration remain on this experimental branch. The default
+loader remains project-aware, with compiler/workspace errors returning exit 2;
+the no-build loader treats compiler errors as visible partial coverage.
+See [scan modes](../scan-modes.md). `--experimental-direct` remains an alias on
+this branch for existing experimental scripts.
 
 ## Objective
 
@@ -946,6 +953,7 @@ remains a promotion gate.
    silently treat a timed-out analyzer run as a completed partial scan.
 
 The direct prototype, inventory, bounded validation, explicit reuse, selection and
-conventional pruning slices are complete. Production promotion, automatic fallback,
-full import evaluation and generation support are intentionally not complete.
-No release or merge into `main` is part of this work.
+conventional pruning slices are complete. An explicitly selected experimental
+no-build mode is now prepared for the main scanner. Automatic fallback, changing
+the default loader, full import evaluation and generation support remain out
+of scope. No release or merge into `main` is part of this work.

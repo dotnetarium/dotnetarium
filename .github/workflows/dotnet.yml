@@ -52,6 +52,9 @@ jobs:
       - name: Scan through installed global tool
         shell: pwsh
         run: ./tests/CliSmoke/Test.ps1
+      - name: Check opt-in no-build mode through installed global tool
+        shell: pwsh
+        run: ./tests/NoBuildSmoke/Test.ps1 -ToolPackage (Get-ChildItem artifacts/*.nupkg | Where-Object Name -Match '^dotnetarium\.\d' | Select-Object -First 1).FullName
       - name: Check identifier and boundary precision on .NET 8 and 10
         shell: pwsh
         run: ./tests/TaintPrecisionSmoke/Test.ps1 -ExperimentalDirect
@@ -101,6 +104,9 @@ jobs:
       - name: Scan with lowercase project config
         shell: pwsh
         run: ./tests/CliSmoke/Test.ps1
+      - name: Check opt-in no-build mode through installed global tool
+        shell: pwsh
+        run: ./tests/NoBuildSmoke/Test.ps1 -ToolPackage (Get-ChildItem artifacts/*.nupkg | Where-Object Name -Match '^dotnetarium\.\d' | Select-Object -First 1).FullName
       - name: Check identifier and boundary precision on .NET 8 and 10
         shell: pwsh
         run: ./tests/TaintPrecisionSmoke/Test.ps1 -ExperimentalDirect

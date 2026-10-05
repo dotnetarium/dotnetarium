@@ -796,8 +796,8 @@ Minimal API handler discovery. A syntax-name filter now rejects unrelated calls
 before semantic lookup. Matching endpoint calls still require semantic validation;
 extension, static, alias-qualified and conditional-access forms are covered by
 tests. The same prefilter applies to endpoint-filter, messaging registration and
-Blazor render-call discovery. Migration directories are not blanket-excluded:
-custom code can use real sources and sinks. This does not add a SQL sink model
+Blazor render-call discovery. At this stage migration directories were not
+blanket-excluded; custom code remained eligible. This did not add a SQL sink model
 for `MigrationBuilder.Sql`; that API is not currently modeled. Roslyn's existing
 generated-code policy continues to skip generated taint roots, except the explicit
 Razor handling.
@@ -846,6 +846,78 @@ All **697 unit tests pass** with the final filters/default. The CLI suite passes
 with the parallel reporting/inventory changes; fresh final-tool CLI checks retain
 real gRPC and generated Razor findings and independent findings after budget
 exhaustion. CI must still validate the pushed changes on Windows and Linux.
+
+### Higher budget and exact callback eligibility
+
+The next iteration raises the experimental default to **10,000 units**. Raising
+the limit alone stops at the 60-second full-solution cutoff. Temporary root timing
+identifies `AddStorageLocations.Up` schema callbacks taking approximately 5–6
+seconds per taint context despite only around 2,200 work units. Metadata/binding
+and waiting on shared lookups contribute time not captured by the work counter.
+
+A remaining nested-callback heuristic treated any invocation on a source-model
+container as evidence of an origin, including inherited `System.Object` models.
+It is replaced with the conservative source-reachability proof used for root
+eligibility. Proven source-free callbacks no longer start redundant, independent
+taint analyses. Callbacks with actual origins, helpers, request parameters or
+unresolved operations remain eligible. Points-to analysis still handles captured
+state and escaped callbacks; this is not a blanket removal of callback analysis.
+
+Profiling also shows workers waiting on the global disposal-helper factory lock.
+The disposal helper and well-known-type provider now use compilation-lifetime
+ephemeron caches with lazy initialization. Operation-block and CFG lookup caches
+also survive collection while their compilation is active. DI registration
+discovery is initialized once through a lazy value rather than allowing competing
+cache factories to repeat semantic binding. These changes retain immutable lookup
+state longer, but do not retain a completed compilation or its helper/graph cycle
+after callers release it. Disposal tracking remains enabled, including async and
+pattern-based disposal.
+
+With these changes, the 10,000-unit full scan completes in **55.0–56.7 seconds** at
+approximately **2.16–2.31 GiB** peak working set. It retains the previous 21 findings
+and their exact flow/result JSON, analyzes 27 project compilations, has zero
+analyzer failures and reports **679–688 budget cutoffs** versus 1,317 in the previous
+5,000-unit repeat. Coverage remains partial because of these cutoffs and the
+existing input gaps. No complete-budget LANCommander parity is claimed.
+
+Regression checks exercise nested request callback factories, helper origins,
+source-free object calls, concurrent metadata lookup, reuse across collection,
+disposal categories and collection of compilation/helper/graph cycles.
+Temporary timing instrumentation is kept outside the shipped code.
+
+### Migration taint exclusion
+
+Following the requested scope change, EF `Migration` and `ModelSnapshot` types
+are now entirely excluded from taint roots and interprocedural body traversal.
+This includes inherited/partial classes, callbacks and nested helper types.
+Recognition uses EF base-type identities, not directory or file names. Ordinary
+application code in a migration-named folder remains eligible.
+
+Direct constant checks remain enabled. Hard-coded credential checks also examine
+generated migration/snapshot code, without invoking value/points-to dataflow to
+infer nonconstant migration expressions. Other direct analyzers retain their
+generated-code settings. A regression fixture uses real EF Core 10 assemblies to
+verify the taint exclusion, ordinary caller findings, literal credentials in a
+generated snapshot and weak crypto in a migration.
+
+This deliberately removes migration taint coverage even for custom `Up`/`Down`
+code. It is a scope policy, not a proof that migration code has no vulnerabilities.
+
+The final full LANCommander scan with the 10,000-unit default completes in
+**50.5 seconds**, with **2.07 GiB** peak working set, 27 project compilations,
+21 findings and exact finding/flow JSON parity with the previous 5,000-unit run.
+There are **660 budget cutoffs**, **zero migration budget notices** and zero
+analyzer failures. These measurements are from the Windows development machine;
+coverage remains partial because of the other cutoffs and compilation-input gaps.
+
+All **704 unit tests pass**. A real EF Core 10 CLI fixture verifies the exclusion
+and literal-secret findings through both project loading modes, with identical
+finding/flow JSON. The direct loader still reports its existing package-build and
+generator input limitations. A fresh SharpSaster scan retains all **41 findings**
+and exact flow/result JSON with no budget cutoffs. The complete CLI suite passed
+after the cache/callback changes; the final migration policy was additionally
+checked through the focused fixture in both loading modes. Windows/Linux CI
+remains a promotion gate.
 
 ## Next experiment and promotion gates
 

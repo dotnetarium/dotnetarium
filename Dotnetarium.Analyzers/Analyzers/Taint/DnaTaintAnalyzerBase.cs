@@ -57,6 +57,8 @@ namespace Dotnetarium.Analyzers.Taint
             TaintedDataSymbolMap<SanitizerInfo> sanitizers,
             TaintedDataSymbolMap<SinkInfo> sinks)
         {
+            if (MigrationAnalysisExclusion.IsExcluded(block.OwningSymbol))
+                return;
             if (AnalyzeRazorGeneratedCode && block.OperationBlocks.All(root =>
                 IsUnrelatedGeneratedFile(root.Syntax.SyntaxTree.FilePath)))
                 return;
@@ -98,11 +100,13 @@ namespace Dotnetarium.Analyzers.Taint
                 // their nested CFGs as well as ordinary stored route delegates.
                 var types = WellKnownTypeProvider.GetOrCreate(block.Compilation);
                 foreach (var lambda in currentGraph.DescendantOperations<IFlowAnonymousFunctionOperation>(OperationKind.FlowAnonymousFunction))
+                {
+                    var lambdaGraph = currentGraph.GetAnonymousFunctionControlFlowGraph(lambda);
                     if (lambda.Symbol.Parameters.Any(parameter => sources.IsSourceParameter(parameter, types) ||
                             parameter.GetAttributes().Any(attribute => attribute.AttributeClass?.ToDisplayString() == "Microsoft.AspNetCore.Http.AsParametersAttribute")) ||
-                        block.Compilation.GetSemanticModel(lambda.Syntax.SyntaxTree).GetOperation(lambda.Syntax) is { } body &&
-                            ContainsPotentialSource(ImmutableArray.Create(body), sources, block.Compilation))
-                        AnalyzeGraph(currentGraph.GetAnonymousFunctionControlFlowGraph(lambda), lambda.Symbol);
+                        settings.TaintConfiguration.GetSourceReachability(kind).MayReachSource(lambdaGraph, block.CancellationToken))
+                        AnalyzeGraph(lambdaGraph, lambda.Symbol);
+                }
                 var result = TaintedDataAnalysis.TryGetOrComputeResult(
                     currentGraph,
                     block.Compilation,
@@ -154,35 +158,6 @@ namespace Dotnetarium.Analyzers.Taint
                     }
                 }
             }
-        }
-
-        private static bool ContainsPotentialSource(
-            ImmutableArray<IOperation> roots,
-            TaintedDataSymbolMap<SourceInfo> sources,
-            Compilation compilation)
-        {
-            var types = WellKnownTypeProvider.GetOrCreate(compilation);
-            foreach (var root in roots)
-            {
-                foreach (var operation in root.DescendantsAndSelf())
-                {
-                    switch (operation)
-                    {
-                        case IPropertyReferenceOperation property when
-                            sources.IsSourceProperty(property):
-                        case IFieldReferenceOperation field when
-                            sources.IsSourceField(field):
-                        case IParameterReferenceOperation parameter when
-                            sources.IsSourceParameter(parameter.Parameter, types):
-                            return true;
-                        case IInvocationOperation call when
-                            sources.GetInfosForType(call.TargetMethod.ContainingType).Any():
-                            return true;
-                    }
-                }
-            }
-
-            return false;
         }
 
         private static bool IsUnrelatedGeneratedFile(string path) =>

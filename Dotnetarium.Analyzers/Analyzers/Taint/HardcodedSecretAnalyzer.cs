@@ -25,7 +25,7 @@ namespace Dotnetarium.Analyzers.Taint
         public override void Initialize(AnalysisContext context)
         {
             context.EnableConcurrentExecution();
-            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
+            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.Analyze | GeneratedCodeAnalysisFlags.ReportDiagnostics);
             context.RegisterCompilationStartAction(start =>
             {
                 var config = Configuration.GetOrCreate(start);
@@ -41,6 +41,8 @@ namespace Dotnetarium.Analyzers.Taint
             OperationBlockAnalysisContext block,
             TaintedDataSymbolMap<SinkInfo> sinks)
         {
+            var isMigration = MigrationAnalysisExclusion.IsExcluded(block.OwningSymbol);
+            if (block.IsGeneratedCode && !isMigration) return;
             if (block.Options.IsConfiguredToSkipAnalysis(
                     DnaRuleCatalog.HardcodedSecret,
                     block.OwningSymbol,
@@ -77,7 +79,9 @@ namespace Dotnetarium.Analyzers.Taint
                         ? array.DimensionSizes.All(size => size.ConstantValue.HasValue && size.ConstantValue.Value is int length && length > 0)
                         : array.Initializer.ElementValues.All(element => element.ConstantValue.HasValue)))
                     return true;
-                if (values.Value == null)
+                // Migration scanning is limited to direct constants and arrays;
+                // do not run prerequisite dataflow to infer nonconstant values.
+                if (isMigration || values.Value == null)
                     return false;
                 var state = values.Value[value.Kind, value.Syntax];
                 return state.NonLiteralState == ValueContainsNonLiteralState.No &&

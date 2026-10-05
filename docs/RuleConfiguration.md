@@ -44,10 +44,24 @@ Project models add to the built-ins. Configure severity and suppression with `.e
 
 Configuration cannot express arbitrary code flow or whole-application dependency injection resolution. Review findings involving reflection, runtime registrations, and external assemblies with the appropriate deployment context.
 
+## EF migration scope
+
+Entity Framework migrations and model snapshots are excluded from taint analysis.
+The exclusion recognizes inheritance from EF's `Migration` and `ModelSnapshot`,
+including indirect inheritance, partial classes, callbacks and nested helper
+types. Their bodies are also excluded when called from ordinary code. A folder
+or class merely named `Migrations`/`Migration` does not trigger the exclusion.
+
+Direct rules continue to run. Hard-coded credential detection checks literal
+strings, constants and constant arrays in migrations, including generated
+snapshots; it does not run dataflow to infer other migration values. Other direct
+rules retain their normal generated-code policy. This is a deliberate taint scope
+exclusion, not a claim that custom migration code is safe.
+
 ## Taint analysis work limit
 
 On the experimental branch, each root method and taint rule has a default budget
-of **5,000 work units**, shared by its source/sink eligibility checks and nested
+of **10,000 work units**, shared by its source/sink eligibility checks and nested
 points-to, value-content and taint analyses. Entering a dataflow graph, visiting a
 basic block, visiting an operation or comparing a delegate target spends one unit.
 This bounds repeated expansion of recursive or branching call trees without

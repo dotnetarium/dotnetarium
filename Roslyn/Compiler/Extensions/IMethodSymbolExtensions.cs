@@ -9,6 +9,7 @@ using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Microsoft.CodeAnalysis;
 
 #if HAS_IOPERATION
@@ -555,7 +556,7 @@ namespace Analyzer.Utilities.Extensions
         /// across analyzers and analyzer callbacks to re-use the operations, semanticModel and control flow graph.
         /// </summary>
         /// <remarks>Also see <see cref="IOperationExtensions.s_operationToCfgCache"/></remarks>
-        private static readonly BoundedCache<Compilation, ConcurrentDictionary<IMethodSymbol, IBlockOperation?>> s_methodToTopmostOperationBlockCache
+        private static readonly ConditionalWeakTable<Compilation, ConcurrentDictionary<IMethodSymbol, IBlockOperation?>> s_methodToTopmostOperationBlockCache
             = new();
 
         /// <summary>
@@ -563,7 +564,9 @@ namespace Analyzer.Utilities.Extensions
         /// </summary>
         public static IBlockOperation? GetTopmostOperationBlock(this IMethodSymbol method, Compilation compilation, CancellationToken cancellationToken = default)
         {
-            var methodToBlockMap = s_methodToTopmostOperationBlockCache.GetOrCreateValue(compilation);
+            if (MigrationAnalysisExclusion.IsExcluded(method)) return null;
+            var methodToBlockMap = s_methodToTopmostOperationBlockCache.GetValue(compilation,
+                _ => new ConcurrentDictionary<IMethodSymbol, IBlockOperation?>(SymbolEqualityComparer.Default));
             return methodToBlockMap.GetOrAdd(method, ComputeTopmostOperationBlock);
 
             // Local functions.

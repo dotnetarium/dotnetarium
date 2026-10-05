@@ -65,6 +65,7 @@ namespace Dotnetarium.Analyzers.Taint
                         targets.AddRange(SourceInterfaceImplementationMap.GetOrCreate(compilation).GetVirtualTargets(method));
                     foreach (var target in targets)
                     {
+                        if (MigrationAnalysisExclusion.IsExcluded(target)) continue;
                         if (IsSinkMethod(target)) return RememberPossibleSink(graph);
                         var definition = (target.ReducedFrom ?? target).OriginalDefinition;
                         if (!visited.Add(definition) || sinkFreeMethods.ContainsKey(definition)) continue;

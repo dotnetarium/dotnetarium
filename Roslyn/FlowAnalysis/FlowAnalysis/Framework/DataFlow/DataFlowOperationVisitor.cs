@@ -2215,6 +2215,7 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
 
             // Bail out if configured not to execute interprocedural analysis.
             var skipInterproceduralAnalysis = !isLambdaOrLocalFunction && InterproceduralAnalysisKind == InterproceduralAnalysisKind.None ||
+                MigrationAnalysisExclusion.IsExcluded(invokedMethod) ||
                 DataFlowAnalysisContext.InterproceduralAnalysisPredicate?.SkipInterproceduralAnalysis(invokedMethod, isLambdaOrLocalFunction) == true ||
                 DataFlowAnalysisContext.AnalyzerOptions.IsConfiguredToSkipAnalysis(s_dummyDataflowAnalysisDescriptor, invokedMethod, WellKnownTypeProvider.Compilation, CancellationToken.None);
 

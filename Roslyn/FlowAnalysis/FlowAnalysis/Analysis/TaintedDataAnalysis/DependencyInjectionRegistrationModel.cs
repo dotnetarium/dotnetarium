@@ -15,8 +15,9 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
     /// </summary>
     internal sealed class DependencyInjectionRegistrationModel
     {
-        private static readonly ConditionalWeakTable<Compilation, DependencyInjectionRegistrationModel> Cache =
-            new ConditionalWeakTable<Compilation, DependencyInjectionRegistrationModel>();
+        // GetValue may race its factory. Publish a lazy value so competing roots
+        // do not each bind every service-registration candidate in the compilation.
+        private static readonly ConditionalWeakTable<Compilation, Lazy<DependencyInjectionRegistrationModel>> Cache = new();
 
         private readonly Dictionary<ITypeSymbol, List<Registration>> _registrations =
             new Dictionary<ITypeSymbol, List<Registration>>(SymbolEqualityComparer.Default);
@@ -106,7 +107,8 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
         }
 
         internal static DependencyInjectionRegistrationModel GetOrCreate(Compilation compilation) =>
-            Cache.GetValue(compilation, key => new DependencyInjectionRegistrationModel(key));
+            Cache.GetValue(compilation, key => new Lazy<DependencyInjectionRegistrationModel>(
+                () => new DependencyInjectionRegistrationModel(key))).Value;
 
         // Source binding only needs to know whether DI can supply a parameter;
         // factories and conditional registrations are deliberately included.

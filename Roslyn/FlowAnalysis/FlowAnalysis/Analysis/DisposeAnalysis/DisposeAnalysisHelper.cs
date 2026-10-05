@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using Analyzer.Utilities.Extensions;
 using Analyzer.Utilities.PooledObjects;
@@ -29,7 +30,7 @@ namespace Analyzer.Utilities
                 "System.IO.TextWriter",
                 "System.Resources.IResourceReader",
             };
-        private static readonly BoundedCacheWithFactory<Compilation, DisposeAnalysisHelper> s_DisposeHelperCache =
+        private static readonly ConditionalWeakTable<Compilation, Lazy<DisposeAnalysisHelper>> s_DisposeHelperCache =
             new();
 
         private static readonly ImmutableHashSet<OperationKind> s_DisposableCreationKinds = ImmutableHashSet.Create(
@@ -39,6 +40,7 @@ namespace Analyzer.Utilities
             OperationKind.Invocation);
 
         private readonly WellKnownTypeProvider _wellKnownTypeProvider;
+        private readonly Func<ITypeSymbol?, bool> _isDisposable;
         private readonly ImmutableHashSet<INamedTypeSymbol> _disposeOwnershipTransferLikelyTypes;
         private ConcurrentDictionary<INamedTypeSymbol, ImmutableHashSet<IFieldSymbol>>? _lazyDisposableFieldsMap;
         public INamedTypeSymbol? IDisposable { get; }
@@ -53,6 +55,7 @@ namespace Analyzer.Utilities
         private DisposeAnalysisHelper(Compilation compilation)
         {
             _wellKnownTypeProvider = WellKnownTypeProvider.GetOrCreate(compilation);
+            _isDisposable = IsDisposable;
 
             IDisposable = _wellKnownTypeProvider.GetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemIDisposable);
             IAsyncDisposable = _wellKnownTypeProvider.GetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemIAsyncDisposable);
@@ -93,7 +96,8 @@ namespace Analyzer.Utilities
 
         public static bool TryGetOrCreate(Compilation compilation, [NotNullWhen(returnValue: true)] out DisposeAnalysisHelper? disposeHelper)
         {
-            disposeHelper = s_DisposeHelperCache.GetOrCreateValue(compilation, CreateDisposeAnalysisHelper);
+            disposeHelper = s_DisposeHelperCache.GetValue(compilation, key =>
+                new Lazy<DisposeAnalysisHelper>(() => new DisposeAnalysisHelper(key))).Value;
             if (disposeHelper.IDisposable == null)
             {
                 disposeHelper = null;
@@ -101,17 +105,13 @@ namespace Analyzer.Utilities
             }
 
             return true;
-
-            // Local functions
-            static DisposeAnalysisHelper CreateDisposeAnalysisHelper(Compilation compilation)
-                => new(compilation);
         }
 
         public static Func<ITypeSymbol?, bool> GetIsDisposableDelegate(Compilation compilation)
         {
             if (TryGetOrCreate(compilation, out var disposeAnalysisHelper))
             {
-                return disposeAnalysisHelper.IsDisposable;
+                return disposeAnalysisHelper._isDisposable;
             }
 
             return _ => false;

@@ -7,6 +7,7 @@ using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using Analyzer.Utilities.Lightup;
 using Analyzer.Utilities.PooledObjects;
@@ -439,14 +440,14 @@ namespace Analyzer.Utilities.Extensions
         /// across analyzers and analyzer callbacks to re-use the control flow graph.
         /// </summary>
         /// <remarks>Also see <see cref="IMethodSymbolExtensions.s_methodToTopmostOperationBlockCache"/></remarks>
-        private static readonly BoundedCache<Compilation, ConcurrentDictionary<IOperation, ControlFlowGraph?>> s_operationToCfgCache
+        private static readonly ConditionalWeakTable<Compilation, ConcurrentDictionary<IOperation, ControlFlowGraph?>> s_operationToCfgCache
             = new();
 
         public static bool TryGetEnclosingControlFlowGraph(this IOperation operation, [NotNullWhen(returnValue: true)] out ControlFlowGraph? cfg)
         {
             operation = operation.GetRoot();
             RoslynDebug.Assert(operation.SemanticModel is not null);
-            var operationToCfgMap = s_operationToCfgCache.GetOrCreateValue(operation.SemanticModel.Compilation);
+            var operationToCfgMap = s_operationToCfgCache.GetValue(operation.SemanticModel.Compilation, _ => new());
             cfg = operationToCfgMap.GetOrAdd(operation, CreateControlFlowGraph);
             return cfg != null;
         }

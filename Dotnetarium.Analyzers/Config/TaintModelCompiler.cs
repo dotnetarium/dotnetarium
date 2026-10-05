@@ -33,7 +33,7 @@ namespace Dotnetarium.Config
             MaxInterproceduralLambdaOrLocalFunctionCallChain =
                 data.MaxInterproceduralLambdaOrLocalFunctionCallChain ?? 5;
             TaintFlowVisualizationEnabled = data.TaintFlowVisualizationEnabled ?? true;
-            MaxTaintAnalysisWork = data.MaxTaintAnalysisWork ?? 5000;
+            MaxTaintAnalysisWork = data.MaxTaintAnalysisWork ?? 10000;
             TaintConfiguration = new TaintConfiguration(data, compilation, options);
         }
 

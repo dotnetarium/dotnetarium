@@ -127,6 +127,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)SingleThreadedConcurrentDictionary.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)SharedWeakAnalysisCache.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AnalysisWorkBudget.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FlowAnalysis\Analysis\TaintedDataAnalysis\MigrationAnalysisExclusion.cs" />
   </ItemGroup>
   <ItemGroup Condition="'$(ExcludeInternalFlowAnalyses)' != 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)FlowAnalysis\Analysis\TaintedDataAnalysis\FilePathInjectionSinks.cs" />

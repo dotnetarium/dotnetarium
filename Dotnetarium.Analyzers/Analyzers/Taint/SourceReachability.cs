@@ -81,6 +81,7 @@ namespace Dotnetarium.Analyzers.Taint
                             targets.AddRange(SourceInterfaceImplementationMap.GetOrCreate(compilation).GetVirtualTargets(method));
                         foreach (var target in targets)
                         {
+                            if (MigrationAnalysisExclusion.IsExcluded(target)) continue;
                             if (IsSourceMethod(target, arguments, argumentsKnown) || target.Parameters.Any(IsSourceParameter))
                                 return RememberPossibleSource(graph);
                             var definition = (target.ReducedFrom ?? target).OriginalDefinition;

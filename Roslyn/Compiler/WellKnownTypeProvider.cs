@@ -7,6 +7,7 @@ using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using Analyzer.Utilities.Extensions;
 using Analyzer.Utilities.PooledObjects;
@@ -20,7 +21,9 @@ namespace Analyzer.Utilities
     /// </summary>
     public class WellKnownTypeProvider
     {
-        private static readonly BoundedCacheWithFactory<Compilation, WellKnownTypeProvider> s_providerCache = new();
+        // Keep metadata lookup state while its compilation is alive. An ephemeron
+        // releases the provider/compilation cycle without a global factory lock.
+        private static readonly ConditionalWeakTable<Compilation, Lazy<WellKnownTypeProvider>> s_providerCache = new();
 
         private WellKnownTypeProvider(Compilation compilation)
         {
@@ -39,10 +42,8 @@ namespace Analyzer.Utilities
 
         public static WellKnownTypeProvider GetOrCreate(Compilation compilation)
         {
-            return s_providerCache.GetOrCreateValue(compilation, CreateWellKnownTypeProvider);
-
-            // Local functions
-            static WellKnownTypeProvider CreateWellKnownTypeProvider(Compilation compilation) => new(compilation);
+            return s_providerCache.GetValue(compilation, key =>
+                new Lazy<WellKnownTypeProvider>(() => new WellKnownTypeProvider(key))).Value;
         }
 
         public Compilation Compilation { get; }

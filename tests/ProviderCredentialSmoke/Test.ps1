@@ -21,8 +21,9 @@ $restoreConfig = Join-Path $scratch 'restore.config'
 # A .git file also represents a Git worktree.
 Set-Content (Join-Path $scratch '.git') 'gitdir: /synthetic/worktree'
 $alphabet = 'aB7cD8eF9gH0jK1mN2pQ3rS4tU5vW6xYz'
-$body = -join (0..35 | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
-$token = 'ghp_' + $body
+$body = -join (0..29 | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
+# Independent zlib.crc32 vector, encoded with 0-9A-Za-z base62.
+$token = 'ghp_' + $body + '2M5jQM'
 Set-Content (Join-Path $scratch '.github/workflows/ci.yml') ('token: ' + $token)
 Set-Content (Join-Path $scratch 'obj/ignored.json') ('{"token":"' + $token + '"}')
 Set-Content (Join-Path $scratch 'nested/ignored.json') ('{"token":"' + $token + '"}')
@@ -81,6 +82,79 @@ if ($LASTEXITCODE -ne 0) { throw 'Explicit AdditionalFiles build failed.' }
 $explicit = Get-Content (Join-Path $scratch 'explicit.sarif') -Raw | ConvertFrom-Json
 if (@($explicit.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 1) { throw 'Explicit/automatic AdditionalFiles scope is incorrect.' }
 Set-Content $projectFile $originalProject
+# Real CLI checksum and scope behavior, including project AdditionalFiles.
+$casesFile = Join-Path $project 'checksum.json'
+$credentialCases = @('ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_') | ForEach-Object { $_ + $body + '2M5jQM' }
+$invalidCases = $credentialCases | ForEach-Object { $_.Substring(0, 4) + 'X' + $_.Substring(5) }
+$fineGrained = 'github_pat_' + (-join (0..81 | ForEach-Object { $alphabet[$_ % $alphabet.Length] }))
+$header = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{"alg":"RS256","typ":"JWT"}')).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+$payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{"installation_id":12345,"exp":1900000000}')).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+$stateless = 'ghs_12345_' + $header + '.' + $payload + '.' + (-join (0..63 | ForEach-Object { $alphabet[$_ % $alphabet.Length] }))
+@{ tokens = @($credentialCases) + @($invalidCases) + @($fineGrained, $stateless) } | ConvertTo-Json | Set-Content $casesFile
+& dotnet build $projectFile -c Release -v quiet -p:ErrorLog="$scratch/checksum-package.sarif,version=2.1" *> (Join-Path $scratch 'checksum-package.log')
+if ($LASTEXITCODE -ne 0) { throw 'Checksum fixture package build failed.' }
+$formatOnly = Get-Content (Join-Path $scratch 'checksum-package.sarif') -Raw | ConvertFrom-Json
+if (@($formatOnly.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 14) {
+    throw 'Analyzer package must retain format-only detection for all token layouts.'
+}
+foreach ($mode in @('project', 'no-build')) {
+    $scanModes = @(
+        @{ Name = 'checksums'; Extra = @(); Count = 10 },
+        @{ Name = 'includes'; Extra = @('--config-include', '**/checksum.json'); Count = 7 },
+        @{ Name = 'union'; Extra = @('--config-include', '**/checksum.json', '--config-include', '.github/**/*.yml'); Count = 8 },
+        @{ Name = 'excluded'; Extra = @('--config-exclude', 'src/App/checksum.json', '--config-exclude', '.github/'); Count = 2 },
+        @{ Name = 'precedence'; Extra = @('--config-include', '**/*.json', '--config-exclude', '**/checksum.json'); Count = 1 },
+        @{ Name = 'empty'; Extra = @('--config-include', '**/missing.json'); Count = 0 }
+    )
+    foreach ($case in $scanModes) {
+        $name = "$mode-$($case.Name)"
+        $output = Join-Path $scratch "$name.sarif"
+        $arguments = @($sln, '--sarif', $output, '--fail') + $case.Extra
+        if ($mode -eq 'no-build') { $arguments += '-nb' }
+        & $exe @arguments *> (Join-Path $scratch "$name.log")
+        $expectedExit = if ($case.Count -gt 0) { 1 } else { 0 }
+        if ($LASTEXITCODE -ne $expectedExit) { throw "Wrong scope/checksum exit: $name. Logs: $scratch" }
+        $raw = Get-Content $output -Raw
+        $findings = @(($raw | ConvertFrom-Json).runs.results | Where-Object ruleId -EQ 'DNA0022')
+        if ($findings.Count -ne $case.Count) { throw "Wrong scope/checksum count: $name; got $($findings.Count). Logs: $scratch" }
+        $log = Get-Content (Join-Path $scratch "$name.log") -Raw
+        foreach ($secret in @($credentialCases) + @($invalidCases) + @($fineGrained, $stateless)) {
+            if ($raw.Contains($secret) -or $log.Contains($secret)) { throw 'Credential leaked in checksum/scope output.' }
+        }
+    }
+}
+# Filtering is not limited to files discovered beneath a root: an explicit
+# linked input must also receive checksum and include/exclude policy.
+$linkedName = 'linked-credential-' + [guid]::NewGuid().ToString('N') + '.json'
+$linkedFile = Join-Path (Split-Path $scratch -Parent) $linkedName
+@{ valid = $token; invalid = $invalidCases[0] } | ConvertTo-Json | Set-Content $linkedFile
+try {
+    Set-Content $projectFile ($originalProject.Replace('</Project>', "<ItemGroup><AdditionalFiles Include=`"$linkedFile`" /></ItemGroup></Project>"))
+    foreach ($mode in @('project', 'no-build')) {
+        $output = Join-Path $scratch "linked-$mode.sarif"
+        $arguments = @($sln, '--config-include', "**/$linkedName", '--sarif', $output, '--fail')
+        if ($mode -eq 'no-build') { $arguments += '-nb' }
+        & $exe @arguments *> (Join-Path $scratch "linked-$mode.log")
+        if ($LASTEXITCODE -ne 1) { throw 'Explicit linked credential input was lost.' }
+        $linked = Get-Content $output -Raw | ConvertFrom-Json
+        if (@($linked.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 1) { throw 'Linked input bypassed checksum policy.' }
+    }
+    Set-Content $projectFile ($originalProject.Replace('</Project>', "<PropertyGroup><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><AdditionalFiles Include=`"$linkedFile`" /></ItemGroup></Project>"))
+    & $exe $sln -nb --config-include "**/$linkedName" --sarif (Join-Path $scratch 'linked-no-source.sarif') *> (Join-Path $scratch 'linked-no-source.log')
+    if ($LASTEXITCODE -ne 2) { throw 'An unusable compilation must still report its failure.' }
+    $linkedWithoutCode = Get-Content (Join-Path $scratch 'linked-no-source.sarif') -Raw | ConvertFrom-Json
+    if (@($linkedWithoutCode.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 1) {
+        throw 'An unusable compilation lost its explicit linked credential input.'
+    }
+} finally {
+    Set-Content $projectFile $originalProject
+    Remove-Item -LiteralPath $linkedFile
+}
+foreach ($badGlob in @('../outside/**', '/absolute/**', '**/*.{json,yml}', '')) {
+    & $exe $sln --config-include $badGlob *> (Join-Path $scratch 'invalid-glob.log')
+    if ($LASTEXITCODE -ne 2) { throw 'Invalid config-file glob must fail clearly.' }
+}
+Remove-Item -LiteralPath $casesFile
 # CLI policy is independent of build/IDE suppression unless explicitly requested.
 Set-Content (Join-Path $project 'Class.cs') 'public class App { public void Go() { _ = new System.Net.NetworkCredential("user", "embedded-password"); } }'
 @'
@@ -122,6 +196,13 @@ foreach ($framework in @('net8.0', 'net10.0')) {
     }
 }
 # A more specific section overrides the ancestor suppression for repository files.
+& $exe $sln -nb --config-include '**/missing.json' --sarif (Join-Path $scratch 'source-scope.sarif') --fail *> (Join-Path $scratch 'source-scope.log')
+if ($LASTEXITCODE -ne 1) { throw 'Config-file filters must not disable code analysis.' }
+$sourceScope = Get-Content (Join-Path $scratch 'source-scope.sarif') -Raw | ConvertFrom-Json
+if (@($sourceScope.runs.results | Where-Object ruleId -EQ 'DNA0009').Count -ne 1 -or
+    @($sourceScope.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 0) {
+    throw 'Config scope altered ordinary C# findings or failed to filter configs.'
+}
 @'
 [*.yml]
 dotnet_diagnostic.DNA0022.severity = suggestion

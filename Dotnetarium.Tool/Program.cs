@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
 using Dotnetarium.Analyzers;
 using Dotnetarium.Config;
+using Dotnetarium.Analyzers.Secrets;
 
 namespace Dotnetarium.Tool;
 
@@ -45,7 +46,8 @@ internal static class Program
                 : "Scan mode: project (default).");
             var configRoot = ConfigurationFileScanner.FindRoot(target);
             var outputRoot = configRoot;
-            var diagnostics = new ConcurrentBag<Diagnostic>(ConfigurationFileScanner.Scan(configRoot, report));
+            var configScanner = new ConfigurationFileScanner(report, options.ConfigScope);
+            var diagnostics = new ConcurrentBag<Diagnostic>(configScanner.Scan(configRoot));
             ScanInputs? loadedInputs = null;
             try
             {
@@ -66,11 +68,11 @@ internal static class Program
             {
                 var relative = Path.GetRelativePath(configRoot, projectRoot);
                 if (relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(relative))
-                    foreach (var finding in ConfigurationFileScanner.Scan(projectRoot, report)) diagnostics.Add(finding);
+                    foreach (var finding in configScanner.Scan(projectRoot)) diagnostics.Add(finding);
             }
 
             var analyzerTypes = typeof(DnaRuleCatalog).Assembly.GetTypes()
-                .Where(type => !type.IsAbstract && typeof(DiagnosticAnalyzer).IsAssignableFrom(type) &&
+                .Where(type => type != typeof(ProviderCredentialAnalyzer) && !type.IsAbstract && typeof(DiagnosticAnalyzer).IsAssignableFrom(type) &&
                                type.GetCustomAttributes(typeof(DiagnosticAnalyzerAttribute), false).Length > 0)
                 .OrderBy(type => type.FullName, StringComparer.Ordinal)
                 .ToArray();
@@ -85,6 +87,16 @@ internal static class Program
                     .ThenBy(project => project.Name, StringComparer.Ordinal),
                 new ParallelOptions { MaxDegreeOfParallelism = projectConcurrency }, async (project, cancellationToken) =>
             {
+                var additionalFiles = project.AnalyzerOptions.AdditionalFiles;
+                // Scan each configuration input once with CLI scope/checksum
+                // policy, including when this project's compilation is unusable.
+                // The format-only analyzer would bypass the CLI filters.
+                var projectDirectory = project.FilePath == null ? root : Path.GetDirectoryName(project.FilePath)!;
+                var configScanRoot = Path.GetRelativePath(configRoot, projectDirectory);
+                var additionalRoot = configScanRoot == ".." || configScanRoot.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                    Path.IsPathRooted(configScanRoot) ? projectDirectory : configRoot;
+                foreach (var file in additionalFiles)
+                    foreach (var finding in configScanner.ScanAdditional(additionalRoot, file)) diagnostics.Add(finding);
                 GeneratorCoverage.Observe(project, report);
                 var compilation = await project.GetCompilationAsync();
                 if (compilation == null || !compilation.SyntaxTrees.Any() ||
@@ -95,7 +107,6 @@ internal static class Program
                     return;
                 }
 
-                var additionalFiles = project.AnalyzerOptions.AdditionalFiles;
                 if (options.ConfigPath != null)
                     additionalFiles = additionalFiles
                         .Where(file => !IsConfigurationFile(file.Path))
@@ -201,6 +212,8 @@ internal static class Program
         "  --config <path>            Override dotnetarium.json (version 2.0)\n" +
         "  --fail                     Return 1 when findings are present\n" +
         "  --respect-editorconfig     Apply configured rule severity and suppression\n" +
+        "  --config-include <glob>    Include matching config files (repeatable)\n" +
+        "  --config-exclude <glob>    Exclude matching config files (repeatable)\n" +
         "  -nb, --no-build            Experimental: scan without targets, restore or generators\n" +
         "  --configuration <name>     Select configuration (default: Debug)\n" +
         "  --framework <net8.0|net10.0> Select root target framework\n" +
@@ -219,12 +232,15 @@ internal static class Program
         string.Equals(Path.GetFileName(path), "dotnetarium.json", StringComparison.OrdinalIgnoreCase);
 
     private sealed record Options(string Target, string? SarifPath, string? ConfigPath,
-        bool Fail, bool NoBuild, string? Configuration, string? Framework, bool RespectEditorConfig)
+        bool Fail, bool NoBuild, string? Configuration, string? Framework, bool RespectEditorConfig,
+        ConfigurationScanScope ConfigScope)
     {
         internal static Options Parse(string[] args)
         {
             string? target = null, sarif = null, config = null, configuration = null, framework = null;
             bool fail = false, noBuild = false, respectEditorConfig = false;
+            var configIncludes = new List<string>();
+            var configExcludes = new List<string>();
             for (int index = 0; index < args.Length; index++)
             {
                 var arg = args[index];
@@ -236,6 +252,8 @@ internal static class Program
                     case "--config": config = NextValue(); break;
                     case "--fail": fail = true; break;
                     case "--respect-editorconfig": respectEditorConfig = true; break;
+                    case "--config-include": configIncludes.Add(NextValue()); break;
+                    case "--config-exclude": configExcludes.Add(NextValue()); break;
                     case "-nb": case "--no-build": noBuild = true; break;
                     case "--configuration": configuration = NextValue(); break;
                     case "--framework": framework = NextValue(); break;
@@ -254,7 +272,8 @@ internal static class Program
                 throw new ArgumentException("Provide a nonempty configuration name.");
             if (framework != null && framework is not ("net8.0" or "net10.0"))
                 throw new ArgumentException("--framework must be net8.0 or net10.0.");
-            return new Options(target, sarif, config, fail, noBuild, configuration, framework, respectEditorConfig);
+            return new Options(target, sarif, config, fail, noBuild, configuration, framework, respectEditorConfig,
+                new ConfigurationScanScope(configIncludes, configExcludes));
         }
     }
 }

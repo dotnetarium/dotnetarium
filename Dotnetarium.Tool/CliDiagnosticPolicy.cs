@@ -30,8 +30,6 @@ internal static class CliDiagnosticPolicy
         {
             public override bool TryGetValue(string key, out string value)
             {
-                if (key.Equals(CredentialDiagnosticPolicy.IgnoreEditorConfigOption, StringComparison.OrdinalIgnoreCase))
-                { value = "true"; return true; }
                 // Preserve build metadata and Dotnetarium feature settings (such
                 // as test-certificate opt-in). Discard diagnostic/code-quality
                 // policy that can silence or exclude checks from this scan.

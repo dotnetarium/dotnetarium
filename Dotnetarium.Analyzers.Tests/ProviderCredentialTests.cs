@@ -68,6 +68,22 @@ public sealed class ProviderCredentialTests
         Assert.False(ProviderCredentialAnalyzer.IsConfigurationPath("secret.dll"));
     }
 
+    [Fact]
+    public void Detects_stateless_installation_tokens_without_assuming_classic_length_or_checksum()
+    {
+        var header = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("{\"alg\":\"RS256\",\"typ\":\"JWT\"}"))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var payload = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("{\"installation_id\":12345}"))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var token = "ghs_12345_" + header + "." + payload + "." + Body(64);
+        var diagnostic = Assert.Single(ProviderCredentialAnalyzer.Scan("config.json", SourceText.From("token=" + token)));
+        Assert.Equal(new TextSpan(6, token.Length), diagnostic.Location.SourceSpan);
+        Assert.DoesNotContain(token, diagnostic.GetMessage());
+        foreach (var candidate in new[] { "x" + token, token + "é", token.Replace(header, "not_a_header"),
+            "ghs_APPID_JWT", "ghs_12345_" + header + "." + payload })
+            Assert.Empty(ProviderCredentialAnalyzer.Scan("config.json", SourceText.From(candidate)));
+    }
+
     [Theory]
     [InlineData("dotnet_diagnostic.DNA0022.severity = none", 0, DiagnosticSeverity.Warning)]
     [InlineData("dotnet_diagnostic.DNA0022.severity = warning", 1, DiagnosticSeverity.Warning)]

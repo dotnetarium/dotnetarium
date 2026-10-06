@@ -56,12 +56,24 @@ The tool accepts `.csproj`, `.sln` and `.slnx` files. Default loading uses SDK/M
 | `--config <path>` | Use a specific JSON rules configuration |
 | `--fail` | Return exit code 1 when security findings are present |
 | `--respect-editorconfig` | Opt into configured rule severity and suppression |
+| `--config-include <glob>` | Limit credential scanning to matching config paths; repeatable |
+| `--config-exclude <glob>` | Exclude matching config paths from credential scanning; repeatable |
 | `-nb`, `--no-build` | Use experimental loading without build targets, restore or generators |
 | `--configuration <name>` | Select the configuration; default is `Debug` |
 | `--framework <net8.0\|net10.0>` | Select the root projects' target framework |
 | `-h`, `--help` | Show usage |
 
 The CLI reports all enabled rules by default, independently of `.editorconfig` rule suppression. Use `--respect-editorconfig` to apply project policy to code findings and ancestor policy to independently scanned configuration files. The NuGet analyzer always honors its compiler/IDE configuration. JSON models and analysis profiles apply in both CLI policies.
+
+GitHub credentials in configuration files are scanned from the nearest Git root, so `.github/` is included even when the solution is under `src/`. Without Git, scanning starts at the project/solution directory. The CLI checks classic GitHub token checksums offline; fine-grained PATs and stateless installation tokens remain format matches. The NuGet analyzer uses format matching only. See [credential detection and file scope](docs/rules/DNA0022.md).
+
+To scan selected config paths, quote globs and repeat the options as needed:
+
+```sh
+dotnetarium src/MyApp.sln --config-include '**/*.json' --config-include '.github/**/*.yml' --config-exclude '**/fixtures/' --fail
+```
+
+Globs are relative to each printed config scan root. Includes are combined; exclusions take precedence. These options affect credential files, including explicit `AdditionalFiles`, without changing C# project selection or loading `dotnetarium.json`.
 
 ### Experimental no-build mode (2.4+)
 

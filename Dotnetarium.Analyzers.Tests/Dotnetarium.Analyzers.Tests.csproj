@@ -39,6 +39,8 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Compile Include="../Dotnetarium.Tool/GitHubTokenChecksum.cs" Link="Tool/GitHubTokenChecksum.cs" />
+    <Compile Include="../Dotnetarium.Tool/ConfigurationScanScope.cs" Link="Tool/ConfigurationScanScope.cs" />
   </ItemGroup>
 
 </Project>

@@ -6,8 +6,6 @@ namespace Dotnetarium.Analyzers.Secrets
     // does not apply source-tree severity rules to AdditionalFiles locations.
     internal static class CredentialDiagnosticPolicy
     {
-        internal const string IgnoreEditorConfigOption = "dotnetarium_cli.ignore_editorconfig";
-
         internal static Diagnostic? Apply(Diagnostic diagnostic, AnalyzerConfigSet set)
         {
             var options = set.GetOptionsForSourcePath(diagnostic.Location.GetLineSpan().Path);

@@ -23,9 +23,7 @@ namespace Dotnetarium.Analyzers.Secrets
             context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
             context.RegisterCompilationStartAction(start =>
             {
-                var ignorePolicy = start.Options.AnalyzerConfigOptionsProvider.GlobalOptions.TryGetValue(
-                    CredentialDiagnosticPolicy.IgnoreEditorConfigOption, out var value) && value == "true";
-                var configs = ignorePolicy ? null : AnalyzerConfigSet.Create(start.Options.AdditionalFiles
+                var configs = AnalyzerConfigSet.Create(start.Options.AdditionalFiles
                     .Select(file => (File: file, Path: start.Options.AnalyzerConfigOptionsProvider.GetOptions(file)
                         .TryGetValue("build_metadata.AdditionalFiles.DotnetariumPolicyPath", out var originalPath)
                             ? originalPath : file.Path))
@@ -41,7 +39,7 @@ namespace Dotnetarium.Analyzers.Secrets
                     if (text == null || text.Length > 2 * 1024 * 1024) return;
                     foreach (var diagnostic in Scan(context.AdditionalFile.Path, text, context.CancellationToken))
                     {
-                        var effective = configs == null ? diagnostic : CredentialDiagnosticPolicy.Apply(diagnostic, configs);
+                        var effective = CredentialDiagnosticPolicy.Apply(diagnostic, configs);
                         if (effective != null) context.ReportDiagnostic(effective);
                     }
                 });
@@ -51,7 +49,7 @@ namespace Dotnetarium.Analyzers.Secrets
         // Bounded token families only. ASCII is intentional: .NET's \\w also
         // accepts Unicode. Both boundaries prevent matching part of a longer value.
         private static readonly Regex GitHubToken = new Regex(
-            @"(?<![\p{L}\p{N}_-])(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82})(?![\p{L}\p{N}_-])",
+            @"(?<![\p{L}\p{N}_-])(?:ghs_[A-Za-z0-9]{1,32}_eyJ[A-Za-z0-9_-]{10,2048}\.[A-Za-z0-9_-]{10,8192}\.[A-Za-z0-9_-]{20,2048}|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82})(?![\p{L}\p{N}_-])",
             RegexOptions.CultureInvariant | RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
         internal static bool IsConfigurationPath(string path)
@@ -69,7 +67,8 @@ namespace Dotnetarium.Analyzers.Secrets
             }
         }
 
-        internal static IEnumerable<Diagnostic> Scan(string path, SourceText text, CancellationToken cancellationToken = default)
+        internal static IEnumerable<Diagnostic> Scan(string path, SourceText text, CancellationToken cancellationToken = default,
+            Func<string, bool>? acceptToken = null)
         {
             // Scan line by line: no unbounded regex input and no token copies in messages.
             foreach (var line in text.Lines)
@@ -84,6 +83,7 @@ namespace Dotnetarium.Analyzers.Secrets
                     if (body.Distinct().Count() < 5 ||
                         body.IndexOf("EXAMPLE", StringComparison.OrdinalIgnoreCase) >= 0 ||
                         body.IndexOf("PLACEHOLDER", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                    if (acceptToken != null && !acceptToken(match.Value)) continue;
                     var span = new TextSpan(line.Start + match.Index, match.Length);
                     var location = Location.Create(path, span, text.Lines.GetLinePositionSpan(span));
                     var kind = match.Value.StartsWith("github_pat_", StringComparison.Ordinal) ? "fine-grained personal access token" :

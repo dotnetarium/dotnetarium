@@ -16,6 +16,6 @@ internal static class LocalSourceTestOptions
     {
         public override string Path => "dotnetarium.json";
         public override SourceText GetText(CancellationToken cancellationToken = default) =>
-            SourceText.From("""{"Version":"2.0","ThreatModels":["remote","local"]}""");
+            SourceText.From("""{"Version":"2.0","ThreatModels":["remote","local"],"AnalysisProfile":"full"}""");
     }
 }

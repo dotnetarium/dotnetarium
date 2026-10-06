@@ -109,7 +109,7 @@ internal static class Program
                 else if (!configOptions.GlobalOptions.TryGetValue("build_property.IsTestProject", out _) && inputs.MSBuildPath != null)
                     configOptions = await ProjectAnalysisOptions.WithTestProjectMetadataAsync(configOptions, project.FilePath!, inputs.MSBuildPath,
                         selection.Configuration, ScanSelection.FrameworkOf(project));
-                var analyzerOptions = new AnalyzerOptions(additionalFiles, configOptions);
+                var analyzerOptions = new AnalyzerOptions(additionalFiles, new AnalysisProfileOptions(configOptions));
                 var result = await compilation.WithAnalyzers(analyzers, analyzerOptions).GetAllDiagnosticsAsync();
                 report.AnalyzedProjects.Add(project.Name);
                 var projectErrors = result.Where(diagnostic =>

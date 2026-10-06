@@ -1,8 +1,5 @@
 {
   "ThreatModels": [ "remote" ],
-  "MaxInterproceduralMethodCallChain": 5,
-  "MaxInterproceduralLambdaOrLocalFunctionCallChain": 5,
-  "MaxTaintAnalysisWork": 10000,
   "TaintFlowVisualizationEnabled": true,
   "TaintEntryPoints": {
     "CommandLine": {

@@ -11,6 +11,7 @@ namespace Dotnetarium.Config
     internal sealed class ConfigData
     {
         public string Version { get; set; }
+        public AnalysisProfile? AnalysisProfile { get; set; }
         public HashSet<SourceScope> ThreatModels { get; set; }
         public uint? MaxInterproceduralMethodCallChain { get; set; }
         public uint? MaxInterproceduralLambdaOrLocalFunctionCallChain { get; set; }

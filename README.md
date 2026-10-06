@@ -99,6 +99,18 @@ Remote input sources are enabled by default. To also check console input, proces
 
 Custom JSON models extend built-in sources, sinks, sanitizers and transfers. Model the actual trust boundary rather than marking every DTO or database string as untrusted. See the [configuration guide](docs/RuleConfiguration.md) for examples, input scope and work-budget settings.
 
+### Analysis profiles
+
+| Profile | Default host | Method and lambda/local-function depth | Work units per method/rule |
+| --- | --- | --- | --- |
+| `fast` | NuGet analyzer in builds and IDEs | 3 | 1,000 |
+| `full` | Global tool, including no-build scans | 5 | 5,000 |
+| `max` | Explicit opt-in for deeper analysis | 10 | 10,000 |
+
+All profiles use the same rules and input models. Fast analysis favors feedback during development; full and max explore deeper flows. To select a profile for the NuGet analyzer or tool, add `"AnalysisProfile": "full"` or `"AnalysisProfile": "max"` to `dotnetarium.json`. Individual numeric limits override profile defaults. See [profile configuration](docs/RuleConfiguration.md#analysis-profiles-and-call-depth).
+
+Fast analysis stops a method when it reaches its work or call-depth limit and summarizes partial coverage once per rule with `DNA9000`. It does not infer a finding through an unvisited helper. Use full analysis for deeper checks before release.
+
 Rules report warnings by default. Change severity or suppress a rule using `.editorconfig`:
 
 ```ini

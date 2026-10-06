@@ -613,5 +613,6 @@ if ($LASTEXITCODE -ne 1 -or @((Get-Content -LiteralPath $scopeOverrideSarif -Raw
     throw 'Explicit CLI configuration did not replace project source selection.'
 }
 
+. (Join-Path $PSScriptRoot 'Test-Profiles.ps1')
 'Analyzer NuGet package and global tool scan .NET 8/10; source selection, custom JSON, relative SARIF, and compiler error checks passed.' | Write-Output
 exit 0

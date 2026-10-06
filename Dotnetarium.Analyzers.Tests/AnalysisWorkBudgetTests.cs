@@ -75,7 +75,7 @@ public sealed class AnalysisWorkBudgetTests
                 public static void Ordinary() => Process.Start(Console.ReadLine());
             }
             """);
-        var options = new AnalyzerOptions([new ConfigFile("""{"Version":"2.0","ThreatModels":["remote","local"],"MaxTaintAnalysisWork":1000}""")]);
+        var options = new AnalyzerOptions([new ConfigFile("""{"Version":"2.0","ThreatModels":["remote","local"],"AnalysisProfile":"full","MaxTaintAnalysisWork":1000}""")]);
         var driver = compilation.WithAnalyzers([new CommandInjectionTaintAnalyzer()],
             new CompilationWithAnalyzersOptions(options, null, concurrent, false, false));
         var diagnostics = await driver.GetAnalyzerDiagnosticsAsync();

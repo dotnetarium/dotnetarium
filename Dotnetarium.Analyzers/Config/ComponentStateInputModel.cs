@@ -175,7 +175,8 @@ namespace Dotnetarium.Config
             var kind = (SinkKind)(int)TaintType.CrossSiteScripting;
             return TaintedDataAnalysis.TryGetOrComputeResult(graph, compilation, method, options, DnaRuleCatalog.CrossSiteScripting,
                 configuration.GetSourceSymbolMap(kind), configuration.GetSanitizerSymbolMap(kind), configuration.GetSinkSymbolMap(kind),
-                CancellationToken.None, 5, 5, cacheResult: false);
+                CancellationToken.None, configuration.AnalysisSettings.MethodDepth,
+                configuration.AnalysisSettings.LambdaDepth, cacheResult: false);
         }
 
         private static bool IsComponent(INamedTypeSymbol? type)

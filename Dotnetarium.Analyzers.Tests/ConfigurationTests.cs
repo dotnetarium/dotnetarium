@@ -87,7 +87,7 @@ public sealed class ConfigurationTests
         var reader = new ConfigurationReader();
         var merged = new ConfigData();
         merged.Merge(reader.GetBuiltinConfiguration());
-        Assert.Equal(10000u, merged.MaxTaintAnalysisWork);
+        Assert.Null(merged.MaxTaintAnalysisWork); // Resolved from the host/profile, not the rule catalog.
         merged.Merge(reader.GetProjectConfiguration([new TextFile("dotnetarium.json",
             """{"Version":"2.0","MaxTaintAnalysisWork":2000000}""")]));
         Assert.Equal(2000000u, merged.MaxTaintAnalysisWork);

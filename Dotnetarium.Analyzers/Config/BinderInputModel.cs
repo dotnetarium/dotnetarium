@@ -52,11 +52,13 @@ namespace Dotnetarium.Config
                 if (graph == null) continue;
                 var result = TaintedDataAnalysis.TryGetOrComputeResult(graph, compilation, method, options,
                     DnaRuleCatalog.CommandInjection, configuration.GetSourceSymbolMap(kind), configuration.GetSanitizerSymbolMap(kind),
-                    configuration.GetSinkSymbolMap(kind), CancellationToken.None, 5, 5);
+                    configuration.GetSinkSymbolMap(kind), CancellationToken.None,
+                    configuration.AnalysisSettings.MethodDepth, configuration.AnalysisSettings.LambdaDepth);
                 if (result == null) continue;
                 var points = PointsToAnalysis.TryGetOrComputeResult(graph, method, options, WellKnownTypeProvider.GetOrCreate(compilation),
                     PointsToAnalysisKind.Complete, InterproceduralAnalysisConfiguration.Create(options, DnaRuleCatalog.CommandInjection,
-                        graph, compilation, InterproceduralAnalysisKind.ContextSensitive, CancellationToken.None, 5, 5), null);
+                        graph, compilation, InterproceduralAnalysisKind.ContextSensitive, CancellationToken.None,
+                        configuration.AnalysisSettings.MethodDepth, configuration.AnalysisSettings.LambdaDepth), null);
                 if (points == null) continue;
                 var returnedLocations = graph.Blocks.Where(block => block.FallThroughSuccessor?.Semantics == ControlFlowBranchSemantics.Return)
                     .Select(block => UnwrapResult(block.BranchValue)).Where(value => value != null)

@@ -2245,6 +2245,9 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
             if (currentMethodCallCount >= MaxInterproceduralMethodCallChain ||
                 currentLambdaOrLocalFunctionCallCount >= MaxInterproceduralLambdaOrLocalFunctionCallChain)
             {
+                // Fast analysis must not turn an unvisited source helper into
+                // a speculative taint transfer (for example, a deeper cleaner).
+                AnalysisWorkBudget.ReachDepthLimit();
                 return ResetAnalysisDataAndReturnDefaultValue();
             }
 

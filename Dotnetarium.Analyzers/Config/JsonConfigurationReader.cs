@@ -24,6 +24,7 @@ namespace Dotnetarium.Config
                 UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
             };
             options.Converters.Add(new JsonStringEnumConverter<SourceScope>(allowIntegerValues: false));
+            options.Converters.Add(new JsonStringEnumConverter<AnalysisProfile>(allowIntegerValues: false));
             options.Converters.Add(new JsonStringEnumConverter());
             options.Converters.Add(new StringPairArrayConverter());
             options.Converters.Add(new IntObjectPairArrayConverter());
@@ -135,6 +136,7 @@ namespace Dotnetarium.Config
 
             target.TaintFlowVisualizationEnabled = overlay.TaintFlowVisualizationEnabled ??
                                                    target.TaintFlowVisualizationEnabled;
+            target.AnalysisProfile = overlay.AnalysisProfile ?? target.AnalysisProfile;
             target.MaxInterproceduralMethodCallChain = overlay.MaxInterproceduralMethodCallChain ??
                                                         target.MaxInterproceduralMethodCallChain;
             target.MaxInterproceduralLambdaOrLocalFunctionCallChain =

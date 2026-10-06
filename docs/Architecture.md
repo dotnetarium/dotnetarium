@@ -14,6 +14,10 @@ sanitizer, and transfer models. Projects can extend those models with a
 `dotnetarium.json` additional file; the tool finds it beside a project or solution and accepts an override with `--config`.
 The JSON schema and examples are in [RuleConfiguration.md](RuleConfiguration.md).
 Public diagnostics use sequential `DNA` IDs. CWE numbers are metadata.
+The package defaults to a fast taint profile for build/IDE feedback; the tool
+defaults to full analysis. Project profiles and explicit numeric limits override
+host defaults. Both retain the same rule catalog and models; see
+[analysis profiles](RuleConfiguration.md#analysis-profiles-and-call-depth).
 
 ## Flow engine
 

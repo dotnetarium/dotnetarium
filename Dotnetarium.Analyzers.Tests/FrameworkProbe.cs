@@ -18,7 +18,8 @@ internal static class FrameworkProbe
         Assert.Empty(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
         var diagnostics = await compilation.WithAnalyzers([analyzer],
             configuration != null ? new AnalyzerOptions([new ConfigFile(configuration)]) :
-            includeLocalSources ? LocalSourceTestOptions.Options : new AnalyzerOptions([])).GetAnalyzerDiagnosticsAsync();
+            includeLocalSources ? LocalSourceTestOptions.Options :
+            new AnalyzerOptions([new ConfigFile("""{"Version":"2.0","AnalysisProfile":"full"}""")])).GetAnalyzerDiagnosticsAsync();
         Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "AD0001");
         return diagnostics.ToArray();
     }

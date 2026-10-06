@@ -95,18 +95,76 @@ snapshots; it does not run dataflow to infer other migration values. Other direc
 rules retain their normal generated-code policy. This is a deliberate taint scope
 exclusion, not a claim that custom migration code is safe.
 
+## Analysis profiles and call depth
+
+The NuGet analyzer defaults to `fast` in compiler builds and IDE analysis. The
+global tool defaults to `full` in both loading modes. These change analysis
+effort, not enabled rules, threat models or provider models.
+
+| Profile | Source-method call depth | Lambda/local-function depth | Work units per root method/rule |
+| --- | --- | --- | --- |
+| `fast` | 3 | 3 | 1,000 |
+| `full` | 5 | 5 | 5,000 |
+| `max` | 10 | 10 | 10,000 |
+
+To opt into full analysis during a build (use `max` for the deepest preset):
+
+```json
+{
+  "Version": "2.0",
+  "AnalysisProfile": "full"
+}
+```
+
+A project profile overrides the host default, including in the CLI. Existing
+explicit numeric limits remain authoritative. For a cheaper fast profile:
+
+```json
+{
+  "Version": "2.0",
+  "AnalysisProfile": "fast",
+  "MaxInterproceduralMethodCallChain": 3,
+  "MaxInterproceduralLambdaOrLocalFunctionCallChain": 3,
+  "MaxTaintAnalysisWork": 500
+}
+```
+
+Depth bounds nested source-code calls; the work budget counts analysis steps,
+not methods. Increasing depth cannot help a root that exhausts its work budget
+first. Binder and component-state summaries honor the same configured depths.
+Direct rules such as literal secrets and crypto settings are unaffected by
+taint profiles.
+
+Fast analysis aborts the affected root at either limit, rather than guessing
+taint propagation through an unvisited source helper. Other roots continue.
+One `DNA9000` summary per public rule identifies the work/depth limits and
+counts affected methods; diagnostic properties include
+`dotnetarium.cutoffCount` and `dotnetarium.depthCutoffCount`. Completed findings
+are retained, but findings inside the aborted root may be missing. IDE hosts
+may show compilation-end summaries only after analyzing the whole compilation.
+Complex binder or cross-component Razor/Blazor flows can exceed the fast work
+budget even with shallow call chains. Select `full` for build/CI checks of these
+flows; raising only call depth does not remove a work cutoff.
+
+Full and max analysis retain the existing bounded Roslyn call-depth behavior and
+detailed per-root work-limit notices. Reaching its configured call depth can
+reduce precision/coverage without a work-limit notice; `full` is not unbounded
+analysis. Nor does SARIF `complete` mean that every possible call chain was
+explored. Profile limits are not a wall-clock or process-memory guarantee.
+
 ## Taint analysis work limit
 
-Each root method and taint rule has a default budget
-of **10,000 work units**, shared by its source/sink eligibility checks and nested
+Each root method and taint rule has a budget of **1,000 work units** in fast,
+**5,000** in full or **10,000** in max, shared by source/sink eligibility checks and nested
 points-to, value-content and taint analyses. Entering a dataflow graph, visiting a
 basic block, visiting an operation or comparing a delegate target spends one unit.
 This bounds repeated expansion of recursive or branching call trees without
 classifying all recursive code as unsafe or skipping every recursive method.
 
 When the limit is reached, analysis stops for that root and other methods and
-rules continue. The analyzer package emits **DNA9000**, identifying the rule,
-method and work counters. This is a coverage notice, not a security finding.
+rules continue. The analyzer package emits **DNA9000**: fast analysis summarizes
+affected methods per rule; full/max analysis identifies each root and its work
+counters. This is a coverage notice, not a security finding.
 The global tool writes an `analysis-budget` SARIF execution notification and
 marks the scan **partial**. Default loading returns exit code **2**, including
 with `--fail`. Experimental `-nb` / `--no-build` loading treats taint cutoffs as
@@ -124,6 +182,7 @@ To retry with a larger budget, set a positive integer in `dotnetarium.json`:
 ```json
 {
   "Version": "2.0",
+  "AnalysisProfile": "full",
   "MaxTaintAnalysisWork": 2000000
 }
 ```
@@ -131,8 +190,9 @@ To retry with a larger budget, set a positive integer in `dotnetarium.json`:
 Increasing the budget permits more work and can increase runtime and memory.
 This is a work limit, not a hard wall-clock or process-memory limit. Completed
 findings remain valid, but flows inside an aborted analysis may be missing.
-The default favors turnaround time. Large applications can
-produce many coverage notices; increase it when deeper coverage is required.
+Fast analysis favors turnaround time. Full analysis can produce many detailed
+coverage notices on large applications; increase its budget when deeper
+coverage is required and the additional runtime is acceptable.
 
 Built-in ASP.NET Core inputs include MVC controllers, Razor Pages, Blazor binding, Minimal API lambdas or named handlers, generated gRPC service overrides, and gRPC server interceptor overrides. Minimal APIs model explicit request binding, parsable parameters, upload files, and body streams. `MapPost`, `MapPut`, and `MapPatch` also infer JSON body inputs when no visible service registration or custom binder takes precedence. Explicit service attributes and visible service registrations are excluded. Mixed `[AsParameters]` aggregates preserve separate request and service members. Registrations hidden in external DI setup require an explicit service attribute to avoid assuming an implicit body. Custom binders and implicit bodies on `MapMethods` are not inferred. For gRPC details and limits, see [gRPC taint analysis](grpc-taint.md).
 

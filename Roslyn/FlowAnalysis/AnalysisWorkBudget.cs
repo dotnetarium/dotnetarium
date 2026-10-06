@@ -13,14 +13,16 @@ namespace Analyzer.Utilities
         [ThreadStatic] private static AnalysisWorkBudget? current;
         private readonly AnalysisWorkBudget? previous;
         private readonly CancellationToken cancellationToken;
+        private readonly bool stopAtDepthLimit;
         private bool disposed;
 
-        internal AnalysisWorkBudget(uint limit, CancellationToken cancellationToken)
+        internal AnalysisWorkBudget(uint limit, CancellationToken cancellationToken, bool stopAtDepthLimit = false)
         {
             if (limit == 0) throw new ArgumentOutOfRangeException(nameof(limit));
             cancellationToken.ThrowIfCancellationRequested();
             Limit = limit;
             this.cancellationToken = cancellationToken;
+            this.stopAtDepthLimit = stopAtDepthLimit;
             previous = current;
             current = this;
         }
@@ -46,6 +48,15 @@ namespace Analyzer.Utilities
             if (current is { } budget) { budget.Operations++; budget.Consume(); }
         }
 
+        internal static void ReachDepthLimit()
+        {
+            if (current is { stopAtDepthLimit: true } budget)
+            {
+                budget.cancellationToken.ThrowIfCancellationRequested();
+                throw new AnalysisDepthLimitException(budget);
+            }
+        }
+
         private void Consume()
         {
             if (++Work > Limit)
@@ -69,6 +80,13 @@ namespace Analyzer.Utilities
         internal AnalysisWorkLimitException(AnalysisWorkBudget budget)
             : base("The root dataflow analysis exhausted its work budget.") => Budget = budget;
 
+        internal AnalysisWorkBudget Budget { get; }
+    }
+
+    internal sealed class AnalysisDepthLimitException : Exception
+    {
+        internal AnalysisDepthLimitException(AnalysisWorkBudget budget)
+            : base("The root dataflow analysis reached its call-depth limit.") => Budget = budget;
         internal AnalysisWorkBudget Budget { get; }
     }
 }

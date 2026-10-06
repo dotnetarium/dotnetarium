@@ -29,12 +29,11 @@ namespace Dotnetarium.Config
 
         private Configuration(ConfigData data, Compilation compilation, AnalyzerOptions options)
         {
-            MaxInterproceduralMethodCallChain = data.MaxInterproceduralMethodCallChain ?? 5;
-            MaxInterproceduralLambdaOrLocalFunctionCallChain =
-                data.MaxInterproceduralLambdaOrLocalFunctionCallChain ?? 5;
-            TaintFlowVisualizationEnabled = data.TaintFlowVisualizationEnabled ?? true;
-            MaxTaintAnalysisWork = data.MaxTaintAnalysisWork ?? 10000;
             TaintConfiguration = new TaintConfiguration(data, compilation, options);
+            MaxInterproceduralMethodCallChain = TaintConfiguration.AnalysisSettings.MethodDepth;
+            MaxInterproceduralLambdaOrLocalFunctionCallChain = TaintConfiguration.AnalysisSettings.LambdaDepth;
+            TaintFlowVisualizationEnabled = data.TaintFlowVisualizationEnabled ?? true;
+            MaxTaintAnalysisWork = TaintConfiguration.AnalysisSettings.Work;
         }
 
         public uint MaxInterproceduralMethodCallChain { get; }
@@ -62,10 +61,12 @@ namespace Dotnetarium.Config
         private readonly ConcurrentDictionary<SinkKind, TaintedDataSymbolMap<SinkInfo>> sinkMaps = new();
         private readonly ConcurrentDictionary<SinkKind, SinkReachability> sinkReachability = new();
         private readonly ConcurrentDictionary<SinkKind, SourceReachability> sourceReachability = new();
+        internal TaintAnalysisSettings AnalysisSettings { get; }
 
         public TaintConfiguration(ConfigData model, Compilation compilation, AnalyzerOptions options)
         {
             this.model = model;
+            AnalysisSettings = new TaintAnalysisSettings(model, options);
             remoteEnabled = model.ThreatModels == null || model.ThreatModels.Contains(SourceScope.Remote);
             localEnabled = model.ThreatModels?.Contains(SourceScope.Local) == true;
             this.compilation = compilation;

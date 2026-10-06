@@ -66,7 +66,7 @@ foreach ($mode in @('project', 'no-build')) {
     if ($raw.Contains($token) -or (Get-Content (Join-Path $scratch "$mode.log") -Raw).Contains($token)) { throw 'Credential leaked in output.' }
 }
 # The same solution outside Git is restricted to its containing directory.
-Remove-Item -LiteralPath (Join-Path $scratch '.git')
+Remove-Item -LiteralPath (Join-Path $scratch '.git') -Force
 & $exe $sln -nb --sarif (Join-Path $scratch 'outside-git.sarif') *> (Join-Path $scratch 'outside-git.log')
 if ($LASTEXITCODE -ne 0) { throw 'Outside-Git scan failed.' }
 $outside = Get-Content (Join-Path $scratch 'outside-git.sarif') -Raw | ConvertFrom-Json
@@ -223,3 +223,5 @@ if ($LASTEXITCODE -ne 2) { throw 'Expected project-load failure exit 2.' }
 $failed = Get-Content (Join-Path $scratch 'failed.sarif') -Raw | ConvertFrom-Json
 if (@($failed.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 3) { throw 'Lost config findings on project-load failure.' }
 Write-Host "Provider credential package and CLI smoke passed. Fixtures: $scratch"
+# Expected scanner failures above must not become the smoke script's exit code.
+exit 0

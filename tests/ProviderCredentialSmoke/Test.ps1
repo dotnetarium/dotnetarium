@@ -48,11 +48,29 @@ $analyzer = Get-Content (Join-Path $scratch 'analyzer.sarif') -Raw | ConvertFrom
 $packageFindings = @($analyzer.runs.results | Where-Object ruleId -EQ 'DNA0022')
 if ($packageFindings.Count -ne 2) { throw "Expected two project config findings; got $($packageFindings.Count). Logs: $scratch" }
 $exe = Join-Path $tool $(if ($IsWindows) { 'dotnetarium.exe' } else { 'dotnetarium' })
+# Unix PowerShell expands globs in native array splatting, even when the array
+# was constructed from quoted strings. ArgumentList preserves each literal.
+function Invoke-CredentialScan([string[]] $ScanArguments, [string] $LogPath) {
+    $start = [Diagnostics.ProcessStartInfo]::new($exe)
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    foreach ($argument in $ScanArguments) { $start.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        [IO.File]::WriteAllText($LogPath, $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult())
+        $global:LASTEXITCODE = $process.ExitCode
+    } finally { $process.Dispose() }
+}
 foreach ($mode in @('project', 'no-build')) {
     $output = Join-Path $scratch "$mode.sarif"
     $arguments = @($sln, '--sarif', $output, '--fail')
     if ($mode -eq 'no-build') { $arguments += '-nb' }
-    & $exe @arguments *> (Join-Path $scratch "$mode.log")
+    Invoke-CredentialScan $arguments (Join-Path $scratch "$mode.log")
     if ($LASTEXITCODE -ne 1) { throw "Expected --fail exit 1 for $mode; got $LASTEXITCODE. Logs: $scratch" }
     $raw = Get-Content $output -Raw
     $sarif = $raw | ConvertFrom-Json
@@ -67,7 +85,7 @@ foreach ($mode in @('project', 'no-build')) {
 }
 # The same solution outside Git is restricted to its containing directory.
 Remove-Item -LiteralPath (Join-Path $scratch '.git') -Force
-& $exe $sln -nb --sarif (Join-Path $scratch 'outside-git.sarif') *> (Join-Path $scratch 'outside-git.log')
+Invoke-CredentialScan @($sln, '-nb', '--sarif', (Join-Path $scratch 'outside-git.sarif')) (Join-Path $scratch 'outside-git.log')
 if ($LASTEXITCODE -ne 0) { throw 'Outside-Git scan failed.' }
 $outside = Get-Content (Join-Path $scratch 'outside-git.sarif') -Raw | ConvertFrom-Json
 if (@($outside.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 2) { throw 'Outside-Git scan escaped the solution directory.' }
@@ -111,9 +129,12 @@ foreach ($mode in @('project', 'no-build')) {
         $output = Join-Path $scratch "$name.sarif"
         $arguments = @($sln, '--sarif', $output, '--fail') + $case.Extra
         if ($mode -eq 'no-build') { $arguments += '-nb' }
-        & $exe @arguments *> (Join-Path $scratch "$name.log")
+        Invoke-CredentialScan $arguments (Join-Path $scratch "$name.log")
         $expectedExit = if ($case.Count -gt 0) { 1 } else { 0 }
-        if ($LASTEXITCODE -ne $expectedExit) { throw "Wrong scope/checksum exit: $name. Logs: $scratch" }
+        if ($LASTEXITCODE -ne $expectedExit) {
+            Get-Content (Join-Path $scratch "$name.log") -Tail 20 | Write-Output
+            throw "Wrong scope/checksum exit: $name. Logs: $scratch"
+        }
         $raw = Get-Content $output -Raw
         $findings = @(($raw | ConvertFrom-Json).runs.results | Where-Object ruleId -EQ 'DNA0022')
         if ($findings.Count -ne $case.Count) { throw "Wrong scope/checksum count: $name; got $($findings.Count). Logs: $scratch" }
@@ -134,13 +155,13 @@ try {
         $output = Join-Path $scratch "linked-$mode.sarif"
         $arguments = @($sln, '--config-include', "**/$linkedName", '--sarif', $output, '--fail')
         if ($mode -eq 'no-build') { $arguments += '-nb' }
-        & $exe @arguments *> (Join-Path $scratch "linked-$mode.log")
+        Invoke-CredentialScan $arguments (Join-Path $scratch "linked-$mode.log")
         if ($LASTEXITCODE -ne 1) { throw 'Explicit linked credential input was lost.' }
         $linked = Get-Content $output -Raw | ConvertFrom-Json
         if (@($linked.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 1) { throw 'Linked input bypassed checksum policy.' }
     }
     Set-Content $projectFile ($originalProject.Replace('</Project>', "<PropertyGroup><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><AdditionalFiles Include=`"$linkedFile`" /></ItemGroup></Project>"))
-    & $exe $sln -nb --config-include "**/$linkedName" --sarif (Join-Path $scratch 'linked-no-source.sarif') *> (Join-Path $scratch 'linked-no-source.log')
+    Invoke-CredentialScan @($sln, '-nb', '--config-include', "**/$linkedName", '--sarif', (Join-Path $scratch 'linked-no-source.sarif')) (Join-Path $scratch 'linked-no-source.log')
     if ($LASTEXITCODE -ne 2) { throw 'An unusable compilation must still report its failure.' }
     $linkedWithoutCode = Get-Content (Join-Path $scratch 'linked-no-source.sarif') -Raw | ConvertFrom-Json
     if (@($linkedWithoutCode.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 1) {
@@ -151,7 +172,7 @@ try {
     Remove-Item -LiteralPath $linkedFile
 }
 foreach ($badGlob in @('../outside/**', '/absolute/**', '**/*.{json,yml}', '')) {
-    & $exe $sln --config-include $badGlob *> (Join-Path $scratch 'invalid-glob.log')
+    Invoke-CredentialScan @($sln, '--config-include', $badGlob) (Join-Path $scratch 'invalid-glob.log')
     if ($LASTEXITCODE -ne 2) { throw 'Invalid config-file glob must fail clearly.' }
 }
 Remove-Item -LiteralPath $casesFile
@@ -179,7 +200,7 @@ foreach ($framework in @('net8.0', 'net10.0')) {
             $arguments = @($sln, '--sarif', $output, '--fail')
             if ($mode -eq 'no-build') { $arguments += '-nb' }
             if ($respect) { $arguments += '--respect-editorconfig' }
-            & $exe @arguments *> (Join-Path $scratch "$name.log")
+            Invoke-CredentialScan $arguments (Join-Path $scratch "$name.log")
             $expectedExit = if ($respect) { 0 } else { 1 }
             if ($LASTEXITCODE -ne $expectedExit) { throw "Unexpected CLI policy exit for $name. Logs: $scratch" }
             $policy = Get-Content $output -Raw | ConvertFrom-Json
@@ -196,7 +217,7 @@ foreach ($framework in @('net8.0', 'net10.0')) {
     }
 }
 # A more specific section overrides the ancestor suppression for repository files.
-& $exe $sln -nb --config-include '**/missing.json' --sarif (Join-Path $scratch 'source-scope.sarif') --fail *> (Join-Path $scratch 'source-scope.log')
+Invoke-CredentialScan @($sln, '-nb', '--config-include', '**/missing.json', '--sarif', (Join-Path $scratch 'source-scope.sarif'), '--fail') (Join-Path $scratch 'source-scope.log')
 if ($LASTEXITCODE -ne 1) { throw 'Config-file filters must not disable code analysis.' }
 $sourceScope = Get-Content (Join-Path $scratch 'source-scope.sarif') -Raw | ConvertFrom-Json
 if (@($sourceScope.runs.results | Where-Object ruleId -EQ 'DNA0009').Count -ne 1 -or
@@ -207,7 +228,7 @@ if (@($sourceScope.runs.results | Where-Object ruleId -EQ 'DNA0009').Count -ne 1
 [*.yml]
 dotnet_diagnostic.DNA0022.severity = suggestion
 '@ | Set-Content (Join-Path $scratch '.github/workflows/.editorconfig')
-& $exe $sln -nb --respect-editorconfig --sarif (Join-Path $scratch 'nested-policy.sarif') --fail *> (Join-Path $scratch 'nested-policy.log')
+Invoke-CredentialScan @($sln, '-nb', '--respect-editorconfig', '--sarif', (Join-Path $scratch 'nested-policy.sarif'), '--fail') (Join-Path $scratch 'nested-policy.log')
 if ($LASTEXITCODE -ne 1) { throw 'Nested severity override did not restore the finding.' }
 $nested = Get-Content (Join-Path $scratch 'nested-policy.sarif') -Raw | ConvertFrom-Json
 $nestedFindings = @($nested.runs.results | Where-Object ruleId -EQ 'DNA0022')
@@ -218,7 +239,7 @@ if ($nestedFindings.Count -ne 1 -or $nestedFindings[0].level -ne 'note' -or
 Set-Content $projectFile $originalProject
 # Independent config results must survive project-loading failure.
 Set-Content $projectFile '<invalid'
-& $exe $sln --sarif (Join-Path $scratch 'failed.sarif') *> (Join-Path $scratch 'failed.log')
+Invoke-CredentialScan @($sln, '--sarif', (Join-Path $scratch 'failed.sarif')) (Join-Path $scratch 'failed.log')
 if ($LASTEXITCODE -ne 2) { throw 'Expected project-load failure exit 2.' }
 $failed = Get-Content (Join-Path $scratch 'failed.sarif') -Raw | ConvertFrom-Json
 if (@($failed.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 3) { throw 'Lost config findings on project-load failure.' }

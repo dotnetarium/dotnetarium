@@ -48,7 +48,7 @@ internal sealed class ConfigurationFileScanner(ScanReport report, ConfigurationS
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             { report.Warn("config-directory-read", $"Could not read config directory: {Path.GetRelativePath(root, directory)}"); }
         }
-        Console.WriteLine($"Config scan root: {root}; {count} file(s) scanned (GitHub credentials).");
+        Console.WriteLine($"Config scan root: {root}; {count} file(s) scanned (provider credentials).");
         return findings;
     }
 

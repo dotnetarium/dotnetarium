@@ -22,8 +22,11 @@ internal sealed class GitHubSecretVerifier : IDisposable
         client.Timeout = TimeSpan.FromSeconds(5);
     }
 
-    internal void Capture(Diagnostic diagnostic, string token) =>
-        candidates[(diagnostic.Location.GetLineSpan().Path, diagnostic.Location.SourceSpan.Start)] = token;
+    internal void Capture(Diagnostic diagnostic, string token)
+    {
+        if (diagnostic.Properties.TryGetValue("dotnetarium.provider", out var provider) && provider == "github")
+            candidates[(diagnostic.Location.GetLineSpan().Path, diagnostic.Location.SourceSpan.Start)] = token;
+    }
 
     internal async Task<Diagnostic[]> VerifyAsync(Diagnostic[] findings)
     {
@@ -35,15 +38,22 @@ internal sealed class GitHubSecretVerifier : IDisposable
             for (var i = 0; i < findings.Length; i++)
             {
                 var finding = findings[i];
-                if (finding.Id != "DNA0022" || !candidates.TryGetValue(
-                    (finding.Location.GetLineSpan().Path, finding.Location.SourceSpan.Start), out var token))
+                if (finding.Id != "DNA0022")
                 { result[i] = finding; continue; }
-                var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
-                if (!cache.TryGetValue(identity, out var verification))
+                Verification verification;
+                if (finding.Properties.TryGetValue("dotnetarium.provider", out var provider) && provider != "github")
+                    verification = new("unknown", "provider-verification-not-supported");
+                else if (candidates.TryGetValue(
+                    (finding.Location.GetLineSpan().Path, finding.Location.SourceSpan.Start), out var token))
                 {
-                    verification = await CheckAsync(token, budget.Token);
-                    cache.Add(identity, verification);
+                    var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+                    if (!cache.TryGetValue(identity, out verification!))
+                    {
+                        verification = await CheckAsync(token, budget.Token);
+                        cache.Add(identity, verification);
+                    }
                 }
+                else { result[i] = finding; continue; }
                 result[i] = Diagnostic.Create(finding.Id, finding.Descriptor.Category,
                     finding.GetMessage(), finding.Severity, finding.DefaultSeverity,
                     finding.Descriptor.IsEnabledByDefault, finding.Severity == DiagnosticSeverity.Error ? 0 : 1,

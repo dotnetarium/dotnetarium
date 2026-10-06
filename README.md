@@ -15,7 +15,7 @@ Use the **NuGet analyzer** for build and IDE warnings, or the **global tool** to
 | Cryptography | Legacy ciphers (`DNA0013`), ECB (`DNA0014`), fixed IVs/nonces (`DNA0015`), low PBKDF2 work factors (`DNA0016`), literal post-quantum private keys (`DNA0017`) |
 | Transport configuration | Detailed gRPC errors (`DNA0018`), gRPC call credentials over plaintext (`DNA0019`), accept-all TLS certificate callbacks (`DNA0020`) |
 
-Configuration files are also checked for recognizable GitHub secret tokens (`DNA0022`). The CLI scans the containing Git repository, including root workflows when the solution is in `src/`; outside Git it scans the solution/project directory. The NuGet analyzer checks project configuration through automatically included `AdditionalFiles`. Detection is offline by default; the CLI can optionally verify credentials with GitHub. Token values are omitted from output. See [configuration credential scanning](docs/rules/DNA0022.md) for scope and supported formats.
+Configuration files are also checked for recognizable provider credentials (`DNA0022`): GitHub, AWS, Azure, Google Cloud, DigitalOcean, Vault, Terraform Cloud and GitLab. The CLI scans the containing Git repository, including root workflows when the solution is in `src/`; outside Git it scans the solution/project directory. The NuGet analyzer checks project configuration through automatically included `AdditionalFiles`. Detection is offline by default; the CLI can optionally verify GitHub credentials. Secret values are omitted from output. See [configuration credential scanning](docs/rules/DNA0022.md) for scope and supported formats.
 
 Models cover framework APIs and selected provider APIs, including ADO.NET, EF Core, Dapper, Npgsql/PostgreSQL, SharpCompress, Markdig, Bouncy Castle, NSec and Sodium.Core. Coverage is specific to modeled APIs; using a library does not make every call unsafe. See the [rule notes](docs/rules) for supported sinks, safe alternatives and limitations.
 
@@ -66,7 +66,7 @@ The tool accepts `.csproj`, `.sln` and `.slnx` files. Default loading uses SDK/M
 
 The CLI reports all enabled rules by default, independently of `.editorconfig` rule suppression. Use `--respect-editorconfig` to apply project policy to code findings and ancestor policy to independently scanned configuration files. The NuGet analyzer always honors its compiler/IDE configuration. JSON models and analysis profiles apply in both CLI policies.
 
-GitHub credentials in configuration files are scanned from the nearest Git root, so `.github/` is included even when the solution is under `src/`. Without Git, scanning starts at the project/solution directory. The CLI checks classic GitHub token checksums offline; fine-grained PATs and stateless installation tokens remain format matches. The NuGet analyzer uses format matching only. See [credential detection and file scope](docs/rules/DNA0022.md).
+Provider credentials in configuration files are scanned from the nearest Git root, so `.github/` is included even when the solution is under `src/`. Without Git, scanning starts at the project/solution directory. The CLI checks classic GitHub token checksums offline. Cloud credentials require a distinctive secret prefix or provider-specific context; public identifiers such as AWS access-key IDs and Azure client IDs are excluded. See [credential detection and file scope](docs/rules/DNA0022.md).
 
 To scan selected config paths, quote globs and repeat the options as needed:
 
@@ -82,7 +82,7 @@ Use `--verify-secrets` to add active/inactive/unknown status to console and SARI
 dotnetarium src/MyApp.sln --verify-secrets --sarif findings.sarif --fail
 ```
 
-Verification covers GitHub config tokens (`DNA0022`), including in `-nb` mode. Refresh tokens remain unknown, and GitHub Enterprise Server verification is not supported. File exclusions and suppression are explicit; credential-aware baselines are a proposed follow-up.
+Verification covers GitHub config tokens (`DNA0022`), including in `-nb` mode. Refresh tokens and other providers remain unknown; other providers' credentials are never sent to GitHub. GitHub Enterprise Server verification is not supported. File exclusions and suppression are explicit; credential-aware baselines are a proposed follow-up.
 
 ### Experimental no-build mode (2.4+)
 

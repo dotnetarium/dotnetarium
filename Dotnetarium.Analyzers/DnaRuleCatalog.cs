@@ -65,7 +65,7 @@ namespace Dotnetarium.Analyzers
                     "DNA0019" => "CWE-319. Call credentials are configured for a plaintext gRPC channel.",
                     "DNA0020" => "CWE-295. A TLS certificate validation callback is configured to accept every certificate. Retain platform validation or validate the remote certificate explicitly.",
                     "DNA0021" => "CWE-611. Untrusted XML reaches a parser explicitly configured for DTD parsing and unrestricted external resolution. Modern safe defaults and restricted/preloaded resolvers are not reported.",
-                    "DNA0022" => "CWE-798. A configuration file contains a recognizable secret provider credential. Detection checks format only, without network validation. Public identifiers are not reported.",
+                    "DNA0022" => "CWE-798. A configuration file contains a recognizable secret provider credential. Detection is offline by default and excludes public identifiers. The CLI also checks classic GitHub checksums and offers optional GitHub.com validity checks.",
                     _ => $"CWE-{cwe}. Review the reported data flow and use a context-appropriate mitigation."
                 },
                 helpLinkUri: $"https://github.com/dotnetarium/dotnetarium/blob/main/docs/rules/{id}.md",

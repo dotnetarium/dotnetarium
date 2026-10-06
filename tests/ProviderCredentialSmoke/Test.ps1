@@ -266,12 +266,79 @@ foreach ($mode in @('project', 'no-build')) {
     }
 }
 Remove-Item -LiteralPath (Join-Path $project 'verification.json')
+# Every infrastructure family through the actual analyzer package and CLI.
+$infra = Join-Path $project 'infra'
+New-Item -ItemType Directory -Path $infra, (Join-Path $infra '.aws') -Force | Out-Null
+# Earlier cases deliberately suppress DNA0022. Restore it for these package inputs.
+Set-Content (Join-Path $infra '.editorconfig') "root = true`n[*]`ndotnet_diagnostic.DNA0022.severity = warning"
+$infraBody = -join (0..99 | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
+$hexBody = -join (0..63 | ForEach-Object { '0123456789abcdef'[$_ % 16] })
+$storageKey = [Convert]::ToBase64String([byte[]](0..63 | ForEach-Object { ($_ * 7 + 3) % 256 }))
+$messagingKey = [Convert]::ToBase64String([byte[]](0..31 | ForEach-Object { ($_ * 7 + 3) % 256 }))
+$terraformToken = $infraBody.Substring(0, 14) + '.atlasv1.' + $infraBody.Substring(0, 65)
+$infraValues = @(
+    'AWS_SECRET_ACCESS_KEY=' + $infraBody.Substring(0, 40)
+    'AccountName=prod;AccountKey=' + $storageKey
+    'AccountEndpoint=https://prod.documents.azure.com:443/;AccountKey=' + $storageKey
+    'Endpoint=sb://prod.servicebus.windows.net/;SharedAccessKeyName=Root;SharedAccessKey=' + $messagingKey
+    'https://prod.blob.core.windows.net/file?sv=2025-01-05&sr=b&sp=r&sig=' + [Uri]::EscapeDataString($messagingKey)
+    'dop_v1_' + $hexBody
+    'doo_v1_' + $hexBody
+    'dor_v1_' + $hexBody
+    'hvs.' + $infraBody.Substring(0, 24)
+    'hvb.' + $infraBody.Substring(0, 24)
+    'hvr.' + $infraBody.Substring(0, 24)
+    $terraformToken
+    'glpat-' + $infraBody.Substring(0, 20)
+    'glpat-' + $infraBody.Substring(0, 40) + '.ab1234567'
+    'gldt-' + $infraBody.Substring(0, 20)
+    'gloas-' + $infraBody.Substring(0, 64)
+    'glagent-' + $infraBody.Substring(0, 50)
+    'ya29.' + $infraBody
+    'ya29.c.' + $infraBody
+)
+@{ values = $infraValues } | ConvertTo-Json | Set-Content (Join-Path $infra 'credentials.json')
+$infraRsa = [Security.Cryptography.RSA]::Create(2048)
+try { $infraPem = $infraRsa.ExportPkcs8PrivateKeyPem() } finally { $infraRsa.Dispose() }
+@{ type = 'service_account'; private_key = $infraPem } | ConvertTo-Json | Set-Content (Join-Path $infra 'service-account.json')
+Set-Content (Join-Path $infra '.aws/credentials') ('[default]' + [Environment]::NewLine + 'aws_secret_access_key=' + $infraBody.Substring(0, 40))
+Set-Content (Join-Path $infra 'config.hcl') ('token="' + $terraformToken + '"')
+Set-Content (Join-Path $infra '.terraformrc') ('token="hvs.' + $infraBody.Substring(0, 24) + '"')
+& dotnet build $projectFile -c Release -v quiet -p:ErrorLog="$scratch/infra-package.sarif,version=2.1" *> (Join-Path $scratch 'infra-package.log')
+if ($LASTEXITCODE -ne 0) { throw 'Infrastructure credential package build failed.' }
+$infraPackage = Get-Content (Join-Path $scratch 'infra-package.sarif') -Raw | ConvertFrom-Json
+$infraPackageFindings = @($infraPackage.runs.results | Where-Object {
+    if ($_.ruleId -ne 'DNA0022') { return $false }
+    $location = $_.locations[0].physicalLocation.artifactLocation.uri
+    if (!$location) { $location = $_.locations[0].resultFile.uri }
+    $location -match '/infra/'
+})
+if ($infraPackageFindings.Count -ne 23) { throw "Expected 23 package infrastructure findings; got $($infraPackageFindings.Count). Fixtures: $scratch" }
+foreach ($mode in @('project', 'no-build')) {
+    $infraOutput = Join-Path $scratch "infra-$mode.sarif"
+    $infraLog = Join-Path $scratch "infra-$mode.log"
+    $infraArgs = @($sln, '--config-include', '**/infra/**', '--verify-secrets', '--sarif', $infraOutput, '--fail')
+    if ($mode -eq 'no-build') { $infraArgs += '-nb' }
+    Invoke-CredentialScan $infraArgs $infraLog
+    if ($LASTEXITCODE -ne 1) { throw 'Unsupported provider verification must retain --fail findings.' }
+    $infraRaw = Get-Content $infraOutput -Raw
+    $infraSarif = $infraRaw | ConvertFrom-Json
+    $infraResults = @($infraSarif.runs.results | Where-Object ruleId -EQ 'DNA0022')
+    if ($infraResults.Count -ne 23) { throw "Expected 23 CLI infrastructure findings; got $($infraResults.Count). Fixtures: $scratch" }
+    foreach ($finding in $infraResults) {
+        if ($finding.properties.'dotnetarium.secretVerificationReason' -ne 'provider-verification-not-supported') {
+            throw 'Infrastructure credentials unexpectedly reached GitHub verification.'
+        }
+    }
+    if ($infraRaw.Contains($storageKey) -or $infraRaw.Contains($infraPem) -or $infraRaw.Contains($terraformToken) -or
+        (Get-Content $infraLog -Raw).Contains($messagingKey)) { throw 'Infrastructure secret leaked into output.' }
+}
 # Independent config results must survive project-loading failure.
 Set-Content $projectFile '<invalid'
 Invoke-CredentialScan @($sln, '--sarif', (Join-Path $scratch 'failed.sarif')) (Join-Path $scratch 'failed.log')
 if ($LASTEXITCODE -ne 2) { throw 'Expected project-load failure exit 2.' }
 $failed = Get-Content (Join-Path $scratch 'failed.sarif') -Raw | ConvertFrom-Json
-if (@($failed.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 3) { throw 'Lost config findings on project-load failure.' }
+if (@($failed.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 26) { throw 'Lost config findings on project-load failure.' }
 Write-Host "Provider credential package and CLI smoke passed. Fixtures: $scratch"
 # Expected scanner failures above must not become the smoke script's exit code.
 exit 0

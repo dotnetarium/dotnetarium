@@ -55,14 +55,18 @@ namespace Dotnetarium.Analyzers.Secrets
         internal static bool IsConfigurationPath(string path)
         {
             var name = Path.GetFileName(path);
+            var portablePath = path.Replace('\\', '/');
+            if (portablePath.Equals(".aws/credentials", StringComparison.OrdinalIgnoreCase) ||
+                portablePath.EndsWith("/.aws/credentials", StringComparison.OrdinalIgnoreCase)) return true;
             if (name.Equals(".env", StringComparison.OrdinalIgnoreCase) ||
                 name.StartsWith(".env.", StringComparison.OrdinalIgnoreCase) ||
-                name.Equals(".npmrc", StringComparison.OrdinalIgnoreCase)) return true;
+                name.Equals(".npmrc", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals(".terraformrc", StringComparison.OrdinalIgnoreCase)) return true;
             switch (Path.GetExtension(path).ToLowerInvariant())
             {
                 case ".json": case ".yml": case ".yaml": case ".toml": case ".ini":
                 case ".config": case ".env": case ".props": case ".targets":
-                case ".csproj": case ".pubxml": case ".tf": case ".tfvars": return true;
+                case ".csproj": case ".pubxml": case ".tf": case ".tfvars": case ".hcl": case ".tfrc": return true;
                 default: return false;
             }
         }
@@ -99,6 +103,15 @@ namespace Dotnetarium.Analyzers.Secrets
                     onFinding?.Invoke(diagnostic, match.Value);
                     yield return diagnostic;
                 }
+            }
+            foreach (var finding in InfrastructureCredentialPatterns.Scan(path, text, cancellationToken))
+            {
+                var diagnostic = Diagnostic.Create(DnaRuleCatalog.EmbeddedProviderCredential,
+                    Location.Create(path, finding.Span, text.Lines.GetLinePositionSpan(finding.Span)),
+                    properties: ImmutableDictionary<string, string?>.Empty.Add("dotnetarium.provider", finding.Provider),
+                    messageArgs: new object[] { finding.Name, finding.Kind });
+                onFinding?.Invoke(diagnostic, finding.Secret);
+                yield return diagnostic;
             }
         }
     }

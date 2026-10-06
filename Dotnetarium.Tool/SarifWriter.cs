@@ -132,6 +132,13 @@ internal static class SarifWriter
         json.WriteNumber("ruleIndex", ruleIndex);
         json.WriteString("level", Level(diagnostic.Severity));
         WriteMessage(json, "message", diagnostic.GetMessage());
+        if (diagnostic.Properties.TryGetValue(GitHubSecretVerifier.StatusProperty, out var verification))
+        {
+            json.WriteStartObject("properties");
+            json.WriteString(GitHubSecretVerifier.StatusProperty, verification);
+            json.WriteString(GitHubSecretVerifier.ReasonProperty, diagnostic.Properties[GitHubSecretVerifier.ReasonProperty]);
+            json.WriteEndObject();
+        }
         if (IsSourceLocation(diagnostic.Location))
         {
             json.WriteStartArray("locations");

@@ -237,6 +237,35 @@ if ($nestedFindings.Count -ne 1 -or $nestedFindings[0].level -ne 'note' -or
     throw 'Repository file policy lost glob precedence, severity or location.'
 }
 Set-Content $projectFile $originalProject
+# Exercise installed CLI verification without sending synthetic credentials online:
+# refresh tokens intentionally remain unsupported/unknown.
+$refresh = 'ghr_' + $body + '2M5jQM'
+Set-Content (Join-Path $project 'verification.json') ('{"token":"' + $refresh + '"}')
+foreach ($mode in @('project', 'no-build')) {
+    foreach ($verify in @($false, $true)) {
+        $verificationOutput = Join-Path $scratch "verification-$mode-$verify.sarif"
+        $verificationLog = Join-Path $scratch "verification-$mode-$verify.log"
+        $verificationArgs = @($sln, '--config-include', '**/verification.json', '--sarif', $verificationOutput, '--fail')
+        if ($mode -eq 'no-build') { $verificationArgs += '-nb' }
+        if ($verify) { $verificationArgs += '--verify-secrets' }
+        Invoke-CredentialScan $verificationArgs $verificationLog
+        if ($LASTEXITCODE -ne 1) { throw 'Unknown verification must retain findings and --fail exit 1.' }
+        $verificationSarif = Get-Content $verificationOutput -Raw | ConvertFrom-Json
+        $secretResults = @($verificationSarif.runs.results | Where-Object ruleId -EQ 'DNA0022')
+        if ($secretResults.Count -ne 1) { throw 'Verification lost the credential location.' }
+        $verificationStatus = $secretResults[0].properties.'dotnetarium.secretVerification'
+        if (($verify -and $verificationStatus -ne 'unknown') -or (!$verify -and $verificationStatus)) {
+            throw 'Verification opt-in status was not preserved in SARIF.'
+        }
+        if ($verify -and $secretResults[0].properties.'dotnetarium.secretVerificationReason' -ne 'refresh-token-not-supported') {
+            throw 'Refresh token unexpectedly attempted remote verification.'
+        }
+        if ((Get-Content $verificationOutput -Raw).Contains($refresh) -or (Get-Content $verificationLog -Raw).Contains($refresh)) {
+            throw 'Credential value leaked into output.'
+        }
+    }
+}
+Remove-Item -LiteralPath (Join-Path $project 'verification.json')
 # Independent config results must survive project-loading failure.
 Set-Content $projectFile '<invalid'
 Invoke-CredentialScan @($sln, '--sarif', (Join-Path $scratch 'failed.sarif')) (Join-Path $scratch 'failed.log')

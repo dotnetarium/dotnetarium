@@ -68,7 +68,7 @@ namespace Dotnetarium.Analyzers.Secrets
         }
 
         internal static IEnumerable<Diagnostic> Scan(string path, SourceText text, CancellationToken cancellationToken = default,
-            Func<string, bool>? acceptToken = null)
+            Func<string, bool>? acceptToken = null, Action<Diagnostic, string>? onFinding = null)
         {
             // Scan line by line: no unbounded regex input and no token copies in messages.
             foreach (var line in text.Lines)
@@ -93,9 +93,11 @@ namespace Dotnetarium.Analyzers.Secrets
                             "ghu_" => "app user access token", "ghs_" => "app installation access token",
                             _ => "app refresh token"
                         };
-                    yield return Diagnostic.Create(DnaRuleCatalog.EmbeddedProviderCredential, location,
+                    var diagnostic = Diagnostic.Create(DnaRuleCatalog.EmbeddedProviderCredential, location,
                         properties: ImmutableDictionary<string, string?>.Empty.Add("dotnetarium.provider", "github"),
                         messageArgs: new object[] { "GitHub", kind });
+                    onFinding?.Invoke(diagnostic, match.Value);
+                    yield return diagnostic;
                 }
             }
         }

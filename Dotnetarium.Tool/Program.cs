@@ -46,7 +46,8 @@ internal static class Program
                 : "Scan mode: project (default).");
             var configRoot = ConfigurationFileScanner.FindRoot(target);
             var outputRoot = configRoot;
-            var configScanner = new ConfigurationFileScanner(report, options.ConfigScope);
+            using var verifier = options.VerifySecrets ? new GitHubSecretVerifier() : null;
+            var configScanner = new ConfigurationFileScanner(report, options.ConfigScope, verifier);
             var diagnostics = new ConcurrentBag<Diagnostic>(configScanner.Scan(configRoot));
             ScanInputs? loadedInputs = null;
             try
@@ -171,6 +172,8 @@ internal static class Program
                 .ThenBy(diagnostic => diagnostic.GetMessage(), StringComparer.Ordinal)
                 .ToArray();
 
+            if (verifier != null) findings = await verifier.VerifyAsync(findings);
+
             foreach (var diagnostic in findings)
             {
                 var line = SourceLocationSpan.GetDisplaySpan(diagnostic.Location);
@@ -179,7 +182,9 @@ internal static class Program
                     path = Path.GetRelativePath(outputRoot, path);
                 var cwe = DnaRuleCatalog.TryGetCwe(diagnostic.Id, out var id)
                     ? $" [CWE-{id}]" : string.Empty;
-                Console.WriteLine($"{path}({line.StartLinePosition.Line + 1},{line.StartLinePosition.Character + 1}): {diagnostic.Id}{cwe}: {diagnostic.GetMessage()}");
+                var verification = diagnostic.Properties.TryGetValue(GitHubSecretVerifier.StatusProperty, out var status)
+                    ? $" [verification: {status}; {diagnostic.Properties[GitHubSecretVerifier.ReasonProperty]}]" : string.Empty;
+                Console.WriteLine($"{path}({line.StartLinePosition.Line + 1},{line.StartLinePosition.Character + 1}): {diagnostic.Id}{cwe}: {diagnostic.GetMessage()}{verification}");
             }
 
             foreach (var notice in report.Notices.Distinct().OrderBy(notice => notice.Id, StringComparer.Ordinal).ThenBy(notice => notice.Message, StringComparer.Ordinal))
@@ -212,6 +217,7 @@ internal static class Program
         "  --config <path>            Override dotnetarium.json (version 2.0)\n" +
         "  --fail                     Return 1 when findings are present\n" +
         "  --respect-editorconfig     Apply configured rule severity and suppression\n" +
+        "  --verify-secrets           Check GitHub credentials online (opt-in)\n" +
         "  --config-include <glob>    Include matching config files (repeatable)\n" +
         "  --config-exclude <glob>    Exclude matching config files (repeatable)\n" +
         "  -nb, --no-build            Experimental: scan without targets, restore or generators\n" +
@@ -233,12 +239,12 @@ internal static class Program
 
     private sealed record Options(string Target, string? SarifPath, string? ConfigPath,
         bool Fail, bool NoBuild, string? Configuration, string? Framework, bool RespectEditorConfig,
-        ConfigurationScanScope ConfigScope)
+        ConfigurationScanScope ConfigScope, bool VerifySecrets)
     {
         internal static Options Parse(string[] args)
         {
             string? target = null, sarif = null, config = null, configuration = null, framework = null;
-            bool fail = false, noBuild = false, respectEditorConfig = false;
+            bool fail = false, noBuild = false, respectEditorConfig = false, verifySecrets = false;
             var configIncludes = new List<string>();
             var configExcludes = new List<string>();
             for (int index = 0; index < args.Length; index++)
@@ -252,6 +258,7 @@ internal static class Program
                     case "--config": config = NextValue(); break;
                     case "--fail": fail = true; break;
                     case "--respect-editorconfig": respectEditorConfig = true; break;
+                    case "--verify-secrets": verifySecrets = true; break;
                     case "--config-include": configIncludes.Add(NextValue()); break;
                     case "--config-exclude": configExcludes.Add(NextValue()); break;
                     case "-nb": case "--no-build": noBuild = true; break;
@@ -273,7 +280,7 @@ internal static class Program
             if (framework != null && framework is not ("net8.0" or "net10.0"))
                 throw new ArgumentException("--framework must be net8.0 or net10.0.");
             return new Options(target, sarif, config, fail, noBuild, configuration, framework, respectEditorConfig,
-                new ConfigurationScanScope(configIncludes, configExcludes));
+                new ConfigurationScanScope(configIncludes, configExcludes), verifySecrets);
         }
     }
 }

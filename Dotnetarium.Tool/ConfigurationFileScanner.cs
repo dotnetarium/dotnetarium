@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace Dotnetarium.Tool;
 
-internal sealed class ConfigurationFileScanner(ScanReport report, ConfigurationScanScope scope)
+internal sealed class ConfigurationFileScanner(ScanReport report, ConfigurationScanScope scope, GitHubSecretVerifier? verifier = null)
 {
     private readonly ConcurrentDictionary<string, byte> scannedFiles = new(ProjectLoader.PathComparer);
     private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
@@ -71,7 +71,8 @@ internal sealed class ConfigurationFileScanner(ScanReport report, ConfigurationS
                 return null;
             }
             if (text.Length > 2 * 1024 * 1024) { TooLarge(); return null; }
-            return ProviderCredentialAnalyzer.Scan(path, text, acceptToken: GitHubTokenChecksum.Accept).ToArray();
+            return ProviderCredentialAnalyzer.Scan(path, text, acceptToken: GitHubTokenChecksum.Accept,
+                onFinding: verifier == null ? null : verifier.Capture).ToArray();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or RegexMatchTimeoutException)
         { report.Warn("config-file-read", $"Could not scan config file: {Path.GetRelativePath(root, path)}"); return null; }

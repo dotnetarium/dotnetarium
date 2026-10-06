@@ -15,7 +15,7 @@ Use the **NuGet analyzer** for build and IDE warnings, or the **global tool** to
 | Cryptography | Legacy ciphers (`DNA0013`), ECB (`DNA0014`), fixed IVs/nonces (`DNA0015`), low PBKDF2 work factors (`DNA0016`), literal post-quantum private keys (`DNA0017`) |
 | Transport configuration | Detailed gRPC errors (`DNA0018`), gRPC call credentials over plaintext (`DNA0019`), accept-all TLS certificate callbacks (`DNA0020`) |
 
-Configuration files are also checked for recognizable GitHub secret tokens (`DNA0022`). The CLI scans the containing Git repository, including root workflows when the solution is in `src/`; outside Git it scans the solution/project directory. The NuGet analyzer checks project configuration through automatically included `AdditionalFiles`. Detection is offline and token values are omitted from CLI output. See [configuration credential scanning](docs/rules/DNA0022.md) for scope and supported formats.
+Configuration files are also checked for recognizable GitHub secret tokens (`DNA0022`). The CLI scans the containing Git repository, including root workflows when the solution is in `src/`; outside Git it scans the solution/project directory. The NuGet analyzer checks project configuration through automatically included `AdditionalFiles`. Detection is offline by default; the CLI can optionally verify credentials with GitHub. Token values are omitted from output. See [configuration credential scanning](docs/rules/DNA0022.md) for scope and supported formats.
 
 Models cover framework APIs and selected provider APIs, including ADO.NET, EF Core, Dapper, Npgsql/PostgreSQL, SharpCompress, Markdig, Bouncy Castle, NSec and Sodium.Core. Coverage is specific to modeled APIs; using a library does not make every call unsafe. See the [rule notes](docs/rules) for supported sinks, safe alternatives and limitations.
 
@@ -56,6 +56,7 @@ The tool accepts `.csproj`, `.sln` and `.slnx` files. Default loading uses SDK/M
 | `--config <path>` | Use a specific JSON rules configuration |
 | `--fail` | Return exit code 1 when security findings are present |
 | `--respect-editorconfig` | Opt into configured rule severity and suppression |
+| `--verify-secrets` | Opt into sending detected credentials to GitHub.com for validity checks |
 | `--config-include <glob>` | Limit credential scanning to matching config paths; repeatable |
 | `--config-exclude <glob>` | Exclude matching config paths from credential scanning; repeatable |
 | `-nb`, `--no-build` | Use experimental loading without build targets, restore or generators |
@@ -74,6 +75,8 @@ dotnetarium src/MyApp.sln --config-include '**/*.json' --config-include '.github
 ```
 
 Globs are relative to each printed config scan root. Includes are combined; exclusions take precedence. These options affect credential files, including explicit `AdditionalFiles`, without changing C# project selection or loading `dotnetarium.json`.
+
+Use `--verify-secrets` to add active/inactive/unknown status to console and SARIF findings. Verification retains all findings, including inactive credentials; `--fail` still applies to all findings. It sends credentials only to GitHub.com, checks each distinct credential once per scan, and has a thirty-second total budget. The analyzer remains offline. See [verification and reduction](docs/rules/DNA0022.md#verification-and-reduction).
 
 ### Experimental no-build mode (2.4+)
 

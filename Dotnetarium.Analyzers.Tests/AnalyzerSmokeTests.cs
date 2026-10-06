@@ -10,6 +10,442 @@ namespace Dotnetarium.Analyzers.Tests;
 public sealed class AnalyzerSmokeTests
 {
     [Fact]
+    public async Task Does_not_follow_incompatible_inherited_interface_receiver()
+    {
+        var diagnostics = await AnalyzeAsync("""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived : IBase { }
+            public sealed class SafeDerived : IDerived { public void Go(string value) { } }
+            public sealed class UnrelatedUnsafe : IBase
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived receiver;
+                public Endpoint(IDerived receiver) => this.receiver = receiver;
+                public void Go(string input) => receiver.Go(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public async Task Follows_compatible_inherited_interface_receiver()
+    {
+        var diagnostics = await AnalyzeAsync("""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived : IBase { }
+            public sealed class SafeDerived : IDerived { public void Go(string value) { } }
+            public sealed class UnsafeDerived : IDerived
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived receiver;
+                public Endpoint(IDerived receiver) => this.receiver = receiver;
+                public void Go(string input) => receiver.Go(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Single(diagnostics, diagnostic => diagnostic.Id == "DNA0005");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Separates_inherited_interface_receiver_cache_entries(bool derivedFirst)
+    {
+        var calls = derivedFirst
+            ? "receiver.Go(derivedInput); other.Go(baseInput);"
+            : "other.Go(baseInput); receiver.Go(derivedInput);";
+        var diagnostics = await AnalyzeAsync($$"""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived : IBase { }
+            public sealed class SafeDerived : IDerived { public void Go(string value) { } }
+            public sealed class UnrelatedUnsafe : IBase
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived receiver;
+                private readonly IBase other;
+                public Endpoint(IDerived receiver, IBase other) { this.receiver = receiver; this.other = other; }
+                public void Go(string derivedInput, string baseInput) { {{calls}} }
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        var finding = Assert.Single(diagnostics, diagnostic => diagnostic.Id == "DNA0005");
+        Assert.Contains("from 'string baseInput'", finding.GetMessage());
+    }
+
+    [Fact]
+    public async Task Follows_compatible_covariant_inherited_interface_receiver()
+    {
+        var diagnostics = await AnalyzeAsync("""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived<out T> : IBase { }
+            public sealed class SafeDerived : IDerived<object> { public void Go(string value) { } }
+            public sealed class UnsafeDerived : IDerived<string>
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived<object> receiver;
+                public Endpoint(IDerived<object> receiver) => this.receiver = receiver;
+                public void Go(string input) => receiver.Go(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Single(diagnostics, diagnostic => diagnostic.Id == "DNA0005");
+    }
+
+    [Fact]
+    public async Task Follows_compatible_contravariant_inherited_interface_receiver()
+    {
+        var diagnostics = await AnalyzeAsync("""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived<in T> : IBase { }
+            public sealed class SafeDerived : IDerived<string> { public void Go(string value) { } }
+            public sealed class UnsafeDerived : IDerived<object>
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived<string> receiver;
+                public Endpoint(IDerived<string> receiver) => this.receiver = receiver;
+                public void Go(string input) => receiver.Go(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Single(diagnostics, diagnostic => diagnostic.Id == "DNA0005");
+    }
+
+    [Theory]
+    [InlineData("class UnsafeDerived<T>", "T", "string", "", "", "")]
+    [InlineData("class UnsafeDerived<T>", "List<T>", "List<string>", "", "", "")]
+    [InlineData("class UnsafeDerived", "T", "string", "class Outer<T> {", "}", "")]
+    [InlineData("class UnsafeDerived<T>", "T", "int", "", "", "where T : struct")]
+    public async Task Follows_compatible_open_generic_implementation(
+        string declaration, string implementationArgument, string receiverArgument, string enclosingStart, string enclosingEnd, string constraint)
+    {
+        var diagnostics = await AnalyzeAsync($$"""
+            using System.Collections.Generic;
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived<T> : IBase { }
+            {{enclosingStart}}
+            public sealed {{declaration}} : IDerived<{{implementationArgument}}> {{constraint}}
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            {{enclosingEnd}}
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived<{{receiverArgument}}> receiver;
+                public Endpoint(IDerived<{{receiverArgument}}> receiver) => this.receiver = receiver;
+                public void Go(string input) => receiver.Go(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Single(diagnostics, diagnostic => diagnostic.Id == "DNA0005");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Follows_generic_receiver_reached_from_closed_controller(bool bareTypeParameter)
+    {
+        var helper = bareTypeParameter
+            ? "public static void Run<T>(T receiver, string input) where T : IDerived<string> => receiver.Go(input);"
+            : "public static void Run<T>(IDerived<T> receiver, string input) => receiver.Go(input);";
+        var diagnostics = await AnalyzeAsync($$"""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived<T> : IBase { }
+            public sealed class UnsafeDerived : IDerived<string>
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public static class Helper { {{helper}} }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived<string> receiver;
+                public Endpoint(IDerived<string> receiver) => this.receiver = receiver;
+                public void Go(string input) => Helper.Run(receiver, input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Single(diagnostics, diagnostic => diagnostic.Id == "DNA0005");
+    }
+
+    [Theory]
+    [InlineData("out", "string", "object", true)]
+    [InlineData("out", "object", "string", false)]
+    [InlineData("in", "object", "string", true)]
+    [InlineData("in", "string", "object", false)]
+    [InlineData("", "string", "object", false)]
+    [InlineData("", "object", "object", true)]
+    [InlineData("out", "int", "object", false)]
+    [InlineData("out", "List<T>", "IEnumerable<string>", true)]
+    [InlineData("", "Tuple<T, int>", "Tuple<string, bool>", false)]
+    [InlineData("", "T[]", "string[]", true)]
+    [InlineData("", "T[]", "string[,]", false)]
+    public async Task Matches_closed_arguments_and_variance_in_open_generic_implementations(
+        string variance, string implementationArgument, string receiverArgument, bool reports)
+    {
+        var diagnostics = await AnalyzeAsync($$"""
+            using System;
+            using System.Collections.Generic;
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived<TUnknown, {{variance}} TValue> : IBase { }
+            public sealed class UnsafeDerived<TUnknown, T> : IDerived<TUnknown, {{implementationArgument}}>
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived<int, {{receiverArgument}}> receiver;
+                public Endpoint(IDerived<int, {{receiverArgument}}> receiver) => this.receiver = receiver;
+                public void Go(string input) => receiver.Go(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Equal(reports ? 1 : 0, diagnostics.Count(diagnostic => diagnostic.Id == "DNA0005"));
+    }
+
+    [Theory]
+    [InlineData("IDerived, IAdditional", "SafeClass", false)]
+    [InlineData("struct, IDerived", "SafeStruct", false)]
+    [InlineData("IDerived, IAdditional", "UnsafeDerived", true)]
+    [InlineData("struct, IDerived", "UnsafeDerived", true)]
+    public async Task Follows_only_targets_allowed_by_receiver_constraints(
+        string constraint, string receiverType, bool reports)
+    {
+        var unsafeKind = reports && constraint.StartsWith("struct", StringComparison.Ordinal) ? "struct" : "class";
+        var unsafeInterfaces = reports ? "IDerived, IAdditional" : "IDerived";
+        var diagnostics = await AnalyzeAsync($$"""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived : IBase { }
+            public interface IAdditional { }
+            public sealed class SafeClass : IDerived, IAdditional { public void Go(string value) { } }
+            public struct SafeStruct : IDerived, IAdditional { public void Go(string value) { } }
+            public {{unsafeKind}} UnsafeDerived : {{unsafeInterfaces}}
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public sealed class Service<T> where T : {{constraint}}
+            {
+                private T receiver;
+                public Service(T receiver) => this.receiver = receiver;
+                public void Run(string input) => receiver.Go(input);
+            }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly Service<{{receiverType}}> service;
+                public Endpoint(Service<{{receiverType}}> service) => this.service = service;
+                public void Go(string input) => service.Run(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Equal(reports ? 1 : 0, diagnostics.Count(diagnostic => diagnostic.Id == "DNA0005"));
+    }
+
+    [Fact]
+    public async Task Follows_boxed_struct_through_reference_constrained_receiver()
+    {
+        var diagnostics = await AnalyzeAsync("""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived : IBase { }
+            public struct UnsafeDerived : IDerived
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public sealed class Service<T> where T : class, IDerived
+            {
+                private T receiver;
+                public Service(T receiver) => this.receiver = receiver;
+                public void Run(string input) => receiver.Go(input);
+            }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly Service<IDerived> service;
+                public Endpoint(Service<IDerived> service) => this.service = service;
+                public void Go(string input) => service.Run(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Single(diagnostics, diagnostic => diagnostic.Id == "DNA0005");
+    }
+
+    [Fact]
+    public async Task Does_not_follow_incompatible_generic_argument_constraints()
+    {
+        var diagnostics = await AnalyzeAsync("""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived<T> : IBase { }
+            public sealed class UnsafeDerived<T> : IDerived<T> where T : struct
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived<string> receiver;
+                public Endpoint(IDerived<string> receiver) => this.receiver = receiver;
+                public void Go(string input) => receiver.Go(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public async Task Does_not_follow_unrelated_generic_implementations()
+    {
+        var diagnostics = await AnalyzeAsync("""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived<T> : IBase { }
+            public sealed class SafeDerived : IDerived<string> { public void Go(string value) { } }
+            public sealed class UnrelatedUnsafe<T> : IBase
+            {
+                public void Go(string value) => Holder.Response.Redirect(value);
+            }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived<string> receiver;
+                public Endpoint(IDerived<string> receiver) => this.receiver = receiver;
+                public void Go(string input) => receiver.Go(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public async Task Does_not_expand_javascript_disposal_to_unrelated_components()
+    {
+        var source = """
+            using System;
+            using System.Threading.Tasks;
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            using Microsoft.JSInterop;
+            public sealed class PositiveControl : ComponentBase
+            {
+                [SupplyParameterFromQuery]
+                public string? Input { get; set; }
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddMarkupContent(0, Input);
+            }
+            """ + string.Concat(Enumerable.Range(0, 14).Select(index => $$"""
+                public sealed class Component{{index}}<T> : ComponentBase, IAsyncDisposable
+                {
+                    private IJSObjectReference module;
+                    public Component{{index}}(IJSObjectReference module) => this.module = module;
+                    [SupplyParameterFromQuery]
+                    public string? Input { get; set; }
+                    public async ValueTask DisposeAsync()
+                    {
+                        _ = Input;
+                        await module.DisposeAsync();
+                    }
+                }
+                """));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var diagnostics = await AnalyzeAsync(source, cancellation.Token, new XssTaintAnalyzer());
+        Assert.Single(diagnostics, diagnostic => diagnostic.Id == "DNA0003");
+    }
+
+    [Theory]
+    [InlineData("string, int", false)]
+    [InlineData("string, string", true)]
+    public async Task Generic_repeated_parameter_does_not_create_an_impossible_redirect_flow(string receiverArguments, bool reports)
+    {
+        var diagnostics = await AnalyzeAsync($$"""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived<TFirst, TSecond> : IBase {}
+            public sealed class Candidate<T> : IDerived<T, T>
+            { public void Go(string value) => Holder.Response.Redirect(value); }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived<{{receiverArguments}}> receiver;
+                public Endpoint(IDerived<{{receiverArguments}}> receiver) => this.receiver = receiver;
+                public void Go(string input) => receiver.Go(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Equal(reports ? 1 : 0, diagnostics.Count(diagnostic => diagnostic.Id == "DNA0005"));
+    }
+
+    [Theory]
+    [InlineData("out TFirst, TSecond", "string, object", false)]
+    [InlineData("out TFirst, TSecond", "object, string", true)]
+    [InlineData("TFirst, in TSecond", "string, object", false)]
+    [InlineData("TFirst, in TSecond", "object, string", true)]
+    public async Task Mixed_generic_variance_preserves_only_possible_redirect_flows(
+        string parameters, string receiverArguments, bool reports)
+    {
+        var diagnostics = await AnalyzeAsync($$"""
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IBase { void Go(string value); }
+            public interface IDerived<{{parameters}}> : IBase {}
+            public sealed class Candidate<T> : IDerived<T, T>
+            { public void Go(string value) => Holder.Response.Redirect(value); }
+            public static class Holder { public static HttpResponse Response = null!; }
+            [ApiController]
+            public sealed class Endpoint : ControllerBase
+            {
+                private readonly IDerived<{{receiverArguments}}> receiver;
+                public Endpoint(IDerived<{{receiverArguments}}> receiver) => this.receiver = receiver;
+                public void Go(string input) => receiver.Go(input);
+            }
+            """, new OpenRedirectTaintAnalyzer());
+        Assert.Equal(reports ? 1 : 0, diagnostics.Count(diagnostic => diagnostic.Id == "DNA0005"));
+    }
+
+    [Fact]
     public async Task Reports_command_flow_with_engine_witness()
     {
         var diagnostics = await AnalyzeAsync("""
@@ -986,7 +1422,10 @@ public sealed class AnalyzerSmokeTests
         Assert.Single(diagnostics.Where(diagnostic => diagnostic.Id == "DNA0019"));
     }
 
-    private static async Task<ImmutableArray<Diagnostic>> AnalyzeAsync(string source, params DiagnosticAnalyzer[] analyzers)
+    private static Task<ImmutableArray<Diagnostic>> AnalyzeAsync(string source, params DiagnosticAnalyzer[] analyzers) =>
+        AnalyzeAsync(source, CancellationToken.None, analyzers);
+
+    private static async Task<ImmutableArray<Diagnostic>> AnalyzeAsync(string source, CancellationToken cancellationToken, params DiagnosticAnalyzer[] analyzers)
     {
         var trustedAssemblies = (string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!;
         var references = trustedAssemblies.Split(Path.PathSeparator)
@@ -1003,6 +1442,8 @@ public sealed class AnalyzerSmokeTests
         var compilation = CSharpCompilation.Create("Example", new[] { tree }, references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         Assert.DoesNotContain(compilation.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
-        return await compilation.WithAnalyzers(analyzers.ToImmutableArray(), LocalSourceTestOptions.Options).GetAnalyzerDiagnosticsAsync();
+        var diagnostics = await compilation.WithAnalyzers(analyzers.ToImmutableArray(), LocalSourceTestOptions.Options).GetAnalyzerDiagnosticsAsync(cancellationToken);
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "AD0001");
+        return diagnostics;
     }
 }

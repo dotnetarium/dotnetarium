@@ -138,3 +138,52 @@ and without `--fail`, and partial SARIF on compilation errors. Real provider sin
 smoke checks and Razor/Blazor render-mode and safe-output checks also pass.
 CI runs the unit and installed-package checks on Windows
 and Linux.
+
+## Interface dispatch review: issue 26 / PR 27
+
+The pinned contributor reproduction (`7f34b1d42889523779f1f7bb53f348ea4bfc1825`) uses 14 components implementing `IAsyncDisposable`, each reading a query-bound string and calling `DisposeAsync` through an `IJSObjectReference`. That receiver inherits the member from `IAsyncDisposable` but cannot refer to these component implementations. The released 2.3.0 fallback expanded those impossible targets recursively.
+
+On this Windows machine with SDK 10.0.401, released 2.3.0 was canceled after 45 seconds; the same package with only the component interface declarations removed completed in 3.85 seconds. Current main with merged analysis profiles completed the original fixture in 4.05 seconds (default fast) and 3.79 seconds (max). No analyzer exceptions occurred in these completed runs. Restore is excluded; these are end-to-end fresh-compilation build times, not isolated analyzer timings.
+
+Main already filters incompatible non-generic receivers. PR 27 improves generic receivers, variance, arrays, containing types and receiver constraints using the same compilation-wide cache. Ten contributor regressions failed against main. Local review additionally demonstrated impossible repeated-parameter substitutions (`IPair<T,T>` matched to `IPair<string,int>`), ignored interface/default-constructor constraints and a user-defined conversion mistakenly accepted as a possible runtime receiver. The supplemental fix binds invariant closed arguments consistently, substitutes known arguments into constraints, rolls back failed inheritance alternatives, and excludes user-defined conversions. Compatible boxed structs remain covered.
+
+This filters call targets before interprocedural expansion; it does not replace or alter fast/full/max profiles, work budgets or depth limits. Both the reachability proof and taint engine use this shared receiver filter. Uncertain generic variance and unresolved substitutions remain conservative. Calls to members declared directly on constructed generic interfaces with only open source implementations retain their existing lookup limitation; this review does not broaden that feature.
+
+The final edge-case review also checks mixed invariant/variant occurrences of the same parameter. Once invariant arguments produce a closed substitution, the receiver conversion is checked again to reject impossible covariance/contravariance regardless of argument order. Tests retain compatible conversions and check dependent `IComparable<U>`, `class`, `struct` and `unmanaged` constraints.
+
+### Existing constructed-interface limitation
+
+The fallback index uses exact constructed interface symbols. For an unknown receiver in this example, the member is declared on `IService<string>`, but the only indexed implementation declares `IService<T>`:
+
+```csharp
+interface IService<T> { void Go(string input); }
+class Service<T> : IService<T>
+{
+    public void Go(string input) { /* security-sensitive operation */ }
+}
+class Caller
+{
+    public void Invoke(IService<string> service, string input) => service.Go(input);
+}
+```
+
+The fallback can miss the flow into `Service<T>.Go`, affecting open generic repositories, handlers and services reached through an unknown interface receiver. This is an existing false-negative boundary, not a disposal timeout or an analyzer exception. A closed source implementation such as `Service : IService<string>` is covered. Other dispatch paths may recover the target when concrete receiver or DI information is available; that is not a guarantee for all generic registrations. Tests pin both the open limitation and closed positive control. Members inherited from a non-generic base interface are the generic receiver scenario improved by PR 27.
+
+Final verification passes all 981 unit tests in Release, the configuration used by CI and published packages. A final isolated Server fast-profile check retains the same 11 findings and 60 cutoffs with zero analyzer exceptions. Debug testing exposes three existing LINQ callback argument-count assertions in `DataFlowOperationVisitor.GetArgumentValues`; the same three failures reproduce with unchanged main's dispatch implementation. This separate Debug assertion debt is not repaired by the interface filter.
+
+The paired LANCommander runs below use the same harness, inputs and explicit profiles. Services uses SDK-loaded inputs; Server uses reconstructed inputs. Timings exclude loading and compilation. Separate processes, ordinary runtime variation and concurrent machine load affect comparisons, so small differences are not evidence of a general speedup. Main is commit `5f4012b`; review includes PR 27 plus the supplemental fixes.
+
+| Input / implementation | Analysis seconds | Findings | Root cutoffs | Peak GiB |
+| --- | ---: | ---: | ---: | ---: |
+| main-services | 4.34 | 0 | 2206 | 0.42 |
+| review-services | 4.06 | 0 | 2204 | 0.43 |
+| main-server | 3.36 | 11 | 60 | 0.93 |
+| review-server | 3.28 | 11 | 61 | 0.93 |
+| main-services-full | 11.06 | 0 | 342 | 0.52 |
+| review-services-full | 10.96 | 0 | 343 | 0.54 |
+| main-server-full | 5.75 | 11 | 18 | 0.94 |
+| review-server-full | 4.61 | 11 | 19 | 0.93 |
+
+`*-full` uses 5 / 5,000; other runs use fast 3 / 1,000. The 11 Server findings are identical in both implementations for each profile. All paired runs have zero analyzer exceptions. Cutoffs remain incomplete-root notices, not missed-vulnerability counts. Guardrails are still required for genuinely recursive or broad compatible graphs. An initially stale pre-profile baseline package was detected by AD0001/schema errors and discarded; only rebuilt, profile-aware packages are used in this table.
+
+References: [issue 26](https://github.com/dotnetarium/dotnetarium/issues/26), [PR 27](https://github.com/dotnetarium/dotnetarium/pull/27), [pinned reproduction](https://github.com/alexaka1/repro-dotnetarium--dotnetarium-interface-dispatch/tree/7f34b1d42889523779f1f7bb53f348ea4bfc1825).

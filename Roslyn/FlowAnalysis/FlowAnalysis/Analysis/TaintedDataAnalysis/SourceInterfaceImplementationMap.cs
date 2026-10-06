@@ -11,7 +11,7 @@ using Analyzer.Utilities.Extensions;
 
 namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
 {
-    /// <summary>Compilation-wide dispatch candidates; never caches receiver-specific decisions.</summary>
+    /// <summary>Compilation-wide dispatch index with separately keyed receiver bounds.</summary>
     internal sealed class SourceInterfaceImplementationMap
     {
         private static readonly ConditionalWeakTable<Compilation, Lazy<SourceInterfaceImplementationMap>> Cache =
@@ -103,9 +103,9 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
         internal ImmutableArray<IMethodSymbol> GetTargets(IMethodSymbol method, ITypeSymbol? receiverType)
         {
             // Static types constrain candidates; they never identify a unique
-            // runtime implementation. Unknown/generic receivers stay conservative.
+            // runtime implementation. Unknown receivers stay conservative.
             if (receiverType == null || receiverType.TypeKind is not
-                    (TypeKind.Class or TypeKind.Struct or TypeKind.Interface or TypeKind.Array))
+                    (TypeKind.Class or TypeKind.Struct or TypeKind.Interface or TypeKind.Array or TypeKind.TypeParameter))
                 return GetTargets(method);
             return _constrainedTargets.GetOrAdd(receiverType, _ =>
                 new ConcurrentDictionary<IMethodSymbol, ImmutableArray<IMethodSymbol>>(SymbolEqualityComparer.Default))
@@ -122,18 +122,194 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 });
         }
 
-        private bool IsCompatible(INamedTypeSymbol candidate, ITypeSymbol bound)
+        private bool IsCompatible(INamedTypeSymbol type, ITypeSymbol? receiverType)
         {
-            if (_compilation.ClassifyCommonConversion(candidate, bound).IsImplicit) return true;
-            if (!candidate.IsGenericType || bound is not INamedTypeSymbol namedBound) return false;
-            // The source index stores open definitions. Failure to convert Foo<T>
-            // to Foo<int>/IProducer<string> cannot exclude a closed runtime type.
-            if (candidate.AllInterfaces.Any(contract => SymbolEqualityComparer.Default.Equals(
-                    contract.OriginalDefinition, namedBound.OriginalDefinition))) return true;
-            for (var type = candidate; type != null; type = type.BaseType)
-                if (SymbolEqualityComparer.Default.Equals(type.OriginalDefinition, namedBound.OriginalDefinition)) return true;
+            var bindings = new Dictionary<ITypeParameterSymbol, ITypeSymbol>(SymbolEqualityComparer.Default);
+            return IsCompatible(type, receiverType, bindings) &&
+                bindings.All(binding => SatisfiesConstraints(binding.Key, binding.Value, bindings));
+        }
+
+        private bool IsCompatible(INamedTypeSymbol type, ITypeSymbol? receiverType,
+            Dictionary<ITypeParameterSymbol, ITypeSymbol> bindings)
+        {
+            if (receiverType is ITypeParameterSymbol parameter)
+            {
+                return (!parameter.HasValueTypeConstraint || type.IsValueType) &&
+                    parameter.ConstraintTypes.All(constraint => IsCompatible(type, constraint, bindings));
+            }
+
+            if (receiverType is not INamedTypeSymbol receiver)
+            {
+                return receiverType == null || IsRuntimeConversion(type, receiverType);
+            }
+
+            if (IsRuntimeConversion(type, receiver))
+            {
+                return true;
+            }
+
+            return receiver.TypeKind == TypeKind.Interface
+                ? type.AllInterfaces.Any(implemented => TryMatchType(implemented, receiver, VarianceKind.Out, bindings))
+                : CanMatchType(type, receiver, VarianceKind.Out, bindings);
+        }
+
+        private bool CanMatchType(ITypeSymbol from, ITypeSymbol to, VarianceKind variance,
+            Dictionary<ITypeParameterSymbol, ITypeSymbol> bindings)
+        {
+            if (variance == VarianceKind.In)
+            {
+                return CanMatchType(to, from, VarianceKind.Out, bindings);
+            }
+
+            var conversion = _compilation.ClassifyCommonConversion(from, to);
+            if (conversion.IsIdentity ||
+                (variance == VarianceKind.Out && conversion.IsImplicit && conversion.IsReference))
+            {
+                return true;
+            }
+
+            if (!ContainsTypeParameter(from) && !ContainsTypeParameter(to))
+            {
+                return false;
+            }
+
+            if (from is ITypeParameterSymbol fromParameter)
+            {
+                if (variance == VarianceKind.None && !ContainsTypeParameter(to))
+                    return Bind(fromParameter, to, bindings);
+                return (!fromParameter.HasValueTypeConstraint || !to.IsReferenceType) &&
+                    (!fromParameter.HasReferenceTypeConstraint || !to.IsValueType);
+            }
+
+            if (to is ITypeParameterSymbol toParameter)
+            {
+                if (variance == VarianceKind.None && !ContainsTypeParameter(from))
+                    return Bind(toParameter, from, bindings);
+                return (!toParameter.HasValueTypeConstraint || !from.IsReferenceType) &&
+                    (!toParameter.HasReferenceTypeConstraint || !from.IsValueType);
+            }
+
+            if (from is IArrayTypeSymbol fromArray && to is IArrayTypeSymbol toArray)
+            {
+                return fromArray.Rank == toArray.Rank &&
+                    CanMatchType(fromArray.ElementType, toArray.ElementType, variance, bindings);
+            }
+
+            if (from is INamedTypeSymbol fromNamed && to is INamedTypeSymbol toNamed &&
+                SymbolEqualityComparer.Default.Equals(fromNamed.OriginalDefinition, toNamed.OriginalDefinition))
+            {
+                if (fromNamed.ContainingType != null && toNamed.ContainingType != null &&
+                    !CanMatchType(fromNamed.ContainingType, toNamed.ContainingType, VarianceKind.None, bindings))
+                {
+                    return false;
+                }
+
+                for (var index = 0; index < fromNamed.TypeArguments.Length; index++)
+                {
+                    var argumentVariance = variance == VarianceKind.None
+                        ? VarianceKind.None
+                        : fromNamed.OriginalDefinition.TypeParameters[index].Variance;
+                    if (!CanMatchType(fromNamed.TypeArguments[index], toNamed.TypeArguments[index], argumentVariance, bindings))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            if (variance == VarianceKind.Out && !from.IsValueType && !to.IsValueType)
+            {
+                return (from is INamedTypeSymbol { BaseType: { } baseType } &&
+                        TryMatchType(baseType, to, variance, bindings)) ||
+                    from.AllInterfaces.Any(implemented => TryMatchType(implemented, to, variance, bindings));
+            }
+
             return false;
         }
+
+        // Runtime dispatch uses identity/reference/boxing conversions, never an
+        // implicit user-defined operator that creates a different receiver object.
+        private bool IsRuntimeConversion(ITypeSymbol from, ITypeSymbol to)
+        {
+            var conversion = _compilation.ClassifyCommonConversion(from, to);
+            return conversion.IsImplicit && !conversion.IsUserDefined;
+        }
+
+        private bool TryMatchType(ITypeSymbol from, ITypeSymbol to, VarianceKind variance,
+            Dictionary<ITypeParameterSymbol, ITypeSymbol> bindings)
+        {
+            // Each inheritance alternative must have its own substitution. A failed
+            // branch must not constrain a later compatible interface or base type.
+            var branch = new Dictionary<ITypeParameterSymbol, ITypeSymbol>(bindings, SymbolEqualityComparer.Default);
+            if (!CanMatchType(from, to, variance, branch) ||
+                !branch.All(binding => SatisfiesConstraints(binding.Key, binding.Value, branch))) return false;
+            // An invariant argument can bind a parameter after another occurrence
+            // was accepted conservatively under variance. Recheck the closed pair
+            // so argument order cannot admit an impossible runtime conversion.
+            if (branch.Count > 0)
+            {
+                var substitutedFrom = Substitute(from, branch);
+                var substitutedTo = Substitute(to, branch);
+                if (!ContainsTypeParameter(substitutedFrom) && !ContainsTypeParameter(substitutedTo) &&
+                    !CanMatchType(substitutedFrom, substitutedTo, variance, branch)) return false;
+            }
+            foreach (var binding in branch) bindings[binding.Key] = binding.Value;
+            return true;
+        }
+
+        private static bool Bind(ITypeParameterSymbol parameter, ITypeSymbol value,
+            Dictionary<ITypeParameterSymbol, ITypeSymbol> bindings)
+        {
+            if (bindings.TryGetValue(parameter, out var existing))
+                return SymbolEqualityComparer.Default.Equals(existing, value);
+            bindings.Add(parameter, value);
+            return true;
+        }
+
+        private bool SatisfiesConstraints(ITypeParameterSymbol parameter, ITypeSymbol value,
+            Dictionary<ITypeParameterSymbol, ITypeSymbol> bindings)
+        {
+            if (parameter.HasValueTypeConstraint && (!value.IsValueType ||
+                value.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)) return false;
+            if (parameter.HasReferenceTypeConstraint && !value.IsReferenceType) return false;
+            if (parameter.HasUnmanagedTypeConstraint && !value.IsUnmanagedType) return false;
+            if (parameter.HasConstructorConstraint && !value.IsValueType &&
+                (value is not INamedTypeSymbol named || named.IsAbstract ||
+                 !named.InstanceConstructors.Any(constructor => constructor.Parameters.Length == 0 &&
+                    constructor.DeclaredAccessibility == Accessibility.Public))) return false;
+            foreach (var constraint in parameter.ConstraintTypes)
+            {
+                var substituted = Substitute(constraint, bindings);
+                // An unresolved parameter is uncertainty, not proof of impossibility.
+                if (!ContainsTypeParameter(substituted) && !IsRuntimeConversion(value, substituted)) return false;
+            }
+            return true;
+        }
+
+        private ITypeSymbol Substitute(ITypeSymbol type, Dictionary<ITypeParameterSymbol, ITypeSymbol> bindings)
+        {
+            if (type is ITypeParameterSymbol parameter && bindings.TryGetValue(parameter, out var value)) return value;
+            if (type is IArrayTypeSymbol array)
+                return _compilation.CreateArrayTypeSymbol(Substitute(array.ElementType, bindings), array.Rank);
+            if (type is INamedTypeSymbol named && ContainsTypeParameter(named))
+            {
+                var definition = named.OriginalDefinition;
+                if (named.ContainingType != null && Substitute(named.ContainingType, bindings) is INamedTypeSymbol containing)
+                    definition = containing.GetTypeMembers(named.Name, named.Arity).FirstOrDefault() ?? definition;
+                return named.Arity == 0 ? definition : definition.Construct(named.TypeArguments.Select(argument => Substitute(argument, bindings)).ToArray());
+            }
+            return type;
+        }
+
+        private static bool ContainsTypeParameter(ITypeSymbol type) => type switch
+        {
+            ITypeParameterSymbol => true,
+            IArrayTypeSymbol array => ContainsTypeParameter(array.ElementType),
+            INamedTypeSymbol named => named.TypeArguments.Any(ContainsTypeParameter) ||
+                (named.ContainingType != null && ContainsTypeParameter(named.ContainingType)),
+            _ => false
+        };
 
         internal static ITypeSymbol? GetReceiverType(IOperation? instance, ControlFlowGraph? graph = null) =>
             ReceiverType(instance, graph, 0);

@@ -40,6 +40,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tests/CliSmoke/Test.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tests/ProviderCredentialSmoke/Test.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tests/NoBuildSmoke/Test.ps1 -ToolPackage "artifacts/dotnetarium.$($env:GITHUB_REF_NAME.Substring(1)).nupkg"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tests/MarkupArchiveSmoke/Test.ps1

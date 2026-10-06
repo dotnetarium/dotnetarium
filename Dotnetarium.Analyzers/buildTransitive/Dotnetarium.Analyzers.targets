@@ -3,4 +3,31 @@
     <AdditionalFiles Include="$(MSBuildProjectDirectory)/**/*.json;$(MSBuildProjectDirectory)/**/*.yml;$(MSBuildProjectDirectory)/**/*.yaml;$(MSBuildProjectDirectory)/**/*.toml;$(MSBuildProjectDirectory)/**/*.ini;$(MSBuildProjectDirectory)/**/*.config;$(MSBuildProjectDirectory)/**/*.env;$(MSBuildProjectDirectory)/**/.env;$(MSBuildProjectDirectory)/**/.env.*;$(MSBuildProjectDirectory)/**/.npmrc;$(MSBuildProjectDirectory)/**/*.props;$(MSBuildProjectDirectory)/**/*.targets;$(MSBuildProjectDirectory)/**/*.csproj;$(MSBuildProjectDirectory)/**/*.pubxml;$(MSBuildProjectDirectory)/**/*.tf;$(MSBuildProjectDirectory)/**/*.tfvars"
       Exclude="@(AdditionalFiles);$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder);$(MSBuildProjectDirectory)/**/bin/**;$(MSBuildProjectDirectory)/**/obj/**;$(MSBuildProjectDirectory)/**/.git/**;$(MSBuildProjectDirectory)/**/node_modules/**;$(MSBuildProjectDirectory)/**/packages/**;$(MSBuildProjectDirectory)/**/artifacts/**" />
   </ItemGroup>
+  <ItemGroup>
+    <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="DotnetariumPolicyPath" />
+  </ItemGroup>
+  <!-- Separate snapshots avoid duplicate workspace documents when a policy is
+       also a compiler AnalyzerConfig input. Preserve its original glob base. -->
+  <Target Name="DotnetariumCredentialEditorConfigInputs" BeforeTargets="GenerateMSBuildEditorConfigFileCore">
+    <ItemGroup>
+      <_DotnetariumConfigDirectories Include="@(AdditionalFiles->GetPathsOfAllDirectoriesAbove())" />
+      <_DotnetariumCredentialPolicyFiles Include="@(_DotnetariumConfigDirectories->'%(FullPath)'->Distinct()->Combine('.editorconfig'));@(_DotnetariumConfigDirectories->'%(FullPath)'->Distinct()->Combine('.globalconfig'))" />
+      <_DotnetariumPolicyCandidates Include="@(EditorConfigFiles);@(_DotnetariumCredentialPolicyFiles->Exists())" />
+    </ItemGroup>
+    <RemoveDuplicates Inputs="@(_DotnetariumPolicyCandidates)">
+      <Output TaskParameter="Filtered" ItemName="_DotnetariumUniquePolicies" />
+    </RemoveDuplicates>
+    <ItemGroup>
+      <_DotnetariumPolicyInputs Include="@(_DotnetariumUniquePolicies)">
+        <Snapshot>$(IntermediateOutputPath)dotnetarium-policy/$([MSBuild]::StableStringHash('%(FullPath)')).policy</Snapshot>
+      </_DotnetariumPolicyInputs>
+    </ItemGroup>
+    <Copy SourceFiles="@(_DotnetariumPolicyInputs)" DestinationFiles="@(_DotnetariumPolicyInputs->'%(Snapshot)')" SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <AdditionalFiles Include="@(_DotnetariumPolicyInputs->'%(Snapshot)')">
+        <DotnetariumPolicyPath>%(_DotnetariumPolicyInputs.FullPath)</DotnetariumPolicyPath>
+      </AdditionalFiles>
+      <FileWrites Include="@(_DotnetariumPolicyInputs->'%(Snapshot)')" />
+    </ItemGroup>
+  </Target>
 </Project>

@@ -7,6 +7,17 @@ $scratch = Join-Path ([IO.Path]::GetTempPath()) ('dotnetarium-provider-' + [guid
 $project = Join-Path $scratch 'src/App'
 $tool = Join-Path $scratch 'tool'
 New-Item -ItemType Directory -Path $project, $tool, (Join-Path $scratch '.github/workflows'), (Join-Path $scratch 'obj'), (Join-Path $scratch 'nested/.git') -Force | Out-Null
+# Always test the packages just built, even when their version is already public.
+$restoreConfig = Join-Path $scratch 'restore.config'
+@"
+<configuration>
+  <packageSources><clear/><add key="local" value="$feed"/><add key="nuget.org" value="https://api.nuget.org/v3/index.json"/></packageSources>
+  <packageSourceMapping>
+    <packageSource key="local"><package pattern="dotnetarium"/><package pattern="Dotnetarium.Analyzers"/></packageSource>
+    <packageSource key="nuget.org"><package pattern="*"/></packageSource>
+  </packageSourceMapping>
+</configuration>
+"@ | Set-Content $restoreConfig
 # A .git file also represents a Git worktree.
 Set-Content (Join-Path $scratch '.git') 'gitdir: /synthetic/worktree'
 $alphabet = 'aB7cD8eF9gH0jK1mN2pQ3rS4tU5vW6xYz'
@@ -21,14 +32,14 @@ Set-Content (Join-Path $project 'NuGet.Config') '<configuration><packageSources>
 $projectFile = Join-Path $project 'App.csproj'
 @"
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><TargetFramework>net10.0</TargetFramework><RestoreSources>$feed;https://api.nuget.org/v3/index.json</RestoreSources><RestorePackagesPath>$scratch/packages</RestorePackagesPath></PropertyGroup>
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><RestoreConfigFile>$restoreConfig</RestoreConfigFile><RestorePackagesPath>$scratch/packages</RestorePackagesPath></PropertyGroup>
   <ItemGroup><PackageReference Include="Dotnetarium.Analyzers" Version="$version" PrivateAssets="all" /></ItemGroup>
 </Project>
 "@ | Set-Content $projectFile
 Set-Content (Join-Path $project 'Class.cs') 'public class App {}'
 $sln = Join-Path $scratch 'src/App.slnx'
 Set-Content $sln '<Solution><Project Path="App/App.csproj" /></Solution>'
-& dotnet tool install dotnetarium --tool-path $tool --add-source $feed --version $version --no-cache *> (Join-Path $scratch 'install.log')
+& dotnet tool install dotnetarium --tool-path $tool --configfile $restoreConfig --version $version --no-cache *> (Join-Path $scratch 'install.log')
 if ($LASTEXITCODE -ne 0) { throw "Tool install failed: $scratch/install.log" }
 & dotnet build $projectFile -c Release -v quiet -p:ErrorLog="$scratch/analyzer.sarif,version=2.1" *> (Join-Path $scratch 'build.log')
 if ($LASTEXITCODE -ne 0) { throw "Package build failed: $scratch/build.log" }
@@ -44,6 +55,9 @@ foreach ($mode in @('project', 'no-build')) {
     if ($LASTEXITCODE -ne 1) { throw "Expected --fail exit 1 for $mode; got $LASTEXITCODE. Logs: $scratch" }
     $raw = Get-Content $output -Raw
     $sarif = $raw | ConvertFrom-Json
+    if ($mode -eq 'project' -and $sarif.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'complete') {
+        throw "Config analyzer inputs must not cause partial workspace coverage. Logs: $scratch"
+    }
     $findings = @($sarif.runs.results | Where-Object ruleId -EQ 'DNA0022')
     if ($findings.Count -ne 3) { throw "Expected three unique findings for $mode; got $($findings.Count). Logs: $scratch" }
     $paths = @($findings.locations.physicalLocation.artifactLocation.uri)
@@ -66,6 +80,60 @@ Set-Content $projectFile $expandedProject
 if ($LASTEXITCODE -ne 0) { throw 'Explicit AdditionalFiles build failed.' }
 $explicit = Get-Content (Join-Path $scratch 'explicit.sarif') -Raw | ConvertFrom-Json
 if (@($explicit.runs.results | Where-Object ruleId -EQ 'DNA0022').Count -ne 1) { throw 'Explicit/automatic AdditionalFiles scope is incorrect.' }
+Set-Content $projectFile $originalProject
+# CLI policy is independent of build/IDE suppression unless explicitly requested.
+Set-Content (Join-Path $project 'Class.cs') 'public class App { public void Go() { _ = new System.Net.NetworkCredential("user", "embedded-password"); } }'
+@'
+root = true
+[*]
+dotnet_diagnostic.DNA0022.severity = none
+[*.cs]
+dotnet_diagnostic.DNA0009.severity = none
+'@ | Set-Content (Join-Path $scratch '.editorconfig')
+foreach ($framework in @('net8.0', 'net10.0')) {
+    Set-Content $projectFile ($originalProject.Replace('net10.0', $framework))
+    & dotnet build $projectFile -c Release -v quiet -p:ErrorLog="$scratch/suppressed-$framework.sarif,version=2.1" *> (Join-Path $scratch "suppressed-$framework.log")
+    if ($LASTEXITCODE -ne 0) { throw "Suppressed package build failed: $framework" }
+    $packageOutput = Get-Content (Join-Path $scratch "suppressed-$framework.sarif") -Raw | ConvertFrom-Json
+    if (@($packageOutput.runs.results | Where-Object { $_.ruleId -in @('DNA0009', 'DNA0022') }).Count -ne 0) {
+        throw 'NuGet analyzer must continue honoring editorconfig.'
+    }
+    foreach ($mode in @('project', 'no-build')) {
+        foreach ($respect in @($false, $true)) {
+            $name = "policy-$framework-$mode-$respect"
+            $output = Join-Path $scratch "$name.sarif"
+            $arguments = @($sln, '--sarif', $output, '--fail')
+            if ($mode -eq 'no-build') { $arguments += '-nb' }
+            if ($respect) { $arguments += '--respect-editorconfig' }
+            & $exe @arguments *> (Join-Path $scratch "$name.log")
+            $expectedExit = if ($respect) { 0 } else { 1 }
+            if ($LASTEXITCODE -ne $expectedExit) { throw "Unexpected CLI policy exit for $name. Logs: $scratch" }
+            $policy = Get-Content $output -Raw | ConvertFrom-Json
+            if ($mode -eq 'project' -and $policy.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'complete') {
+                throw "Editorconfig policy caused incomplete workspace coverage for $name. Logs: $scratch"
+            }
+            $codeFindings = @($policy.runs.results | Where-Object ruleId -EQ 'DNA0009')
+            $configFindings = @($policy.runs.results | Where-Object ruleId -EQ 'DNA0022')
+            if ($codeFindings.Count -ne $(if ($respect) { 0 } else { 1 }) -or
+                $configFindings.Count -ne $(if ($respect) { 0 } else { 3 })) {
+                throw "CLI editorconfig policy is inconsistent for $name. Logs: $scratch"
+            }
+        }
+    }
+}
+# A more specific section overrides the ancestor suppression for repository files.
+@'
+[*.yml]
+dotnet_diagnostic.DNA0022.severity = suggestion
+'@ | Set-Content (Join-Path $scratch '.github/workflows/.editorconfig')
+& $exe $sln -nb --respect-editorconfig --sarif (Join-Path $scratch 'nested-policy.sarif') --fail *> (Join-Path $scratch 'nested-policy.log')
+if ($LASTEXITCODE -ne 1) { throw 'Nested severity override did not restore the finding.' }
+$nested = Get-Content (Join-Path $scratch 'nested-policy.sarif') -Raw | ConvertFrom-Json
+$nestedFindings = @($nested.runs.results | Where-Object ruleId -EQ 'DNA0022')
+if ($nestedFindings.Count -ne 1 -or $nestedFindings[0].level -ne 'note' -or
+    $nestedFindings[0].locations[0].physicalLocation.artifactLocation.uri -ne '.github/workflows/ci.yml') {
+    throw 'Repository file policy lost glob precedence, severity or location.'
+}
 Set-Content $projectFile $originalProject
 # Independent config results must survive project-loading failure.
 Set-Content $projectFile '<invalid'

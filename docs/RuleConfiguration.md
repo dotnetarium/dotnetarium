@@ -42,6 +42,8 @@ The file must declare `"Version": "2.0"`. JSON property names are case insensiti
 
 Project models add to the built-ins. Configure severity and suppression with `.editorconfig` using `dotnet_diagnostic.DNAxxxx.severity`. A rule ID does not appear in `dotnetarium.json` because the analyzer maps internal contexts to DNA diagnostics.
 
+The NuGet analyzer honors compiler/IDE configuration. The CLI ignores editorconfig diagnostic and code-quality policy by default so its independent security scan reports all enabled rules. Add `--respect-editorconfig` to apply that policy, including severity and suppression for separately scanned config files. Compiler settings, project metadata and Dotnetarium feature options such as test-certificate opt-in are retained. JSON models/profiles apply regardless of this flag.
+
 Configuration cannot express arbitrary code flow or whole-application dependency injection resolution. Review findings involving reflection, runtime registrations, and external assemblies with the appropriate deployment context.
 
 ## Input scope

@@ -55,10 +55,13 @@ The tool accepts `.csproj`, `.sln` and `.slnx` files. Default loading uses SDK/M
 | `--sarif <path>` | Write SARIF 2.1.0 |
 | `--config <path>` | Use a specific JSON rules configuration |
 | `--fail` | Return exit code 1 when security findings are present |
+| `--respect-editorconfig` | Opt into configured rule severity and suppression |
 | `-nb`, `--no-build` | Use experimental loading without build targets, restore or generators |
 | `--configuration <name>` | Select the configuration; default is `Debug` |
 | `--framework <net8.0\|net10.0>` | Select the root projects' target framework |
 | `-h`, `--help` | Show usage |
+
+The CLI reports all enabled rules by default, independently of `.editorconfig` rule suppression. Use `--respect-editorconfig` to apply project policy to code findings and ancestor policy to independently scanned configuration files. The NuGet analyzer always honors its compiler/IDE configuration. JSON models and analysis profiles apply in both CLI policies.
 
 ### Experimental no-build mode (2.4+)
 

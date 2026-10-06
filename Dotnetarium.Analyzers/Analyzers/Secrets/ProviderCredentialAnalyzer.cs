@@ -21,13 +21,30 @@ namespace Dotnetarium.Analyzers.Secrets
         {
             context.EnableConcurrentExecution();
             context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
-            context.RegisterAdditionalFileAction(context =>
+            context.RegisterCompilationStartAction(start =>
             {
-                if (!IsConfigurationPath(context.AdditionalFile.Path)) return;
-                var text = context.AdditionalFile.GetText(context.CancellationToken);
-                if (text == null || text.Length > 2 * 1024 * 1024) return;
-                foreach (var diagnostic in Scan(context.AdditionalFile.Path, text, context.CancellationToken))
-                    context.ReportDiagnostic(diagnostic);
+                var ignorePolicy = start.Options.AnalyzerConfigOptionsProvider.GlobalOptions.TryGetValue(
+                    CredentialDiagnosticPolicy.IgnoreEditorConfigOption, out var value) && value == "true";
+                var configs = ignorePolicy ? null : AnalyzerConfigSet.Create(start.Options.AdditionalFiles
+                    .Select(file => (File: file, Path: start.Options.AnalyzerConfigOptionsProvider.GetOptions(file)
+                        .TryGetValue("build_metadata.AdditionalFiles.DotnetariumPolicyPath", out var originalPath)
+                            ? originalPath : file.Path))
+                    .Where(file => Path.GetExtension(file.Path).Equals(".editorconfig", StringComparison.OrdinalIgnoreCase) ||
+                        Path.GetExtension(file.Path).Equals(".globalconfig", StringComparison.OrdinalIgnoreCase))
+                    .Select(file => (file.Path, Text: file.File.GetText(start.CancellationToken)))
+                    .Where(file => file.Text != null)
+                    .Select(file => AnalyzerConfig.Parse(file.Text!, file.Path)).ToImmutableArray());
+                start.RegisterAdditionalFileAction(context =>
+                {
+                    if (!IsConfigurationPath(context.AdditionalFile.Path)) return;
+                    var text = context.AdditionalFile.GetText(context.CancellationToken);
+                    if (text == null || text.Length > 2 * 1024 * 1024) return;
+                    foreach (var diagnostic in Scan(context.AdditionalFile.Path, text, context.CancellationToken))
+                    {
+                        var effective = configs == null ? diagnostic : CredentialDiagnosticPolicy.Apply(diagnostic, configs);
+                        if (effective != null) context.ReportDiagnostic(effective);
+                    }
+                });
             });
         }
 

@@ -34,7 +34,7 @@ public sealed class ProviderCredentialTests
     public void Rejects_wrong_lengths_boundaries_unicode_and_placeholders()
     {
         var token = "ghp_" + Body(36);
-        var candidates = new[] { "ghp_" + Body(35), token + "A", "A" + token, token + "é", "é" + token, token + "_", "_" + token,
+        var candidates = new[] { "ghp_" + Body(35), token + "A", "A" + token, token + "Ã©", "Ã©" + token, token + "_", "_" + token,
             "GHP_" + Body(36), "ghp_" + Body(35) + "Ã©", "ghp_" + new string('x', 36),
             "github_pat_" + new string('x', 82), "ghp_EXAMPLE" + Body(29), "${GITHUB_TOKEN}", "${{ secrets.GITHUB_TOKEN }}",
             "pk_live_" + Body(36), "AKIA" + Body(16), "https://github.com/public/project" };
@@ -66,6 +66,31 @@ public sealed class ProviderCredentialTests
     {
         Assert.False(ProviderCredentialAnalyzer.IsConfigurationPath("Program.cs"));
         Assert.False(ProviderCredentialAnalyzer.IsConfigurationPath("secret.dll"));
+    }
+
+    [Theory]
+    [InlineData("dotnet_diagnostic.DNA0022.severity = none", 0, DiagnosticSeverity.Warning)]
+    [InlineData("dotnet_diagnostic.DNA0022.severity = warning", 1, DiagnosticSeverity.Warning)]
+    [InlineData("dotnet_diagnostic.DNA0022.severity = suggestion", 1, DiagnosticSeverity.Info)]
+    [InlineData("dotnet_diagnostic.DNA0022.severity = error", 1, DiagnosticSeverity.Error)]
+    [InlineData("dotnet_analyzer_diagnostic.category-Security.severity = none", 0, DiagnosticSeverity.Warning)]
+    [InlineData("dotnet_analyzer_diagnostic.severity = none", 0, DiagnosticSeverity.Warning)]
+    [InlineData("dotnet_analyzer_diagnostic.severity = none\ndotnet_diagnostic.DNA0022.severity = warning", 1, DiagnosticSeverity.Warning)]
+    public async Task Analyzer_honors_external_file_severity_without_reading_the_filesystem(
+        string settings, int count, DiagnosticSeverity expected)
+    {
+        var root = Path.GetFullPath("credential-policy-fixture");
+        var compilation = CSharpCompilation.Create("Policy", [CSharpSyntaxTree.ParseText("class C {}")],
+            [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var files = ImmutableArray.Create<AdditionalText>(
+            new TextFile(Path.Combine(root, "appsettings.json"), "token=" + "ghp_" + Body(36)),
+            new TextFile(Path.Combine(root, ".editorconfig"), "root = true\n[*.json]\n" + settings));
+        var diagnostics = await compilation.WithAnalyzers([new ProviderCredentialAnalyzer()], new AnalyzerOptions(files))
+            .GetAnalyzerDiagnosticsAsync();
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "AD0001");
+        Assert.Equal(count, diagnostics.Length);
+        if (count > 0) Assert.Equal(expected, Assert.Single(diagnostics).Severity);
     }
 
     private sealed class TextFile(string path, string text) : AdditionalText

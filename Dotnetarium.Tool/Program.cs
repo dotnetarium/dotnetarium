@@ -104,6 +104,11 @@ internal static class Program
                 else if (File.Exists(defaultConfig) && !additionalFiles.Any(file => IsConfigurationFile(file.Path)))
                     additionalFiles = additionalFiles.Add(new FileAdditionalText(defaultConfig));
                 var configOptions = project.AnalyzerOptions.AnalyzerConfigOptionsProvider;
+                if (!options.RespectEditorConfig)
+                {
+                    compilation = CliDiagnosticPolicy.ReportAllRules(compilation, analyzers);
+                    configOptions = new CliDiagnosticPolicy.UnsuppressedOptions(configOptions);
+                }
                 if (inputs!.TestProjectMetadata.TryGetValue(project.Id, out var isTestProject))
                     configOptions = new ProjectAnalysisOptions(configOptions, isTestProject);
                 else if (!configOptions.GlobalOptions.TryGetValue("build_property.IsTestProject", out _) && inputs.MSBuildPath != null)
@@ -136,7 +141,11 @@ internal static class Program
             if (report.AnalyzedProjects.Count == 0)
                 report.Fail("no-analysis", "No usable C# projects were analyzed.");
 
+            var filePolicy = new ConfigurationDiagnosticPolicy(report);
             var findings = diagnostics
+                .Select(diagnostic => options.RespectEditorConfig && diagnostic.Location.Kind == LocationKind.ExternalFile
+                    ? filePolicy.Apply(diagnostic) : diagnostic)
+                .OfType<Diagnostic>()
                 .GroupBy(diagnostic => new
                 {
                     diagnostic.Id,
@@ -191,6 +200,7 @@ internal static class Program
         "  --sarif <path>             Write SARIF 2.1.0\n" +
         "  --config <path>            Override dotnetarium.json (version 2.0)\n" +
         "  --fail                     Return 1 when findings are present\n" +
+        "  --respect-editorconfig     Apply configured rule severity and suppression\n" +
         "  -nb, --no-build            Experimental: scan without targets, restore or generators\n" +
         "  --configuration <name>     Select configuration (default: Debug)\n" +
         "  --framework <net8.0|net10.0> Select root target framework\n" +
@@ -209,12 +219,12 @@ internal static class Program
         string.Equals(Path.GetFileName(path), "dotnetarium.json", StringComparison.OrdinalIgnoreCase);
 
     private sealed record Options(string Target, string? SarifPath, string? ConfigPath,
-        bool Fail, bool NoBuild, string? Configuration, string? Framework)
+        bool Fail, bool NoBuild, string? Configuration, string? Framework, bool RespectEditorConfig)
     {
         internal static Options Parse(string[] args)
         {
             string? target = null, sarif = null, config = null, configuration = null, framework = null;
-            bool fail = false, noBuild = false;
+            bool fail = false, noBuild = false, respectEditorConfig = false;
             for (int index = 0; index < args.Length; index++)
             {
                 var arg = args[index];
@@ -225,6 +235,7 @@ internal static class Program
                     case "--sarif": sarif = NextValue(); break;
                     case "--config": config = NextValue(); break;
                     case "--fail": fail = true; break;
+                    case "--respect-editorconfig": respectEditorConfig = true; break;
                     case "-nb": case "--no-build": noBuild = true; break;
                     case "--configuration": configuration = NextValue(); break;
                     case "--framework": framework = NextValue(); break;
@@ -243,7 +254,7 @@ internal static class Program
                 throw new ArgumentException("Provide a nonempty configuration name.");
             if (framework != null && framework is not ("net8.0" or "net10.0"))
                 throw new ArgumentException("--framework must be net8.0 or net10.0.");
-            return new Options(target, sarif, config, fail, noBuild, configuration, framework);
+            return new Options(target, sarif, config, fail, noBuild, configuration, framework, respectEditorConfig);
         }
     }
 }

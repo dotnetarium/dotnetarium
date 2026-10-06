@@ -28,13 +28,15 @@ namespace Dotnetarium.Analyzers
         public static readonly DiagnosticDescriptor CertificateValidationBypass = Create("DNA0020", "TLS certificate validation bypass", "The certificate validation callback configured for '{0}' accepts any certificate without validating it.", 295);
         public static readonly DiagnosticDescriptor XmlExternalEntity = Taint("DNA0021", "XML external entity resolution", 611);
 
+        public static readonly DiagnosticDescriptor EmbeddedProviderCredential = Create("DNA0022", "Embedded provider credential", "A {0} {1} is embedded in a configuration file. Remove it and use a secret store; rotate it if exposed.", 798);
+
         private static readonly IReadOnlyDictionary<string, int> CweById = new Dictionary<string, int>
         {
             ["DNA0001"] = 89, ["DNA0002"] = 78, ["DNA0003"] = 79, ["DNA0004"] = 22,
             ["DNA0005"] = 601, ["DNA0006"] = 90, ["DNA0007"] = 643, ["DNA0008"] = 502,
             ["DNA0009"] = 798, ["DNA0010"] = 614, ["DNA0011"] = 918, ["DNA0012"] = 94,
             ["DNA0013"] = 327, ["DNA0014"] = 327, ["DNA0015"] = 329, ["DNA0016"] = 916,
-            ["DNA0017"] = 321, ["DNA0018"] = 209, ["DNA0019"] = 319, ["DNA0020"] = 295, ["DNA0021"] = 611
+            ["DNA0017"] = 321, ["DNA0018"] = 209, ["DNA0019"] = 319, ["DNA0020"] = 295, ["DNA0021"] = 611, ["DNA0022"] = 798
         };
 
         public static bool TryGetCwe(string id, out int cwe) => CweById.TryGetValue(id, out cwe);
@@ -63,6 +65,7 @@ namespace Dotnetarium.Analyzers
                     "DNA0019" => "CWE-319. Call credentials are configured for a plaintext gRPC channel.",
                     "DNA0020" => "CWE-295. A TLS certificate validation callback is configured to accept every certificate. Retain platform validation or validate the remote certificate explicitly.",
                     "DNA0021" => "CWE-611. Untrusted XML reaches a parser explicitly configured for DTD parsing and unrestricted external resolution. Modern safe defaults and restricted/preloaded resolvers are not reported.",
+                    "DNA0022" => "CWE-798. A configuration file contains a recognizable secret provider credential. Detection checks format only, without network validation. Public identifiers are not reported.",
                     _ => $"CWE-{cwe}. Review the reported data flow and use a context-appropriate mitigation."
                 },
                 helpLinkUri: $"https://github.com/dotnetarium/dotnetarium/blob/main/docs/rules/{id}.md",

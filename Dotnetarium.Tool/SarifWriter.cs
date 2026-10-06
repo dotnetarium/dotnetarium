@@ -9,9 +9,9 @@ internal static class SarifWriter
     private const string SourceRootId = "%SRCROOT%";
 
     internal static async Task WriteAsync(string output, string target, IReadOnlyList<Diagnostic> diagnostics,
-        ScanReport? report = null, string loadingMode = "project")
+        ScanReport? report = null, string loadingMode = "project", string? sourceRoot = null)
     {
-        var root = Path.GetDirectoryName(Path.GetFullPath(target))!;
+        var root = sourceRoot ?? Path.GetDirectoryName(Path.GetFullPath(target))!;
         var descriptors = diagnostics.Select(diagnostic => diagnostic.Descriptor)
             .GroupBy(descriptor => descriptor.Id, StringComparer.Ordinal)
             .Select(group => group.First())
@@ -119,7 +119,7 @@ internal static class SarifWriter
         json.WriteStartObject("originalUriBaseIds");
         json.WriteStartObject(SourceRootId);
         json.WriteString("uri", rootUri);
-        WriteMessage(json, "description", "Root of the scanned project or solution.");
+        WriteMessage(json, "description", "Root of the scanned repository, project or solution.");
         json.WriteEndObject();
         json.WriteEndObject();
     }
@@ -202,7 +202,7 @@ internal static class SarifWriter
     }
 
     private static bool IsSourceLocation(Location location) =>
-        location.IsInSource && location.SourceTree != null;
+        (location.IsInSource && location.SourceTree != null) || location.Kind == LocationKind.ExternalFile;
 
     private static string Level(DiagnosticSeverity severity) => severity switch
     {

@@ -43,11 +43,31 @@ internal static class Program
             Console.WriteLine(options.NoBuild
                 ? "Scan mode: no-build (experimental). Targets, restore and source generators are not run."
                 : "Scan mode: project (default).");
-            using var inputs = options.NoBuild
-                ? await new DirectProjectLoader(report, selection).LoadAsync(target)
-                : await ProjectLoader.LoadProjectAwareAsync(target, report, selection);
-            selection.Apply(inputs, target, report);
-            var projects = inputs.Projects.ToArray();
+            var configRoot = ConfigurationFileScanner.FindRoot(target);
+            var outputRoot = configRoot;
+            var diagnostics = new ConcurrentBag<Diagnostic>(ConfigurationFileScanner.Scan(configRoot, report));
+            ScanInputs? loadedInputs = null;
+            try
+            {
+                loadedInputs = options.NoBuild
+                    ? await new DirectProjectLoader(report, selection).LoadAsync(target)
+                    : await ProjectLoader.LoadProjectAwareAsync(target, report, selection);
+                selection.Apply(loadedInputs, target, report);
+            }
+            catch (Exception error)
+            {
+                // Preserve independent configuration findings even when project loading fails.
+                report.Fail("project-load", error.Message);
+            }
+            using var inputs = loadedInputs;
+            var projects = inputs?.Projects.ToArray() ?? Array.Empty<Project>();
+            foreach (var projectRoot in projects.Where(project => project.FilePath != null)
+                .Select(project => Path.GetDirectoryName(project.FilePath!)!).Distinct(ProjectLoader.PathComparer))
+            {
+                var relative = Path.GetRelativePath(configRoot, projectRoot);
+                if (relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(relative))
+                    foreach (var finding in ConfigurationFileScanner.Scan(projectRoot, report)) diagnostics.Add(finding);
+            }
 
             var analyzerTypes = typeof(DnaRuleCatalog).Assembly.GetTypes()
                 .Where(type => !type.IsAbstract && typeof(DiagnosticAnalyzer).IsAssignableFrom(type) &&
@@ -55,7 +75,6 @@ internal static class Program
                 .OrderBy(type => type.FullName, StringComparer.Ordinal)
                 .ToArray();
             var analyzers = analyzerTypes.Select(type => (DiagnosticAnalyzer)Activator.CreateInstance(type)!).ToImmutableArray();
-            var diagnostics = new ConcurrentBag<Diagnostic>();
             // Roslyn already runs operation-block actions concurrently. Limit
             // active projects so nested analysis does not multiply without bound.
             var projectConcurrency = Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
@@ -85,7 +104,7 @@ internal static class Program
                 else if (File.Exists(defaultConfig) && !additionalFiles.Any(file => IsConfigurationFile(file.Path)))
                     additionalFiles = additionalFiles.Add(new FileAdditionalText(defaultConfig));
                 var configOptions = project.AnalyzerOptions.AnalyzerConfigOptionsProvider;
-                if (inputs.TestProjectMetadata.TryGetValue(project.Id, out var isTestProject))
+                if (inputs!.TestProjectMetadata.TryGetValue(project.Id, out var isTestProject))
                     configOptions = new ProjectAnalysisOptions(configOptions, isTestProject);
                 else if (!configOptions.GlobalOptions.TryGetValue("build_property.IsTestProject", out _) && inputs.MSBuildPath != null)
                     configOptions = await ProjectAnalysisOptions.WithTestProjectMetadataAsync(configOptions, project.FilePath!, inputs.MSBuildPath,
@@ -121,12 +140,12 @@ internal static class Program
                 .GroupBy(diagnostic => new
                 {
                     diagnostic.Id,
-                    Path = diagnostic.Location.SourceTree?.FilePath,
+                    Path = SourceLocationSpan.GetDisplaySpan(diagnostic.Location).Path,
                     diagnostic.Location.SourceSpan.Start,
                     Message = diagnostic.GetMessage()
                 })
                 .Select(group => group.First())
-                .OrderBy(diagnostic => diagnostic.Location.SourceTree?.FilePath, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(diagnostic => SourceLocationSpan.GetDisplaySpan(diagnostic.Location).Path, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(diagnostic => diagnostic.Location.SourceSpan.Start)
                 .ThenBy(diagnostic => diagnostic.Id, StringComparer.Ordinal)
                 .ThenBy(diagnostic => diagnostic.GetMessage(), StringComparer.Ordinal)
@@ -137,7 +156,7 @@ internal static class Program
                 var line = SourceLocationSpan.GetDisplaySpan(diagnostic.Location);
                 var path = line.Path;
                 if (!string.IsNullOrEmpty(path) && Path.IsPathRooted(path))
-                    path = Path.GetRelativePath(root, path);
+                    path = Path.GetRelativePath(outputRoot, path);
                 var cwe = DnaRuleCatalog.TryGetCwe(diagnostic.Id, out var id)
                     ? $" [CWE-{id}]" : string.Empty;
                 Console.WriteLine($"{path}({line.StartLinePosition.Line + 1},{line.StartLinePosition.Character + 1}): {diagnostic.Id}{cwe}: {diagnostic.GetMessage()}");
@@ -147,7 +166,7 @@ internal static class Program
                 Console.Error.WriteLine($"{(notice.IsFailure ? "Error" : "Coverage")}: {notice.Message}");
             Console.WriteLine($"{findings.Length} security finding(s){(report.IsPartial ? " (partial scan)" : string.Empty)}; {report.AnalyzedProjects.Count} project compilation(s) analyzed.");
             if (options.SarifPath != null)
-                await SarifWriter.WriteAsync(options.SarifPath, target, findings, report, options.NoBuild ? "no-build" : "project");
+                await SarifWriter.WriteAsync(options.SarifPath, target, findings, report, options.NoBuild ? "no-build" : "project", outputRoot);
             if (report.HasExecutionFailures)
             {
                 Console.Error.WriteLine("Scan incomplete: see error and coverage notices.");

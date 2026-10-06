@@ -15,6 +15,8 @@ Use the **NuGet analyzer** for build and IDE warnings, or the **global tool** to
 | Cryptography | Legacy ciphers (`DNA0013`), ECB (`DNA0014`), fixed IVs/nonces (`DNA0015`), low PBKDF2 work factors (`DNA0016`), literal post-quantum private keys (`DNA0017`) |
 | Transport configuration | Detailed gRPC errors (`DNA0018`), gRPC call credentials over plaintext (`DNA0019`), accept-all TLS certificate callbacks (`DNA0020`) |
 
+Configuration files are also checked for recognizable GitHub secret tokens (`DNA0022`). The CLI scans the containing Git repository, including root workflows when the solution is in `src/`; outside Git it scans the solution/project directory. The NuGet analyzer checks project configuration through automatically included `AdditionalFiles`. Detection is offline and token values are omitted from CLI output. See [configuration credential scanning](docs/rules/DNA0022.md) for scope and supported formats.
+
 Models cover framework APIs and selected provider APIs, including ADO.NET, EF Core, Dapper, Npgsql/PostgreSQL, SharpCompress, Markdig, Bouncy Castle, NSec and Sodium.Core. Coverage is specific to modeled APIs; using a library does not make every call unsafe. See the [rule notes](docs/rules) for supported sinks, safe alternatives and limitations.
 
 Input coverage includes MVC and Razor Pages, Minimal APIs and endpoint filters, Razor/Blazor events and component state, gRPC requests and streams, SignalR, accepted WebSockets, HTTP pipelines, message consumers and Azure Functions isolated-worker triggers.

@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup Condition="'$(DotnetariumScanConfigFiles)' != 'false'">
+    <AdditionalFiles Include="$(MSBuildProjectDirectory)/**/*.json;$(MSBuildProjectDirectory)/**/*.yml;$(MSBuildProjectDirectory)/**/*.yaml;$(MSBuildProjectDirectory)/**/*.toml;$(MSBuildProjectDirectory)/**/*.ini;$(MSBuildProjectDirectory)/**/*.config;$(MSBuildProjectDirectory)/**/*.env;$(MSBuildProjectDirectory)/**/.env;$(MSBuildProjectDirectory)/**/.env.*;$(MSBuildProjectDirectory)/**/.npmrc;$(MSBuildProjectDirectory)/**/*.props;$(MSBuildProjectDirectory)/**/*.targets;$(MSBuildProjectDirectory)/**/*.csproj;$(MSBuildProjectDirectory)/**/*.pubxml;$(MSBuildProjectDirectory)/**/*.tf;$(MSBuildProjectDirectory)/**/*.tfvars"
+      Exclude="@(AdditionalFiles);$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder);$(MSBuildProjectDirectory)/**/bin/**;$(MSBuildProjectDirectory)/**/obj/**;$(MSBuildProjectDirectory)/**/.git/**;$(MSBuildProjectDirectory)/**/node_modules/**;$(MSBuildProjectDirectory)/**/packages/**;$(MSBuildProjectDirectory)/**/artifacts/**" />
+  </ItemGroup>
+</Project>

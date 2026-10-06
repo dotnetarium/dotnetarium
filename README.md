@@ -78,6 +78,12 @@ Globs are relative to each printed config scan root. Includes are combined; excl
 
 Use `--verify-secrets` to add active/inactive/unknown status to console and SARIF findings. Verification retains all findings, including inactive credentials; `--fail` still applies to all findings. It sends credentials only to GitHub.com, checks each distinct credential once per scan, and has a thirty-second total budget. The analyzer remains offline. See [verification and reduction](docs/rules/DNA0022.md#verification-and-reduction).
 
+```sh
+dotnetarium src/MyApp.sln --verify-secrets --sarif findings.sarif --fail
+```
+
+Verification covers GitHub config tokens (`DNA0022`), including in `-nb` mode. Refresh tokens remain unknown, and GitHub Enterprise Server verification is not supported. File exclusions and suppression are explicit; credential-aware baselines are a proposed follow-up.
+
 ### Experimental no-build mode (2.4+)
 
 ```sh

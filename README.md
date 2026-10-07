@@ -11,9 +11,11 @@ Use the **NuGet analyzer** for build and IDE warnings, or the **global tool** to
 | Injection and unsafe output | SQL (`DNA0001`), OS commands (`DNA0002`), HTML/XSS (`DNA0003`), LDAP filters and distinguished names (`DNA0006`), XPath (`DNA0007`), dynamic code (`DNA0012`) |
 | Files and network destinations | Untrusted file paths and archive extraction (`DNA0004`), open redirects (`DNA0005`), SSRF (`DNA0011`) |
 | Deserialization and XML | Risky Json.NET type-name handling (`DNA0008`), explicitly unsafe XML external-entity resolution (`DNA0021`) |
-| Credentials and cookies | Literal credentials or keys reaching sensitive APIs (`DNA0009`), unsafe Secure/HttpOnly/SameSite settings (`DNA0010`) |
+| Credentials and cookies | Hard-coded passwords or keys used by C# APIs (`DNA0009`), unsafe Secure/HttpOnly/SameSite settings (`DNA0010`) |
 | Cryptography | Legacy ciphers (`DNA0013`), ECB (`DNA0014`), fixed IVs/nonces (`DNA0015`), low PBKDF2 work factors (`DNA0016`), literal post-quantum private keys (`DNA0017`) |
 | Transport configuration | Detailed gRPC errors (`DNA0018`), gRPC call credentials over plaintext (`DNA0019`), accept-all TLS certificate callbacks (`DNA0020`) |
+
+**Hard-coded network credentials (`DNA0022`)** checks configuration files for recognizable provider tokens and authentication keys, even when no code uses them. **Hard-coded secrets in code (`DNA0009`)** checks literal passwords or keys passed to security-sensitive C# APIs. Supported configuration providers include GitHub, AWS, Azure, Google Cloud, DigitalOcean, Vault, Terraform Cloud and GitLab. The CLI scans the containing Git repository, including root workflows when the solution is in `src/`; outside Git it scans the solution/project directory. The NuGet analyzer checks project configuration through automatically included `AdditionalFiles`. Detection is offline by default; the CLI can optionally verify supported credentials without a separate account or login. Secret values are omitted from output. See [configuration credential scanning](docs/rules/DNA0022.md) for scope and supported formats.
 
 Models cover framework APIs and selected provider APIs, including ADO.NET, EF Core, Dapper, Npgsql/PostgreSQL, SharpCompress, Markdig, Bouncy Castle, NSec and Sodium.Core. Coverage is specific to modeled APIs; using a library does not make every call unsafe. See the [rule notes](docs/rules) for supported sinks, safe alternatives and limitations.
 
@@ -53,10 +55,36 @@ The tool accepts `.csproj`, `.sln` and `.slnx` files. Default loading uses SDK/M
 | `--sarif <path>` | Write SARIF 2.1.0 |
 | `--config <path>` | Use a specific JSON rules configuration |
 | `--fail` | Return exit code 1 when security findings are present |
+| `--respect-editorconfig` | Opt into configured rule severity and suppression |
+| `--verify-secrets` | Opt into credential checks against supported providers (no separate login) |
+| `--config-include <glob>` | Limit credential scanning to matching config paths; repeatable |
+| `--config-exclude <glob>` | Exclude matching config paths from credential scanning; repeatable |
 | `-nb`, `--no-build` | Use experimental loading without build targets, restore or generators |
 | `--configuration <name>` | Select the configuration; default is `Debug` |
 | `--framework <net8.0\|net10.0>` | Select the root projects' target framework |
 | `-h`, `--help` | Show usage |
+
+The CLI reports all enabled rules by default, independently of `.editorconfig` rule suppression. Use `--respect-editorconfig` to apply project policy to code findings and ancestor policy to independently scanned configuration files. The NuGet analyzer always honors its compiler/IDE configuration. JSON models and analysis profiles apply in both CLI policies.
+
+Provider credentials in configuration files are scanned from the nearest Git root, so `.github/` is included even when the solution is under `src/`. Without Git, scanning starts at the project/solution directory. The CLI checks classic GitHub token checksums offline. Cloud credentials require a distinctive secret prefix or provider-specific context; public identifiers such as AWS access-key IDs and Azure client IDs are excluded. See [credential detection and file scope](docs/rules/DNA0022.md).
+
+To scan selected config paths, quote globs and repeat the options as needed:
+
+```sh
+dotnetarium src/MyApp.sln --config-include '**/*.json' --config-include '.github/**/*.yml' --config-exclude '**/fixtures/' --fail
+```
+
+Globs are relative to each printed config scan root. Includes are combined; exclusions take precedence. These options affect credential files, including explicit `AdditionalFiles`, without changing C# project selection or loading `dotnetarium.json`.
+
+Add `--verify-secrets` to check whether detected configuration-file credentials still work. No separate provider login is needed; the CLI contacts the provider using the detected credential. The NuGet analyzer remains offline.
+
+```sh
+dotnetarium src/MyApp.sln --verify-secrets --sarif findings.sarif --fail
+```
+
+Results say **credential accepted**, **credential rejected**, or **not verified**. All findings remain reported and count for `--fail`.
+
+Checks cover GitHub, GitLab.com, DigitalOcean, Terraform Cloud, AWS credential pairs, and Azure Storage/Cosmos account keys. AWS and Azure need matching context in the scanned file. See [supported credentials and how to read results](docs/rules/DNA0022.md#verification-and-reduction).
 
 ### Experimental no-build mode (2.4+)
 

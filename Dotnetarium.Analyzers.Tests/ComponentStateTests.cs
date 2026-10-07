@@ -159,6 +159,101 @@ public sealed class ComponentStateTests
         Assert.Single(findings.Where(d => d.Id == "DNA0003"));
     }
 
+    [Fact]
+    public async Task Metadata_component_parameters_do_not_join_unrelated_source_render_groups()
+    {
+        var noise = string.Join("\n", Enumerable.Range(0, 600).Select(i => $"builder.AddContent({i + 2}, \"fixed\");"));
+        var source = """
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Forms;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class NoisyParent : ComponentBase {
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<InputText>(0);
+                    builder.AddComponentParameter(1, "Value", "fixed");
+            """ + noise + """
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class SourceInput : InputText {
+                private string text = "fixed";
+                private void Changed(ChangeEventArgs args) => text = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(2, text);
+                }
+            }
+            """;
+        var findings = await FrameworkProbe.Analyze(source, new XssTaintAnalyzer());
+        Assert.True(findings.Any(d => d.Id == "DNA0003"), string.Join("\n", findings.Select(d => d.ToString())));
+        var finding = Assert.Single(findings.Where(d => d.Id == "DNA0003"));
+        Assert.Contains(finding.AdditionalLocations, location =>
+            location.SourceTree!.GetText().ToString(location.SourceSpan).Contains("args.Value"));
+        Assert.DoesNotContain(findings, d => d.Id == "DNA9000" && d.GetMessage().Contains("SourceInput.BuildRenderTree"));
+    }
+
+    [Fact]
+    public async Task Parameterless_components_do_not_join_unrelated_source_render_groups()
+    {
+        var noise = string.Join("\n", Enumerable.Range(0, 600).Select(i => $"builder.AddContent({i + 1}, \"fixed\");"));
+        var findings = await FrameworkProbe.Analyze("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class FixedChild : ComponentBase {
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddContent(0, "fixed");
+            }
+            public sealed class NoisyParent : ComponentBase {
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<FixedChild>(0);
+            """ + noise + """
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class SourceInput : ComponentBase {
+                private string text = "fixed";
+                private void Changed(ChangeEventArgs args) => text = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.OpenComponent<FixedChild>(2);
+                    builder.CloseComponent();
+                    builder.AddMarkupContent(3, text);
+                }
+            }
+            """, new XssTaintAnalyzer());
+        Assert.Single(findings.Where(d => d.Id == "DNA0003"));
+        Assert.DoesNotContain(findings, d => d.Id == "DNA9000" && d.GetMessage().Contains("SourceInput.BuildRenderTree"));
+    }
+
+    [Fact]
+    public async Task Request_sources_in_rendering_flow_to_child_parameters_without_browser_callbacks()
+    {
+        var findings = await FrameworkProbe.Analyze("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            using Microsoft.AspNetCore.Http;
+            public sealed class Parent : ComponentBase {
+                [Inject] public IHttpContextAccessor Context { get; set; } = default!;
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<Child>(0);
+                    builder.AddComponentParameter(1, "Value", Context.HttpContext.Request.Query["html"].ToString());
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class Child : ComponentBase {
+                [Parameter] public string Value { get; set; } = "fixed";
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddMarkupContent(0, Value);
+            }
+            """, new XssTaintAnalyzer());
+        var finding = Assert.Single(findings.Where(d => d.Id == "DNA0003"));
+        Assert.Contains(finding.AdditionalLocations, location =>
+            location.SourceTree!.GetText().ToString(location.SourceSpan).Contains("Request.Query"));
+        Assert.DoesNotContain(findings, d => d.Id == "DNA9000");
+    }
+
     [Theory]
     [InlineData("fast", false, false)]
     [InlineData("full", false, false)]

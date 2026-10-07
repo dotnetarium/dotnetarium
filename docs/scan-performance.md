@@ -245,25 +245,79 @@ field updates, safe resets, source origins and all three profiles. Connected gro
 can still exceed their budgets; reusing completed work does not make an incomplete
 group complete or establish exhaustive coverage.
 
-A controlled production CLI pair on `main` plus the first XSS optimization used
-the same LANCommander checkout and full profile:
+An initial reuse CLI run took 84.2 seconds with 1.41 GiB peak scanner working set
+and retained all 13 finding/flow objects from the earlier grouping run. It remained
+a partial scan with 32 compilations and existing workspace/compiler errors.
 
-| Version | Whole-solution seconds | Peak scanner working set | Findings | Analyzer exceptions |
-| --- | ---: | ---: | ---: | ---: |
-| Component grouping only | 98.4 | 1.68 GiB | 13 | 0 |
-| Grouping plus completed-method reuse | 82.3 | 1.54 GiB | 13 | 0 |
+**Measurement correction:** the later reported 98.4/82.3-second control pair and
+17.6-second final isolated check are discarded. Restoring source after building
+the control preserved an older timestamp, letting MSBuild reuse the control DLL.
+Those runs cannot support conclusions about completed-method reuse. Subsequent
+comparisons use separate source copies or forced rebuilds and record assembly
+hashes. Whole-solution timing variation and cutoff totals do not quantify coverage.
 
-Both analyzed 32 compilations; normalized SARIF finding and flow objects are
-identical within this pair. Both returned exit 2 for existing workspace/compiler
-failures. Whole-solution times varied substantially: an earlier grouping-only run
-took 76.8 seconds, and another reuse run took 84.2 seconds. The paired result
-supports the optimization but is not a stable runtime guarantee. Cutoff totals
-also varied between runs and do not quantify missed vulnerabilities.
+The instrumented pilot reuse result was 10.1 seconds; a fresh snapshot of the
+committed implementation measured 14.1 seconds in the next pass. The Release
+suite, focused component/profile checks (including helper relays and resets) and
+packaged Razor/Blazor smoke checks passed.
 
-An instrumented pilot reuse run took 10.1 seconds for isolated Server XSS, but a
-final clean production run took **17.6 seconds**, with 277 cutoffs, zero findings
-and zero analyzer exceptions. The earlier grouping-only isolated run took 17.7
-seconds. A consistent standalone XSS wall-time improvement is therefore not
-established; the remaining incomplete connected-group traversal needs further
-investigation. The Release suite, focused component/profile checks (including
-helper relays and resets) and packaged Razor/Blazor smoke checks passed.
+### Limiting dependency edges and proving source absence
+
+The next trace identified a large group with 18 callbacks and 107 render methods.
+Metadata component types joined otherwise unrelated source components: reading
+`AntDesign.Table<T>.Loading` alone triggered 43 summary attempts. Across all
+requests, `MetadataLookupPanel.BuildRenderTree` was retried 166 times. Component
+summary work occupied 10.4 seconds of the 14.1-second isolated XSS run.
+
+Parameter-forwarding edges now require a child declared in the current compilation
+with a parameter property this model can write. Metadata-only render bodies and
+parameterless children contribute no such writes. Library input callback discovery,
+inheritance edges and ordinary sink analysis still run. Regression cases show both
+unnecessary connections could hide a small browser-state-to-markup finding behind
+an unrelated large render's budget exhaustion.
+
+Component method summaries now use the source-absence proof already applied to
+ordinary taint roots. Completed negative proofs skip taint/points-to analysis;
+uncertainty retains analysis, and exceptions publish no negative result. All
+proof caches are discarded whenever component state changes. Tests cover later
+events making an earlier callback tainted, helper calls, safe resets, all profiles
+and direct request-to-child forwarding without a browser callback.
+
+Attribute frame classification also ignores names that cannot represent browser
+bindings before walking the enclosing render block. The trace found 7,300 frame
+checks taking 0.56–0.78 seconds; DOM event names and `ValueChanged` still undergo
+full frame validation.
+
+| Instrumented isolated Server XSS | Seconds | Root cutoffs | Component summary seconds |
+| --- | ---: | ---: | ---: |
+| Committed completed-method reuse | 14.1 | 276 | 10.4 |
+| Source-only parameter edges | 10.9 | 233 | 7.0 |
+| Also remove parameterless edges | 11.7 | 221 | 5.9 |
+| Also prove component source absence | 5.9 | 224 | 2.3 |
+
+All four runs used the full profile and 343 syntax trees, with zero findings and
+zero analyzer exceptions. Loading/compilation are excluded. These are individual
+instrumented runs with scheduling variation, not guaranteed scan times. Remaining
+source proofs can still exhaust their budgets; coverage remains incomplete.
+
+The final clean production analyzer measured **5.3 seconds** for isolated Server
+XSS, with 225 cutoffs, zero findings and zero analyzer exceptions. Its assembly hash
+matched the production CLI's analyzer. All 996 Release tests and the packaged
+Razor/Blazor smoke checks passed.
+
+A fresh baseline copy of the committed implementation and a forced rebuild of the
+new implementation produced distinct analyzer assemblies. A whole-solution CLI
+pair measured **86.9 to 70.1 seconds**, with peak scanner working set falling from
+**1.73 to 1.37 GiB**. Both analyzed 32 compilations and reported 13 findings; all
+normalized finding and flow objects match. Both scans returned exit 2 for existing
+workspace/compiler failures. A separate new-implementation run took 90.7 seconds.
+The baseline also emitted transient SignalR generator workspace notices absent
+from the paired new run; these timings therefore include loading/generation
+variation and are not a guarantee of the isolated optimization's end-to-end gain.
+Total root cutoffs were 2,612 and 2,711 respectively; these remain notices of
+incomplete analysis, not counts of missed findings.
+
+The remaining trace is dominated by a render-lambda proof in `MediaGrabberDialog`.
+The callable-body fallback can revisit its large enclosing render method to retain
+captured origins. A future optimization should distinguish exact callable bodies
+from captured local initialization and preserve both before narrowing that fallback.

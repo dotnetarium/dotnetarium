@@ -24,6 +24,8 @@ namespace Dotnetarium.Config
         private readonly Dictionary<ISymbol, TaintedDataAbstractValue> values = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<IMethodSymbol, ControlFlowGraph?> graphs = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<IMethodSymbol, TaintedDataAnalysisResult> summaries = new(SymbolEqualityComparer.Default);
+        private readonly HashSet<IMethodSymbol> sourceFreeSummaries = new(SymbolEqualityComparer.Default);
+        private SourceReachability? summarySources;
         private readonly object gate = new();
         private bool computing;
         private readonly Dictionary<INamedTypeSymbol, ComponentGroup> groups = new(SymbolEqualityComparer.Default);
@@ -54,6 +56,11 @@ namespace Dotnetarium.Config
                         if (model.GetOperation(syntax) is IInvocationOperation open &&
                             open.TargetMethod.ContainingType.ToDisplayString() == "Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder" &&
                             open.TargetMethod.TypeArguments.FirstOrDefault() is INamedTypeSymbol child &&
+                            // Parameter summaries need a child body we can inspect.
+                            // Library components cannot connect unrelated source
+                            // renders merely because they share a metadata base type.
+                            child.DeclaringSyntaxReferences.Length > 0 &&
+                            SymbolEqualityComparer.Default.Equals(child.ContainingAssembly, compilation.Assembly) &&
                             model.GetEnclosingSymbol(syntax.SpanStart) is IMethodSymbol host && IsComponent(host.ContainingType))
                             links.Add((host.ContainingType.OriginalDefinition, child.OriginalDefinition));
                         continue;
@@ -83,11 +90,18 @@ namespace Dotnetarium.Config
             foreach (var callback in callbacks)
                 for (var type = callback.ContainingType; type != null && IsComponent(type); type = type.BaseType)
                     callbackStateTypes.Add(type.OriginalDefinition);
+            var childrenWithParameters = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var (_, child) in links)
                 foreach (var property in child.GetMembers().OfType<IPropertySymbol>())
                     if (property.GetAttributes().Any(attribute =>
                         attribute.AttributeClass?.ToDisplayString() == "Microsoft.AspNetCore.Components.ParameterAttribute"))
+                    {
                         parameterTargets.Add(property.OriginalDefinition);
+                        childrenWithParameters.Add(child);
+                    }
+            // A child without a modeled parameter contributes nothing to this
+            // summary model. Its own rendering remains an ordinary XSS root.
+            links.RemoveAll(link => !childrenWithParameters.Contains(link.Child));
             BuildGroups();
         }
 
@@ -144,6 +158,9 @@ namespace Dotnetarium.Config
 
         private static bool IsBrowserInputAttribute(IInvocationOperation attribute, string name, SemanticModel model)
         {
+            // Other attributes cannot be a browser binding in either frame kind.
+            // Avoid walking a large render block for every class/style/parameter.
+            if (name != "ValueChanged" && !name.StartsWith("on", System.StringComparison.Ordinal)) return false;
             // Use the innermost render frame. A custom component's event-like
             // parameter is not evidence of a browser input callback.
             var block = attribute.Syntax.Ancestors().OfType<BlockSyntax>().FirstOrDefault();
@@ -263,6 +280,8 @@ namespace Dotnetarium.Config
             // reuse results obtained against an earlier component state.
             summaries.Clear();
             graphs.Clear();
+            sourceFreeSummaries.Clear();
+            summarySources = null;
             return true;
         }
 
@@ -272,9 +291,21 @@ namespace Dotnetarium.Config
             // state input is unchanged. Budget/depth exceptions leave no entry;
             // later roots can continue past already completed callbacks.
             if (summaries.TryGetValue(method, out var summary)) return summary;
+            if (sourceFreeSummaries.Contains(method)) return null;
             var kind = (SinkKind)(int)TaintType.CrossSiteScripting;
+            var sources = configuration.GetSourceSymbolMap(kind);
+            // Ordinary XSS roots already prove source absence before running
+            // taint/points-to analysis. Apply that gate to component summaries
+            // too. Its negative proofs must be discarded when modeled state
+            // changes, since a later event can make an earlier callback tainted.
+            summarySources ??= new SourceReachability(compilation, sources);
+            if (!summarySources.MayReachSource(graph))
+            {
+                sourceFreeSummaries.Add(method);
+                return null;
+            }
             var result = TaintedDataAnalysis.TryGetOrComputeResult(graph, compilation, method, options, DnaRuleCatalog.CrossSiteScripting,
-                configuration.GetSourceSymbolMap(kind), configuration.GetSanitizerSymbolMap(kind), configuration.GetSinkSymbolMap(kind),
+                sources, configuration.GetSanitizerSymbolMap(kind), configuration.GetSinkSymbolMap(kind),
                 CancellationToken.None, configuration.AnalysisSettings.MethodDepth,
                 configuration.AnalysisSettings.LambdaDepth, cacheResult: false);
             if (result != null) summaries[method] = result;

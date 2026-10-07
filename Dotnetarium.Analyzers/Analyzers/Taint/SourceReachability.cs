@@ -11,6 +11,7 @@ using Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Dotnetarium.Analyzers.Taint
 {
@@ -18,7 +19,7 @@ namespace Dotnetarium.Analyzers.Taint
     internal sealed class SourceReachability
     {
         internal const int MethodBudget = 2048;
-        private static readonly ConditionalWeakTable<ControlFlowGraph, Summary> Summaries = new();
+        private static readonly ConditionalWeakTable<ControlFlowGraph, SummaryBuilder> Summaries = new();
         private readonly Compilation compilation;
         private readonly WellKnownTypeProvider types;
         private readonly TaintedDataSymbolMap<SourceInfo> sources;
@@ -26,6 +27,9 @@ namespace Dotnetarium.Analyzers.Taint
         private readonly ConcurrentDictionary<IMethodSymbol, bool> sourceFreeMethods = new(SymbolEqualityComparer.Default);
         private readonly ConcurrentDictionary<INamedTypeSymbol, ImmutableArray<SourceInfo>> sourceTypes = new(SymbolEqualityComparer.Default);
         private readonly ConcurrentDictionary<IParameterSymbol, bool> sourceParameters = new(SymbolEqualityComparer.Default);
+        private readonly ConcurrentDictionary<ControlFlowGraph, SourceScan> scans = new();
+        private readonly ConcurrentDictionary<(SyntaxTree Tree, TextSpan Span), GraphLookup> containingGraphs = new();
+        private readonly ConcurrentDictionary<IMethodSymbol, GraphLookup> callableContainers = new(SymbolEqualityComparer.Default);
 
         internal SourceReachability(Compilation compilation, TaintedDataSymbolMap<SourceInfo> sources)
         {
@@ -41,84 +45,126 @@ namespace Dotnetarium.Analyzers.Taint
         {
             var pending = new Queue<ControlFlowGraph>();
             var visited = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
+            var visitedGraphs = new HashSet<ControlFlowGraph>();
             pending.Enqueue(root);
             while (pending.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var graph = pending.Dequeue();
+                if (!visitedGraphs.Add(graph)) continue;
                 if (results.TryGetValue(graph, out var cached))
                 {
                     if (cached) return true;
                     continue;
                 }
-                var summary = Summaries.GetValue(graph, Summarize);
-                if (summary.Unknown) return RememberPossibleSource(graph);
-                foreach (var (operation, operationGraph) in summary.Operations)
+                var summary = Summaries.GetValue(graph, root => new SummaryBuilder(root)).GetSummary(cancellationToken);
+                var scan = scans.GetOrAdd(graph, _ => new SourceScan());
+                lock (scan)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    AnalysisWorkBudget.VisitOperation();
-                    switch (operation)
+                    if (summary.Unknown || scan.HasSource) return RememberPossibleSource(graph);
+                    // Value providers can gain origins as component state converges.
+                    // Recheck every previously visited member before resuming work.
+                    foreach (var member in scan.Members)
                     {
-                        case IPropertyReferenceOperation property when sources.IsSourceProperty(property):
-                        case IFieldReferenceOperation field when sources.IsSourceField(field):
-                        case IParameterReferenceOperation parameter when IsSourceParameter(parameter.Parameter):
-                        case IArrayCreationOperation { Type: IArrayTypeSymbol arrayType, Initializer: { } initializer }
-                            when sources.IsSourceConstantArrayOfType(arrayType, initializer):
-                            return RememberPossibleSource(graph);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        AnalysisWorkBudget.VisitOperation();
+                        if (IsMemberSource(member)) return RememberPossibleSource(graph);
                     }
-
-                    foreach (var (method, receiver, arguments) in Calls(operation))
+                    while (scan.NextOperation < summary.Operations.Length)
                     {
-                        var argumentsKnown = operation is IInvocationOperation or IObjectCreationOperation;
-                        if (IsSourceMethod(method, arguments, argumentsKnown)) return RememberPossibleSource(graph);
-                        var targets = new List<IMethodSymbol> { method };
-                        if (method.MethodKind == MethodKind.DelegateInvoke)
-                            targets.AddRange(SourceDelegateTargets.GetOrCreate(compilation).GetTargets(method));
-                        else if (method.ContainingType.TypeKind == TypeKind.Interface)
-                            targets.AddRange(SourceInterfaceImplementationMap.GetOrCreate(compilation)
-                                .GetTargets(method, SourceInterfaceImplementationMap.GetReceiverType(receiver, operationGraph)));
-                        else if ((method.IsVirtual || method.IsAbstract || method.IsOverride) && !method.IsSealed)
-                            targets.AddRange(SourceInterfaceImplementationMap.GetOrCreate(compilation).GetVirtualTargets(method));
-                        foreach (var target in targets)
+                        cancellationToken.ThrowIfCancellationRequested();
+                        AnalysisWorkBudget.VisitOperation();
+                        var (operation, operationGraph) = summary.Operations[scan.NextOperation];
+                        if (IsMemberSource(operation) ||
+                            operation is IParameterReferenceOperation parameter && IsSourceParameter(parameter.Parameter) ||
+                            operation is IArrayCreationOperation { Type: IArrayTypeSymbol arrayType, Initializer: { } initializer } &&
+                                sources.IsSourceConstantArrayOfType(arrayType, initializer))
                         {
-                            if (MigrationAnalysisExclusion.IsExcluded(target)) continue;
-                            if (IsSourceMethod(target, arguments, argumentsKnown) || target.Parameters.Any(IsSourceParameter))
-                                return RememberPossibleSource(graph);
-                            var definition = (target.ReducedFrom ?? target).OriginalDefinition;
-                            if (!visited.Add(definition) || sourceFreeMethods.ContainsKey(definition)) continue;
-                            if (visited.Count > MethodBudget) return true;
-                            if (!target.Locations.Any(location => location.IsInSource)) continue;
-                            // The engine's GetTopmostOperationBlock lookup cannot enter
-                            // source bodies owned by a referenced compilation. Treat that
-                            // existing body boundary like metadata; explicit source models
-                            // and entry parameters have already been checked above.
-                            if (!SymbolEqualityComparer.Default.Equals(target.ContainingAssembly, compilation.Assembly)) continue;
-                            var body = definition.GetTopmostOperationBlock(compilation, cancellationToken);
-                            if (body == null)
+                            scan.HasSource = true;
+                            return RememberPossibleSource(graph);
+                        }
+                        // Commit this operation only after all predicates/target
+                        // lookups finish. An aborted operation is retried in full.
+                        List<IMethodSymbol>? edges = null;
+                        foreach (var (method, receiver, arguments) in Calls(operation))
+                        {
+                            var argumentsKnown = operation is IInvocationOperation or IObjectCreationOperation;
+                            if (IsSourceMethod(method, arguments, argumentsKnown))
                             {
-                                if (definition.MethodKind is MethodKind.AnonymousFunction or MethodKind.LocalFunction &&
-                                    TryGetContainingGraph(definition, cancellationToken, out var containingGraph))
+                                scan.HasSource = true;
+                                return RememberPossibleSource(graph);
+                            }
+                            var targets = new List<IMethodSymbol> { method };
+                            if (method.MethodKind == MethodKind.DelegateInvoke)
+                                targets.AddRange(SourceDelegateTargets.GetOrCreate(compilation).GetTargets(method));
+                            else if (method.ContainingType.TypeKind == TypeKind.Interface)
+                                targets.AddRange(SourceInterfaceImplementationMap.GetOrCreate(compilation)
+                                    .GetTargets(method, SourceInterfaceImplementationMap.GetReceiverType(receiver, operationGraph)));
+                            else if ((method.IsVirtual || method.IsAbstract || method.IsOverride) && !method.IsSealed)
+                                targets.AddRange(SourceInterfaceImplementationMap.GetOrCreate(compilation).GetVirtualTargets(method));
+                            // A broad delegate signature can expose thousands of
+                            // candidates in one operation. Keep that lookup bounded
+                            // too; uncertainty retains ordinary taint analysis.
+                            if (targets.Count > MethodBudget) return RememberPossibleSource(graph);
+                            foreach (var target in targets)
+                            {
+                                if (MigrationAnalysisExclusion.IsExcluded(target)) continue;
+                                if (IsSourceMethod(target, arguments, argumentsKnown) || target.Parameters.Any(IsSourceParameter))
                                 {
-                                    pending.Enqueue(containingGraph);
-                                    continue;
+                                    scan.HasSource = true;
+                                    return RememberPossibleSource(graph);
                                 }
-                                if (definition.MethodKind is MethodKind.AnonymousFunction or MethodKind.LocalFunction) return true;
-                                // Ordinary callees without a body cannot be entered by
-                                // the same engine lookup used above. Model predicates
-                                // remain eligible; missing/generated bodies do not
-                                // become an invented taint origin.
+                                (edges ??= new List<IMethodSymbol>()).Add(target);
+                            }
+                        }
+                        if (edges != null) scan.Targets.UnionWith(edges);
+                        if (operation is IPropertyReferenceOperation or IFieldReferenceOperation) scan.Members.Add(operation);
+                        scan.NextOperation++;
+                    }
+                    foreach (var target in scan.Targets)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var definition = (target.ReducedFrom ?? target).OriginalDefinition;
+                        if (!visited.Add(definition) || sourceFreeMethods.ContainsKey(definition)) continue;
+                        if (visited.Count > MethodBudget) return true;
+                        if (!target.Locations.Any(location => location.IsInSource)) continue;
+                        // The engine's GetTopmostOperationBlock lookup cannot enter
+                        // source bodies owned by a referenced compilation. Treat that
+                        // existing body boundary like metadata; explicit source models
+                        // and entry parameters have already been checked above.
+                        if (!SymbolEqualityComparer.Default.Equals(target.ContainingAssembly, compilation.Assembly)) continue;
+                        var body = definition.GetTopmostOperationBlock(compilation, cancellationToken);
+                        if (body == null)
+                        {
+                            if (definition.MethodKind is MethodKind.AnonymousFunction or MethodKind.LocalFunction &&
+                                TryGetContainingGraph(definition, cancellationToken, out var containingGraph))
+                            {
+                                pending.Enqueue(containingGraph);
                                 continue;
                             }
-                            if (!body.TryGetEnclosingControlFlowGraph(out var calledGraph) &&
-                                !TryGetContainingGraph(definition, cancellationToken, out calledGraph)) return true;
-                            pending.Enqueue(calledGraph);
+                            if (definition.MethodKind is MethodKind.AnonymousFunction or MethodKind.LocalFunction) return true;
+                            // Ordinary callees without a body cannot be entered by
+                            // the same engine lookup used above. Model predicates
+                            // remain eligible; missing/generated bodies do not
+                            // become an invented taint origin.
+                            continue;
                         }
+                        if (!body.TryGetEnclosingControlFlowGraph(out var calledGraph) &&
+                            !TryGetContainingGraph(definition, cancellationToken, out calledGraph)) return true;
+                        pending.Enqueue(calledGraph);
                     }
                 }
             }
             foreach (var method in visited) sourceFreeMethods.TryAdd(method, true);
             return false;
         }
+
+        private bool IsMemberSource(IOperation operation) => operation switch
+        {
+            IPropertyReferenceOperation property => sources.IsSourceProperty(property),
+            IFieldReferenceOperation field => sources.IsSourceField(field),
+            _ => false,
+        };
 
         private bool RememberPossibleSource(ControlFlowGraph graph)
         {
@@ -137,6 +183,12 @@ namespace Dotnetarium.Analyzers.Taint
 
         private bool TryGetContainingGraph(IMethodSymbol method, CancellationToken cancellationToken, out ControlFlowGraph graph)
         {
+            graph = callableContainers.GetOrAdd(method, current => FindContainingGraph(current, cancellationToken)).Graph!;
+            return graph != null;
+        }
+
+        private GraphLookup FindContainingGraph(IMethodSymbol method, CancellationToken cancellationToken)
+        {
             // SemanticModel.GetOperation on a lambda can expose a detached anonymous
             // function root, which is not directly accepted by ControlFlowGraph.Create.
             // Its executable ancestor includes the nested CFG and is a conservative
@@ -148,16 +200,16 @@ namespace Dotnetarium.Analyzers.Taint
                 foreach (var ancestor in syntax.Ancestors())
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (model.GetOperation(ancestor, cancellationToken) is { } operation &&
-                        operation.TryGetEnclosingControlFlowGraph(out var containing))
-                    {
-                        graph = containing;
-                        return true;
-                    }
+                    if (model.GetOperation(ancestor, cancellationToken) is not { } operation) continue;
+                    // Sibling lambdas have different argument/declaration syntax,
+                    // but the same executable root. Share that whole-parent CFG.
+                    var rootSyntax = operation.GetRoot().Syntax;
+                    var lookup = containingGraphs.GetOrAdd((rootSyntax.SyntaxTree, rootSyntax.Span), _ =>
+                        new GraphLookup(operation.TryGetEnclosingControlFlowGraph(out var containing) ? containing : null));
+                    if (lookup.Graph != null) return lookup;
                 }
             }
-            graph = null!;
-            return false;
+            return new GraphLookup(null);
         }
 
         private static IEnumerable<(IMethodSymbol Method, IOperation? Receiver, ImmutableArray<IArgumentOperation> Arguments)> Calls(IOperation operation)
@@ -184,31 +236,86 @@ namespace Dotnetarium.Analyzers.Taint
             }
         }
 
-        private static Summary Summarize(ControlFlowGraph root)
+        // Only structural progress is shared across rules/analysis profiles. Source
+        // predicates and method edges belong to a single configured checker.
+        private sealed class SummaryBuilder
         {
-            var operations = ImmutableArray.CreateBuilder<(IOperation, ControlFlowGraph)>();
-            var pending = new Queue<ControlFlowGraph>();
-            pending.Enqueue(root);
-            var count = 0;
-            var unknown = false;
-            while (pending.Count > 0)
+            private readonly ImmutableArray<(IOperation, ControlFlowGraph)>.Builder operations = ImmutableArray.CreateBuilder<(IOperation, ControlFlowGraph)>();
+            private readonly Queue<ControlFlowGraph> pending = new();
+            private IEnumerator<IOperation>? enumerator;
+            private ControlFlowGraph? currentGraph;
+            private IOperation? nextOperation;
+            private Summary? completed;
+            private int graphCount;
+
+            internal SummaryBuilder(ControlFlowGraph root) => pending.Enqueue(root);
+
+            internal Summary GetSummary(CancellationToken cancellationToken)
             {
-                if (++count > 64) { unknown = true; break; }
-                var graph = pending.Dequeue();
-                foreach (var function in graph.LocalFunctions) pending.Enqueue(graph.GetLocalFunctionControlFlowGraph(function));
-                foreach (var operation in graph.DescendantOperations())
+                lock (this)
                 {
-                    AnalysisWorkBudget.VisitOperation();
-                    operations.Add((operation, graph));
-                    if (operation is IFlowAnonymousFunctionOperation lambda) pending.Enqueue(graph.GetAnonymousFunctionControlFlowGraph(lambda));
-                    if (operation is IInvalidOperation or IDynamicInvocationOperation or IDynamicObjectCreationOperation or
-                        IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation or IFunctionPointerInvocationOperation ||
-                        operation is IObjectCreationOperation { Constructor: null }) unknown = true;
+                    if (completed != null) return completed;
+                    while (true)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (enumerator == null)
+                        {
+                            if (pending.Count == 0) return Complete(false);
+                            if (++graphCount > 64) return Complete(true);
+                            currentGraph = pending.Dequeue();
+                            foreach (var function in currentGraph.LocalFunctions)
+                                pending.Enqueue(currentGraph.GetLocalFunctionControlFlowGraph(function));
+                            enumerator = currentGraph.DescendantOperations().GetEnumerator();
+                        }
+                        if (nextOperation == null)
+                        {
+                            if (!enumerator.MoveNext())
+                            {
+                                enumerator.Dispose();
+                                enumerator = null;
+                                continue;
+                            }
+                            nextOperation = enumerator.Current;
+                        }
+                        // Retain the uncommitted operation when a root runs out of
+                        // work. A later root can finish indexing, but no partial
+                        // summary is ever exposed as a source-absence proof.
+                        AnalysisWorkBudget.VisitOperation();
+                        var operation = nextOperation;
+                        operations.Add((operation, currentGraph!));
+                        if (operation is IFlowAnonymousFunctionOperation lambda)
+                            pending.Enqueue(currentGraph!.GetAnonymousFunctionControlFlowGraph(lambda));
+                        nextOperation = null;
+                        if (operation is IInvalidOperation or IDynamicInvocationOperation or IDynamicObjectCreationOperation or
+                            IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation or IFunctionPointerInvocationOperation ||
+                            operation is IObjectCreationOperation { Constructor: null }) return Complete(true);
+                    }
                 }
             }
-            return new Summary(operations.ToImmutable(), unknown);
+
+            private Summary Complete(bool unknown)
+            {
+                completed = new Summary(operations.ToImmutable(), unknown);
+                operations.Clear();
+                operations.Capacity = 0;
+                pending.Clear();
+                enumerator?.Dispose();
+                enumerator = null;
+                currentGraph = null;
+                nextOperation = null;
+                return completed;
+            }
+        }
+
+        private sealed class SourceScan
+        {
+            internal int NextOperation;
+            internal bool HasSource;
+            internal List<IOperation> Members { get; } = new();
+            internal HashSet<IMethodSymbol> Targets { get; } = new(SymbolEqualityComparer.Default);
         }
 
         private sealed record Summary(ImmutableArray<(IOperation Operation, ControlFlowGraph Graph)> Operations, bool Unknown);
+        private sealed record GraphLookup(ControlFlowGraph? Graph);
     }
 }

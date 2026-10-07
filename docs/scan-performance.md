@@ -317,7 +317,51 @@ variation and are not a guarantee of the isolated optimization's end-to-end gain
 Total root cutoffs were 2,612 and 2,711 respectively; these remain notices of
 incomplete analysis, not counts of missed findings.
 
-The remaining trace is dominated by a render-lambda proof in `MediaGrabberDialog`.
-The callable-body fallback can revisit its large enclosing render method to retain
-captured origins. A future optimization should distinguish exact callable bodies
-from captured local initialization and preserve both before narrowing that fallback.
+### Reusing enclosing graphs and unfinished source proofs
+
+The render-lambda fallback repeatedly recreated the enclosing executable graph.
+Sibling callbacks now share that graph, indexed by syntax tree and executable-root
+span. The full enclosing body remains visible: narrowing to the lambda alone can
+lose a captured local, a reassigned outer parameter, or shared state populated
+before the callback runs.
+
+Structural indexing and completed operation checks now retain progress across
+root-budget retries. No incomplete candidate set or call closure is published as
+source-free. Previously checked property and field providers are reevaluated on
+each retry; component state changes still discard the configured proof checker.
+Each graph is processed once per closure. Cancellation and the per-root work and
+method limits remain enforced, including very broad delegate target lists.
+
+Regression cases cover captured locals, branches, reassignment, `out` writes,
+local functions, nested callbacks, shared state, configured captured parameters,
+late origins after repeated small-budget cutoffs, changing member providers and
+sibling callbacks sharing a parent. The complete Release suite has 1,013 passing
+tests; the packed Razor/Blazor smoke checks pass.
+
+The clean production Server XSS run measured **5.0 seconds**, versus **7.5 seconds**
+in the sequential baseline. Both used 343 trees and reported zero findings, zero
+analyzer exceptions and 225 root cutoffs. The instrumented component summary work
+fell from 2.93 to 2.02 seconds. These are individual runs, not a latency guarantee.
+
+Whole-solution CLI runs measured **72.8 seconds before and 82.8 seconds after**,
+with peak scanner working set of **1.69 and 1.72 GiB**. Both analyzed 32 compilations
+and reported 13 findings; all normalized finding and flow objects match. Total
+budget notices fell from 2,735 to 1,948. Both runs retained the same existing
+workspace/compiler failures and returned exit 2. The measurements do not establish
+an end-to-end speedup; loading, compilation and analyzer scheduling still dominate
+and vary across runs. Fewer cutoffs do not establish complete coverage.
+
+#### Remaining delegate and render retry work
+
+The next trace identified delegate compatibility searches that restart across all
+methods after a cutoff. An experiment retained their search progress without
+exposing partial targets. It allowed more component summaries to run, but uncovered
+repeated taint/points-to budget exhaustion in `MediaGrabberDialog.BuildRenderTree`:
+the trace's component flow work grew from zero to 5.36 seconds. Production isolated
+XSS rose from 5.0 to 7.7 seconds, with only five fewer cutoffs. A whole scan took
+90.7 seconds and still reported 13 findings.
+
+That delegate-search change is deferred. Keep the existing incomplete-analysis
+notices until render-summary retries can be reused or bounded without inventing a
+negative result. The current optimization does not narrow captured origins or
+claim that the remaining budget-limited methods are safe.

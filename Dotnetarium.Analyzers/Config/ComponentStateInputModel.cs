@@ -90,19 +90,56 @@ namespace Dotnetarium.Config
             foreach (var callback in callbacks)
                 for (var type = callback.ContainingType; type != null && IsComponent(type); type = type.BaseType)
                     callbackStateTypes.Add(type.OriginalDefinition);
-            var childrenWithParameters = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-            foreach (var (_, child) in links)
-                foreach (var property in child.GetMembers().OfType<IPropertySymbol>())
-                    if (property.GetAttributes().Any(attribute =>
-                        attribute.AttributeClass?.ToDisplayString() == "Microsoft.AspNetCore.Components.ParameterAttribute"))
-                    {
-                        parameterTargets.Add(property.OriginalDefinition);
-                        childrenWithParameters.Add(child);
-                    }
-            // A child without a modeled parameter contributes nothing to this
-            // summary model. Its own rendering remains an ordinary XSS root.
-            links.RemoveAll(link => !childrenWithParameters.Contains(link.Child));
+            var potentialLinks = new Dictionary<INamedTypeSymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
+            foreach (var (parent, child) in links)
+            {
+                if (!potentialLinks.TryGetValue(parent, out var children))
+                    potentialLinks[parent] = children = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+                children.Add(child);
+            }
+            links.Clear();
+            foreach (var render in renders)
+            {
+                var parent = render.ContainingType.OriginalDefinition;
+                if (!potentialLinks.TryGetValue(parent, out var children) || GetGraph(render) is not { } graph) continue;
+                var linkedChildren = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+                foreach (var (component, property, _) in ParameterWrites(graph))
+                {
+                    var child = component.OriginalDefinition;
+                    if (!children.Contains(child)) continue;
+                    parameterTargets.Add(property.OriginalDefinition);
+                    if (linkedChildren.Add(child)) links.Add((parent, child));
+                }
+            }
             BuildGroups();
+        }
+
+        private static IEnumerable<(INamedTypeSymbol Component, IPropertySymbol Property, IOperation Value)> ParameterWrites(ControlFlowGraph graph)
+        {
+            // Use the same block-local frames for dependency discovery and value
+            // propagation. Merely opening a child, or giving it literals, cannot
+            // forward state through this model. User-defined conversions, fields
+            // (including configured constant fields), locals and calls stay eligible.
+            foreach (var block in graph.Blocks)
+            {
+                INamedTypeSymbol? component = null;
+                foreach (var call in block.Operations.SelectMany(operation => operation.DescendantsAndSelf()).OfType<IInvocationOperation>())
+                {
+                    if (call.TargetMethod.ContainingType.ToDisplayString() != "Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder") continue;
+                    if (call.TargetMethod.Name == "OpenComponent") component = call.TargetMethod.TypeArguments.FirstOrDefault() as INamedTypeSymbol;
+                    if (call.TargetMethod.Name == "CloseComponent") component = null;
+                    if (component == null || call.TargetMethod.Name is not ("AddAttribute" or "AddComponentParameter") || call.Arguments.Length != 3 ||
+                        call.Arguments[1].Value.ConstantValue.Value is not string name) continue;
+                    var property = component.GetMembers(name).OfType<IPropertySymbol>().FirstOrDefault(member => member.GetAttributes().Any(attribute =>
+                        attribute.AttributeClass?.ToDisplayString() == "Microsoft.AspNetCore.Components.ParameterAttribute"));
+                    if (property == null) continue;
+                    var value = call.Arguments[2].Value;
+                    var unwrapped = value;
+                    while (unwrapped is IConversionOperation { OperatorMethod: null } conversion) unwrapped = conversion.Operand;
+                    if (unwrapped is ILiteralOperation) continue;
+                    yield return (component, property, value);
+                }
+            }
         }
 
         private void BuildGroups()
@@ -240,24 +277,10 @@ namespace Dotnetarium.Config
                     {
                         var graph = GetGraph(method);
                         if (graph == null || Analyze(graph, method) is not { } result) continue;
-                        // Razor emits OpenComponent<T>, parameter writes, CloseComponent
-                        // within each block. Unknown cross-block component stacks are
-                        // not guessed from a coincidentally matching parameter name.
-                        foreach (var block in graph.Blocks)
+                        foreach (var (_, property, operation) in ParameterWrites(graph))
                         {
-                            INamedTypeSymbol? component = null;
-                            foreach (var call in block.Operations.SelectMany(operation => operation.DescendantsAndSelf()).OfType<IInvocationOperation>())
-                            {
-                                if (call.TargetMethod.ContainingType.ToDisplayString() != "Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder") continue;
-                                if (call.TargetMethod.Name == "OpenComponent") component = call.TargetMethod.TypeArguments.FirstOrDefault() as INamedTypeSymbol;
-                                if (call.TargetMethod.Name == "CloseComponent") component = null;
-                                if (component == null || call.TargetMethod.Name is not ("AddAttribute" or "AddComponentParameter") || call.Arguments.Length != 3 ||
-                                    call.Arguments[1].Value.ConstantValue.Value is not string name) continue;
-                                var property = component.GetMembers(name).OfType<IPropertySymbol>().FirstOrDefault(member => member.GetAttributes().Any(attribute =>
-                                    attribute.AttributeClass?.ToDisplayString() == "Microsoft.AspNetCore.Components.ParameterAttribute"));
-                                var value = result[call.Arguments[2].Value];
-                                if (property != null && value.Kind == TaintedDataAbstractValueKind.Tainted) changed |= Add(property, value);
-                            }
+                            var value = result[operation];
+                            if (value.Kind == TaintedDataAbstractValueKind.Tainted) changed |= Add(property, value);
                         }
                     }
                 } while (changed);

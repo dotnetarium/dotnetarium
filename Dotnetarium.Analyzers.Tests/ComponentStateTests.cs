@@ -1,4 +1,9 @@
 using Dotnetarium.Analyzers.Taint;
+using Dotnetarium.Config;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using System.Collections;
+using System.Reflection;
 
 namespace Dotnetarium.Analyzers.Tests;
 
@@ -226,6 +231,97 @@ public sealed class ComponentStateTests
             """, new XssTaintAnalyzer());
         Assert.Single(findings.Where(d => d.Id == "DNA0003"));
         Assert.DoesNotContain(findings, d => d.Id == "DNA9000" && d.GetMessage().Contains("SourceInput.BuildRenderTree"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("builder.AddComponentParameter(1, \"Value\", \"fixed\");")]
+    [InlineData("builder.AddAttribute(1, \"Value\", (object)\"fixed\");")]
+    [InlineData("builder.AddComponentParameter(1, \"Value\", null);")]
+    public async Task Child_opening_and_literal_parameters_do_not_join_unrelated_summary_work(string parameter)
+    {
+        var noise = string.Join("\n", Enumerable.Range(0, 600).Select(i => $"builder.AddContent({i + 2}, \"fixed\");"));
+        var findings = await FrameworkProbe.Analyze("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class FixedChild : ComponentBase {
+                [Parameter] public string Value { get; set; } = "fixed";
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddContent(0, Value);
+            }
+            public sealed class NoisyParent : ComponentBase {
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<FixedChild>(0);
+            """ + parameter + noise + """
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class SourceInput : ComponentBase {
+                private string text = "fixed";
+                private void Changed(ChangeEventArgs args) => text = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.OpenComponent<FixedChild>(2);
+                    builder.AddComponentParameter(3, "Value", "fixed");
+                    builder.CloseComponent();
+                    builder.AddMarkupContent(4, text);
+                }
+            }
+            """, new XssTaintAnalyzer());
+        Assert.Single(findings.Where(finding => finding.Id == "DNA0003"));
+        Assert.DoesNotContain(findings, finding => finding.Id == "DNA9000" && finding.GetMessage().Contains("SourceInput.BuildRenderTree"));
+    }
+
+    [Theory]
+    [InlineData("(Payload)\"fixed\"", true)]
+    [InlineData("Parent.Fixed", true)]
+    [InlineData("Parent.Read()", true)]
+    [InlineData("\"fixed\"", false)]
+    [InlineData("(object)\"fixed\"", false)]
+    [InlineData("null", false)]
+    public void Parameter_groups_keep_possible_origins_and_separate_literals(string value, bool connected)
+    {
+        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+            .Select(path => MetadataReference.CreateFromFile(path));
+        var source = """
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class Payload {
+                public static implicit operator Payload(string _) => new Payload();
+            }
+            public sealed class Parent : ComponentBase {
+                public const string Fixed = "fixed";
+                public static string Read() => "fixed";
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<Child>(0);
+            """ + $"builder.AddComponentParameter(1, \"Value\", {value});" + """
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class Child : ComponentBase {
+                [Parameter] public object Value { get; set; }
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddContent(0, Value);
+            }
+            """;
+        var compilation = CSharpCompilation.Create("ParameterGroups",
+            [CSharpSyntaxTree.ParseText(source)], references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        Assert.Empty(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
+        var options = LocalSourceTestOptions.Options;
+        var configuration = new TaintConfiguration(
+            ConfigurationManager.GetProjectConfiguration(LocalSourceTestOptions.Files), compilation, options);
+        var model = new ComponentStateInputModel(compilation, options, configuration);
+        // Scope must stay conservative for calls, conversion operators and fields:
+        // any of them can be configured sources or read request data in their body.
+        var groups = (IDictionary)typeof(ComponentStateInputModel)
+            .GetField("groups", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(model)!;
+        var parentGroup = groups[compilation.GetTypeByMetadataName("Parent")!];
+        Assert.NotNull(parentGroup);
+        var childGroup = groups[compilation.GetTypeByMetadataName("Child")!];
+        Assert.NotNull(childGroup);
+        if (connected) Assert.Same(parentGroup, childGroup);
+        else Assert.NotSame(parentGroup, childGroup);
     }
 
     [Fact]

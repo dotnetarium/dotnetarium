@@ -365,3 +365,52 @@ That delegate-search change is deferred. Keep the existing incomplete-analysis
 notices until render-summary retries can be reused or bounded without inventing a
 negative result. The current optimization does not narrow captured origins or
 claim that the remaining budget-limited methods are safe.
+
+### Limiting component dependencies to parameter writes
+
+Opening a source component no longer joins its parent's state-summary group by
+itself. Dependencies now come from the same block-local parameter-write frames
+used by value propagation. Literal values, including `null` and built-in
+conversions of literals, cannot forward input and do not connect these groups.
+Fields (including constants), calls, locals and user-defined conversions remain
+eligible. Inheritance links and the normal XSS analysis of each render remain.
+The discovered links are deduplicated, and render graphs are reused when their
+summaries run. No incomplete analysis is cached as a negative result.
+
+Regression checks keep browser-state findings visible with a large unrelated
+parent sharing the same child. They cover missing parameters, literal strings,
+boxed strings and nulls. Scope checks distinguish those literals from configured
+field candidates, method calls and conversion operators. Existing request-source,
+transitive forwarding and state-change regressions remain covered.
+
+A sequential isolated Server XSS pair measured **5.1 seconds before and 6.5 seconds
+after**, with cutoffs falling from **224 to 144**, zero findings and zero analyzer
+exceptions. The initial candidate preceded the dictionary-based link lookup; a
+trace of the final scope implementation took 5.8 seconds. Its constructor took
+0.34 seconds and component-summary work took 1.53 seconds, including 0.73 seconds
+of taint analysis. Additional summaries could run once unrelated dependencies
+were removed. These measurements do not demonstrate an isolated speedup.
+
+A clean baseline archive and forced production rebuild were then compared through
+the whole CLI. Times were **100.6 and 103.8 seconds**, and peak scanner working set
+was **1.47 and 1.72 GiB**. Both analyzed 32 compilations and reported the same 13
+findings. Every normalized result, including all 13 flows, matched exactly.
+Budget notices fell from **1,924 to 1,849**. Both retained 224 compiler errors,
+11 compiler-error summaries and three workspace errors, returning exit 2. This is
+fewer incomplete roots at similar total time, with higher measured peak memory;
+it is not proof of additional vulnerability coverage or an end-to-end speedup.
+
+The complete Release suite passed 1,020 tests before adding three further literal
+scope cases. All 35 final component cases passed, and the packaged Razor/Blazor
+smoke checks passed. The three new literal-isolation scope assertions fail against
+the unchanged baseline; the conservative nonliteral cases pass in both versions.
+
+Repeated delegate/source-proof cutoffs remain the next performance target. The
+previous delegate-index experiment stays deferred; no partial target list is
+published and failed render summaries are still retried with normal budget notices.
+
+A separate conversion-flow probe also exposed an existing boundary: request data
+introduced inside a user-defined string-to-object conversion and then forwarded
+through a child parameter was not reported by either baseline or candidate.
+Keeping that dependency eligible is necessary but does not repair the underlying
+flow model. This performance change does not claim support for that case.

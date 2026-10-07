@@ -14,7 +14,7 @@ namespace Dotnetarium.Analyzers
         public static readonly DiagnosticDescriptor LdapInjection = Taint("DNA0006", "LDAP injection", 90);
         public static readonly DiagnosticDescriptor XPathInjection = Taint("DNA0007", "XPath injection", 643);
         public static readonly DiagnosticDescriptor UnsafeDeserializationSetting = Create("DNA0008", "Risky Json.NET polymorphism setting", "Json.NET TypeNameHandling value '{0}' can materialize unexpected types if untrusted JSON is deserialized.", 502);
-        public static readonly DiagnosticDescriptor HardcodedSecret = Create("DNA0009", "Hardcoded secret", "A hardcoded {0} is passed to '{1}'.", 798);
+        public static readonly DiagnosticDescriptor HardcodedSecret = Create("DNA0009", "Hard-coded secrets in code", "A hardcoded {0} is passed to '{1}'.", 798);
         public static readonly DiagnosticDescriptor CookieConfiguration = Create("DNA0010", "Insecure cookie configuration", "Cookie '{0}' has unsafe settings: {1}.", 614);
         public static readonly DiagnosticDescriptor ServerSideRequestForgery = Taint("DNA0011", "Server-side request forgery", 918);
         public static readonly DiagnosticDescriptor DynamicCodeExecution = Taint("DNA0012", "Dynamic code execution", 94);
@@ -28,7 +28,7 @@ namespace Dotnetarium.Analyzers
         public static readonly DiagnosticDescriptor CertificateValidationBypass = Create("DNA0020", "TLS certificate validation bypass", "The certificate validation callback configured for '{0}' accepts any certificate without validating it.", 295);
         public static readonly DiagnosticDescriptor XmlExternalEntity = Taint("DNA0021", "XML external entity resolution", 611);
 
-        public static readonly DiagnosticDescriptor EmbeddedProviderCredential = Create("DNA0022", "Embedded provider credential", "A {0} {1} is embedded in a configuration file. Remove it and use a secret store; rotate it if exposed.", 798);
+        public static readonly DiagnosticDescriptor EmbeddedProviderCredential = Create("DNA0022", "Hard-coded network credentials", "A {0} {1} is hard-coded in a configuration file. Remove it and use a secret store; rotate it if exposed.", 798);
 
         private static readonly IReadOnlyDictionary<string, int> CweById = new Dictionary<string, int>
         {
@@ -55,7 +55,7 @@ namespace Dotnetarium.Analyzers
                 description: id switch
                 {
                     "DNA0008" => "CWE-502. Review non-default Json.NET type-name handling when deserializing untrusted data.",
-                    "DNA0009" => "CWE-798. A literal credential or cryptographic key reaches a security-sensitive API.",
+                    "DNA0009" => "CWE-798. C# code passes a literal password or cryptographic key to a security-sensitive API. This rule checks how a secret is used; DNA0022 checks recognizable provider credentials in configuration files.",
                     "DNA0010" => "Review explicit authentication, session, or cross-site cookie settings.",
                     "DNA0013" or "DNA0014" => $"CWE-{cwe}. Review whether the configured cipher is used for encryption.",
                     "DNA0015" => "CWE-329. Encryption uses provably fixed IV or nonce material.",
@@ -65,7 +65,7 @@ namespace Dotnetarium.Analyzers
                     "DNA0019" => "CWE-319. Call credentials are configured for a plaintext gRPC channel.",
                     "DNA0020" => "CWE-295. A TLS certificate validation callback is configured to accept every certificate. Retain platform validation or validate the remote certificate explicitly.",
                     "DNA0021" => "CWE-611. Untrusted XML reaches a parser explicitly configured for DTD parsing and unrestricted external resolution. Modern safe defaults and restricted/preloaded resolvers are not reported.",
-                    "DNA0022" => "CWE-798. A configuration file contains a recognizable secret provider credential. Detection is offline by default and excludes public identifiers. The CLI also checks classic GitHub checksums and offers optional GitHub.com validity checks.",
+                    "DNA0022" => "CWE-798. A configuration file contains a recognizable provider token or authentication key, even if no code uses it. Public identifiers are excluded. Detection is offline by default; the CLI offers optional checks with supported providers. DNA0009 checks literal secrets used by C# APIs.",
                     _ => $"CWE-{cwe}. Review the reported data flow and use a context-appropriate mitigation."
                 },
                 helpLinkUri: $"https://github.com/dotnetarium/dotnetarium/blob/main/docs/rules/{id}.md",

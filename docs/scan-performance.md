@@ -187,3 +187,41 @@ The paired LANCommander runs below use the same harness, inputs and explicit pro
 `*-full` uses 5 / 5,000; other runs use fast 3 / 1,000. The 11 Server findings are identical in both implementations for each profile. All paired runs have zero analyzer exceptions. Cutoffs remain incomplete-root notices, not missed-vulnerability counts. Guardrails are still required for genuinely recursive or broad compatible graphs. An initially stale pre-profile baseline package was detected by AD0001/schema errors and discarded; only rebuilt, profile-aware packages are used in this table.
 
 References: [issue 26](https://github.com/dotnetarium/dotnetarium/issues/26), [PR 27](https://github.com/dotnetarium/dotnetarium/pull/27), [pinned reproduction](https://github.com/alexaka1/repro-dotnetarium--dotnetarium-interface-dispatch/tree/7f34b1d42889523779f1f7bb53f348ea4bfc1825).
+
+## Razor component-state summary investigation
+
+Profiling LANCommander with the full profile identified an XSS-specific cost in
+component state propagation. Reading a component member could start a summary of
+all 183 render methods and 18 browser callbacks. The summary exhausted the
+caller's work budget and was retried by subsequent roots; a trace recorded 671
+attempts, without completing that global summary.
+
+The state model now groups connected components through parameter forwarding and
+inheritance. It summarizes browser callback state and render methods that can
+forward parameters to another tracked component. Members outside those inputs do
+not start a state summary. Ordinary raw-markup sink analysis still runs, and
+aborted summaries remain incomplete rather than being cached as complete.
+
+A regression demonstrates that an unrelated large render method could prevent a
+small browser-input-to-markup flow from being reported. Checks cover independent
+components, shared base classes, inherited state, multiple parents and transitive
+child parameter forwarding, including preservation of the browser-input origin.
+
+On the same Windows machine, isolated full-profile XSS analysis of LANCommander
+Server's 343 syntax trees dropped from **31.6 to 17.7 seconds**. Root cutoffs fell
+from **702 to 278**, with no analyzer exceptions. Loading and compilation are
+excluded. The production CLI whole-solution run dropped from **112.4 to 76.8
+seconds**, with peak scanner working set falling from **1.82 to 1.58 GiB**. Both
+runs analyzed 32 compilations and retained identical SARIF result and flow objects
+for all 13 findings. Existing workspace/compiler failures still make these partial
+scans. Single-run times vary with machine load and concurrent scheduling.
+
+Some connected component groups still exhaust the configured budget;
+these measurements do not establish complete XSS coverage.
+
+The SDK trace points to a separate cost: source-reachability checks around generic
+delegate dispatch in `AsyncEventHandler<T>` and connection helpers. Unknown
+receivers retain compatible source targets, and each target framework is analyzed
+separately. These conservative boundaries are retained in this change. The next
+SDK optimization should investigate reuse of completed reachability proofs and
+known delegate receiver information, with coverage tests before narrowing targets.

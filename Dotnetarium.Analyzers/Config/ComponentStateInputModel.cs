@@ -24,7 +24,19 @@ namespace Dotnetarium.Config
         private readonly Dictionary<ISymbol, TaintedDataAbstractValue> values = new(SymbolEqualityComparer.Default);
         private readonly object gate = new();
         private bool computing;
-        private bool completed;
+        private readonly Dictionary<INamedTypeSymbol, ComponentGroup> groups = new(SymbolEqualityComparer.Default);
+        private readonly List<(INamedTypeSymbol Parent, INamedTypeSymbol Child)> links = new();
+        private readonly HashSet<INamedTypeSymbol> callbackStateTypes = new(SymbolEqualityComparer.Default);
+        private readonly HashSet<ISymbol> parameterTargets = new(SymbolEqualityComparer.Default);
+
+        private sealed class ComponentGroup
+        {
+            internal IMethodSymbol[] Callbacks { get; }
+            internal IMethodSymbol[] Renders { get; }
+            internal bool Completed { get; set; }
+            internal ComponentGroup(IMethodSymbol[] callbacks, IMethodSymbol[] renders)
+            { Callbacks = callbacks; Renders = renders; }
+        }
 
         internal ComponentStateInputModel(Compilation compilation, AnalyzerOptions options, TaintConfiguration configuration)
         {
@@ -34,7 +46,17 @@ namespace Dotnetarium.Config
                 var model = compilation.GetSemanticModel(tree);
                 foreach (var syntax in tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
                 {
-                    if (InvocationSyntax.Name(syntax.Expression) is not ("AddAttribute" or "AddComponentParameter")) continue;
+                    var invocationName = InvocationSyntax.Name(syntax.Expression);
+                    if (invocationName == "OpenComponent")
+                    {
+                        if (model.GetOperation(syntax) is IInvocationOperation open &&
+                            open.TargetMethod.ContainingType.ToDisplayString() == "Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder" &&
+                            open.TargetMethod.TypeArguments.FirstOrDefault() is INamedTypeSymbol child &&
+                            model.GetEnclosingSymbol(syntax.SpanStart) is IMethodSymbol host && IsComponent(host.ContainingType))
+                            links.Add((host.ContainingType.OriginalDefinition, child.OriginalDefinition));
+                        continue;
+                    }
+                    if (invocationName is not ("AddAttribute" or "AddComponentParameter")) continue;
                     if (model.GetOperation(syntax) is not IInvocationOperation attribute || attribute.TargetMethod.Name is not ("AddAttribute" or "AddComponentParameter") ||
                         attribute.TargetMethod.ContainingType.ToDisplayString() != "Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder" ||
                         attribute.Arguments.Length < 3 || attribute.Arguments[1].Value.ConstantValue.Value is not string name ||
@@ -53,8 +75,68 @@ namespace Dotnetarium.Config
                     }
                 }
                 foreach (var syntax in tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>())
-                    if (model.GetDeclaredSymbol(syntax) is IMethodSymbol method && method.Name == "BuildRenderTree" &&
+                    if (syntax.Identifier.ValueText == "BuildRenderTree" && model.GetDeclaredSymbol(syntax) is IMethodSymbol method &&
                         method.IsOverride && IsComponent(method.ContainingType)) renders.Add(method);
+            }
+            foreach (var callback in callbacks)
+                for (var type = callback.ContainingType; type != null && IsComponent(type); type = type.BaseType)
+                    callbackStateTypes.Add(type.OriginalDefinition);
+            foreach (var (_, child) in links)
+                foreach (var property in child.GetMembers().OfType<IPropertySymbol>())
+                    if (property.GetAttributes().Any(attribute =>
+                        attribute.AttributeClass?.ToDisplayString() == "Microsoft.AspNetCore.Components.ParameterAttribute"))
+                        parameterTargets.Add(property.OriginalDefinition);
+            BuildGroups();
+        }
+
+        private void BuildGroups()
+        {
+            // State flows between source components through parameters and
+            // inherited members. Unrelated render trees must not share a budget.
+            var neighbors = new Dictionary<INamedTypeSymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
+            void Register(INamedTypeSymbol component)
+            {
+                component = component.OriginalDefinition;
+                if (neighbors.ContainsKey(component)) return;
+                neighbors[component] = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+                if (component.BaseType is { } parent && IsComponent(parent) &&
+                    parent.ToDisplayString() != "Microsoft.AspNetCore.Components.ComponentBase")
+                {
+                    parent = parent.OriginalDefinition;
+                    Register(parent);
+                    neighbors[component].Add(parent);
+                    neighbors[parent].Add(component);
+                }
+            }
+            foreach (var method in callbacks.Concat(renders)) Register(method.ContainingType);
+            var forwardingTypes = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+            foreach (var (parent, child) in links)
+                if (neighbors.TryGetValue(parent, out var parentNeighbors) && neighbors.TryGetValue(child, out var childNeighbors))
+                {
+                    forwardingTypes.Add(parent);
+                    parentNeighbors.Add(child);
+                    childNeighbors.Add(parent);
+                }
+            foreach (var start in neighbors.Keys)
+            {
+                if (groups.ContainsKey(start)) continue;
+                var members = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+                var pending = new Stack<INamedTypeSymbol>();
+                pending.Push(start);
+                while (pending.Count > 0)
+                {
+                    var member = pending.Pop();
+                    if (!members.Add(member)) continue;
+                    foreach (var neighbor in neighbors[member]) pending.Push(neighbor);
+                }
+                var group = new ComponentGroup(
+                    callbacks.Where(method => members.Contains(method.ContainingType.OriginalDefinition)).ToArray(),
+                    // A render summary only contributes parameter writes to
+                    // another tracked component. Rendering text or markup alone
+                    // is handled by the ordinary XSS root, not this state model.
+                    renders.Where(method => members.Contains(method.ContainingType.OriginalDefinition) &&
+                        forwardingTypes.Contains(method.ContainingType.OriginalDefinition)).ToArray());
+                foreach (var member in members) groups[member] = group;
             }
         }
 
@@ -99,15 +181,22 @@ namespace Dotnetarium.Config
 
         private TaintedDataAbstractValue? GetMemberInput(ISymbol member, IOperation? instance)
         {
-            if (instance is not IInstanceReferenceOperation) return null;
+            // A component without an indexed browser callback cannot write its
+            // own state through this model. Parameter forwarding writes only
+            // the indexed child properties. Other configured sources are handled
+            // independently by the taint engine.
+            if (!callbackStateTypes.Contains(member.ContainingType.OriginalDefinition) &&
+                !parameterTargets.Contains(member.OriginalDefinition)) return null;
+            if (instance is not IInstanceReferenceOperation ||
+                !groups.TryGetValue(member.ContainingType.OriginalDefinition, out var group)) return null;
             lock (gate)
             {
-                if (!computing && !completed) Compute();
+                if (!computing && !group.Completed) Compute(group);
                 return values.TryGetValue(member, out var value) ? value : null;
             }
         }
 
-        private void Compute()
+        private void Compute(ComponentGroup group)
         {
             computing = true;
             try
@@ -118,7 +207,7 @@ namespace Dotnetarium.Config
                 do
                 {
                     changed = false;
-                    foreach (var method in callbacks)
+                    foreach (var method in group.Callbacks)
                     {
                         var graph = FrameworkGraph.ForMethod(method, compilation);
                         if (graph == null || Analyze(graph, method) is not { } result) continue;
@@ -128,7 +217,7 @@ namespace Dotnetarium.Config
                                 entry.Key.InstanceLocation.Locations.Any(location => SymbolEqualityComparer.Default.Equals(location.Symbol, method.ContainingType)))
                                 changed |= Add(entry.Key.Symbol, entry.Value);
                     }
-                    foreach (var method in renders)
+                    foreach (var method in group.Renders)
                     {
                         var graph = FrameworkGraph.ForMethod(method, compilation);
                         if (graph == null || Analyze(graph, method) is not { } result) continue;
@@ -153,7 +242,7 @@ namespace Dotnetarium.Config
                         }
                     }
                 } while (changed);
-                completed = true;
+                group.Completed = true;
             }
             finally { computing = false; }
         }

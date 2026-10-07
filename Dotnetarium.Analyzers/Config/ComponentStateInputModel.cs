@@ -22,6 +22,8 @@ namespace Dotnetarium.Config
         private readonly HashSet<IMethodSymbol> callbacks = new(SymbolEqualityComparer.Default);
         private readonly HashSet<IMethodSymbol> renders = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<ISymbol, TaintedDataAbstractValue> values = new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<IMethodSymbol, ControlFlowGraph?> graphs = new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<IMethodSymbol, TaintedDataAnalysisResult> summaries = new(SymbolEqualityComparer.Default);
         private readonly object gate = new();
         private bool computing;
         private readonly Dictionary<INamedTypeSymbol, ComponentGroup> groups = new(SymbolEqualityComparer.Default);
@@ -209,7 +211,7 @@ namespace Dotnetarium.Config
                     changed = false;
                     foreach (var method in group.Callbacks)
                     {
-                        var graph = FrameworkGraph.ForMethod(method, compilation);
+                        var graph = GetGraph(method);
                         if (graph == null || Analyze(graph, method) is not { } result) continue;
                         foreach (var entry in result.ExitBlockOutput.Data)
                             if (entry.Key.Symbol is IFieldSymbol or IPropertySymbol && IsComponent(entry.Key.Symbol.ContainingType) &&
@@ -219,7 +221,7 @@ namespace Dotnetarium.Config
                     }
                     foreach (var method in group.Renders)
                     {
-                        var graph = FrameworkGraph.ForMethod(method, compilation);
+                        var graph = GetGraph(method);
                         if (graph == null || Analyze(graph, method) is not { } result) continue;
                         // Razor emits OpenComponent<T>, parameter writes, CloseComponent
                         // within each block. Unknown cross-block component stacks are
@@ -256,16 +258,38 @@ namespace Dotnetarium.Config
                 values[member] = merged;
             }
             else values.Add(member, value);
+            // Changing modeled inputs invalidates completed taint summaries.
+            // Refresh CFG identity too, so nested interprocedural caches cannot
+            // reuse results obtained against an earlier component state.
+            summaries.Clear();
+            graphs.Clear();
             return true;
         }
 
         private TaintedDataAnalysisResult? Analyze(ControlFlowGraph graph, IMethodSymbol method)
         {
+            // Completed method results can be reused only while every component
+            // state input is unchanged. Budget/depth exceptions leave no entry;
+            // later roots can continue past already completed callbacks.
+            if (summaries.TryGetValue(method, out var summary)) return summary;
             var kind = (SinkKind)(int)TaintType.CrossSiteScripting;
-            return TaintedDataAnalysis.TryGetOrComputeResult(graph, compilation, method, options, DnaRuleCatalog.CrossSiteScripting,
+            var result = TaintedDataAnalysis.TryGetOrComputeResult(graph, compilation, method, options, DnaRuleCatalog.CrossSiteScripting,
                 configuration.GetSourceSymbolMap(kind), configuration.GetSanitizerSymbolMap(kind), configuration.GetSinkSymbolMap(kind),
                 CancellationToken.None, configuration.AnalysisSettings.MethodDepth,
                 configuration.AnalysisSettings.LambdaDepth, cacheResult: false);
+            if (result != null) summaries[method] = result;
+            return result;
+        }
+
+        private ControlFlowGraph? GetGraph(IMethodSymbol method)
+        {
+            // The compilation is immutable. Reuse CFGs across summary passes
+            // and budget retries, while recalculating taint against current state.
+            // Access is serialized by gate; an aborted taint result is never cached.
+            if (graphs.TryGetValue(method, out var graph)) return graph;
+            graph = FrameworkGraph.ForMethod(method, compilation);
+            graphs.Add(method, graph);
+            return graph;
         }
 
         private static bool IsComponent(INamedTypeSymbol? type)

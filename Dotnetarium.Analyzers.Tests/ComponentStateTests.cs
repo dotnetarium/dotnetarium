@@ -158,4 +158,50 @@ public sealed class ComponentStateTests
             """, new XssTaintAnalyzer());
         Assert.Single(findings.Where(d => d.Id == "DNA0003"));
     }
+
+    [Theory]
+    [InlineData("fast", false, false)]
+    [InlineData("full", false, false)]
+    [InlineData("max", false, false)]
+    [InlineData("full", true, false)]
+    [InlineData("fast", false, true)]
+    [InlineData("full", false, true)]
+    [InlineData("max", false, true)]
+    [InlineData("full", true, true)]
+    public async Task Reused_callback_graphs_recompute_taint_when_component_state_changes(string profile, bool reset, bool helper)
+    {
+        var source = """
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class Input : ComponentBase {
+                private string first = "fixed", second = "fixed";
+                private void Relay() {
+                    second = first;
+            """ + (reset ? "second = \"fixed\";" : "") + """
+                }
+                private void Changed(ChangeEventArgs args) => first = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "button");
+                    builder.AddAttribute(1, "onclick", EventCallback.Factory.Create(this, Relay));
+                    builder.CloseElement();
+                    builder.OpenElement(2, "input");
+                    builder.AddAttribute(3, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(4, second);
+                }
+            }
+            """;
+        if (helper) source = source.Replace("private void Relay() {", "private void Relay() => Copy(); private void Copy() {");
+        var findings = await FrameworkProbe.Analyze(source, new XssTaintAnalyzer(), configuration:
+            $$"""{"Version":"2.0","AnalysisProfile":"{{profile}}"}""");
+        Assert.DoesNotContain(findings, finding => finding.Id == "DNA9000");
+        if (reset) Assert.Empty(findings);
+        else
+        {
+            var finding = Assert.Single(findings);
+            Assert.Equal("DNA0003", finding.Id);
+            Assert.Contains(finding.AdditionalLocations, location =>
+                location.SourceTree!.GetText().ToString(location.SourceSpan).Contains("args.Value"));
+        }
+    }
 }

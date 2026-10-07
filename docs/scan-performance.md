@@ -225,3 +225,45 @@ receivers retain compatible source targets, and each target framework is analyze
 separately. These conservative boundaries are retained in this change. The next
 SDK optimization should investigate reuse of completed reachability proofs and
 known delegate receiver information, with coverage tests before narrowing targets.
+
+### Reusing completed component method summaries
+
+A follow-up trace recorded 218 component summary attempts. Of those, 198 reached
+the same callback before exhausting their budget. Serialized summary work consumed
+13.7 seconds of a 17.3-second isolated XSS run. Even callbacks that had completed
+against unchanged inputs were being analyzed again on every retry.
+
+The component model now reuses CFGs and completed method results while its state
+inputs are unchanged. Any added or merged tainted state clears both caches; new
+CFG identities also prevent nested interprocedural results from retaining an older
+state. Budget/depth exceptions leave no completed result. The caches belong to the
+compilation's component model and use its existing lock. Profile limits, source
+eligibility, sinks and incomplete-coverage reporting are unchanged.
+
+Tests exercise state relaying between separate events, direct and helper-mediated
+field updates, safe resets, source origins and all three profiles. Connected groups
+can still exceed their budgets; reusing completed work does not make an incomplete
+group complete or establish exhaustive coverage.
+
+A controlled production CLI pair on `main` plus the first XSS optimization used
+the same LANCommander checkout and full profile:
+
+| Version | Whole-solution seconds | Peak scanner working set | Findings | Analyzer exceptions |
+| --- | ---: | ---: | ---: | ---: |
+| Component grouping only | 98.4 | 1.68 GiB | 13 | 0 |
+| Grouping plus completed-method reuse | 82.3 | 1.54 GiB | 13 | 0 |
+
+Both analyzed 32 compilations; normalized SARIF finding and flow objects are
+identical within this pair. Both returned exit 2 for existing workspace/compiler
+failures. Whole-solution times varied substantially: an earlier grouping-only run
+took 76.8 seconds, and another reuse run took 84.2 seconds. The paired result
+supports the optimization but is not a stable runtime guarantee. Cutoff totals
+also varied between runs and do not quantify missed vulnerabilities.
+
+An instrumented pilot reuse run took 10.1 seconds for isolated Server XSS, but a
+final clean production run took **17.6 seconds**, with 277 cutoffs, zero findings
+and zero analyzer exceptions. The earlier grouping-only isolated run took 17.7
+seconds. A consistent standalone XSS wall-time improvement is therefore not
+established; the remaining incomplete connected-group traversal needs further
+investigation. The Release suite, focused component/profile checks (including
+helper relays and resets) and packaged Razor/Blazor smoke checks passed.

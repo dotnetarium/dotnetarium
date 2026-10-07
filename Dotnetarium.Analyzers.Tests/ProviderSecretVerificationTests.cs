@@ -151,6 +151,18 @@ public class ProviderSecretVerificationTests
     }
 
     [Fact]
+    public void JsonBindingFollowsExactOccurrenceEvenWhenSecretIsRepeated()
+    {
+        var secret = Body(40);
+        var text = SourceText.From(JsonSerializer.Serialize(new { unicode = "é日本", first = new { aws_access_key_id = "AKIAABCDEFGHIJKLMNOP", aws_secret_access_key = secret }, second = new { aws_secret_access_key = secret } }));
+        var findings = ProviderCredentialAnalyzer.Scan("config.json", text).ToArray();
+        Assert.Equal(2, findings.Length);
+        Assert.Equal("AKIAABCDEFGHIJKLMNOP", SecretVerificationContext.Read(findings[0], secret, text)!.AccessKeyId);
+        Assert.Null(SecretVerificationContext.Read(findings[1], secret, text));
+        Assert.Null(Context("config.yml", "aws_access_key_id: AKIAABCDEFGHIJKLMNOP\naws_secret_access_key: " + secret));
+    }
+
+    [Fact]
     public void AzureContextRequiresExactHostAndUnambiguousConnection()
     {
         Assert.Equal("prodstore", Context(".env", "AccountName=prodstore;AccountKey=" + Key(64))!.Account);

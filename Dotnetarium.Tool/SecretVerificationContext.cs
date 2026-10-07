@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
@@ -55,13 +56,43 @@ internal sealed record SecretVerificationContext(string? Account = null, string?
         {
             try
             {
-                using var json = JsonDocument.Parse(text.ToString());
-                var results = new List<SecretVerificationContext>();
-                Visit(json.RootElement, results, secret);
-                return results.Count == 1 ? results[0] : null;
+                var source = text.ToString();
+                var span = diagnostic.Location.SourceSpan;
+                var start = Encoding.UTF8.GetByteCount(source.AsSpan(0, span.Start));
+                var end = start + Encoding.UTF8.GetByteCount(source.AsSpan(span.Start, span.Length));
+                var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(source));
+                var objects = new Stack<ObjectFields>();
+                string? property = null;
+                SecretVerificationContext? result = null;
+                while (reader.Read())
+                {
+                    switch (reader.TokenType)
+                    {
+                        case JsonTokenType.StartObject: objects.Push(new()); property = null; break;
+                        case JsonTokenType.PropertyName: property = reader.GetString(); break;
+                        case JsonTokenType.String when property?.StartsWith("aws_", StringComparison.OrdinalIgnoreCase) == true && objects.TryPeek(out var current):
+                            current.Duplicate |= !current.Fields.TryAdd(property, reader.GetString()!);
+                            if (property.Equals("aws_secret_access_key", StringComparison.OrdinalIgnoreCase) &&
+                                start > reader.TokenStartIndex && end < reader.BytesConsumed) current.ContainsFinding = true;
+                            property = null;
+                            break;
+                        case JsonTokenType.EndObject:
+                            var completed = objects.Pop();
+                            if (completed.ContainsFinding && !completed.Duplicate) result = Bind(completed.Fields, secret);
+                            property = null;
+                            break;
+                        default: property = null; break;
+                    }
+                }
+                return result;
             }
             catch (JsonException) { return null; }
         }
+        var path = diagnostic.Location.GetLineSpan().Path.Replace('\\', '/');
+        var name = Path.GetFileName(path);
+        if (!name.Equals(".env", StringComparison.OrdinalIgnoreCase) && !name.StartsWith(".env.", StringComparison.OrdinalIgnoreCase) &&
+            !path.EndsWith(".ini", StringComparison.OrdinalIgnoreCase) &&
+            !path.EndsWith(".aws/credentials", StringComparison.OrdinalIgnoreCase)) return null;
         // Bind only within one INI profile/document section. Multiple IDs or
         // values are ambiguous, even when they happen to be near the secret.
         var position = text.Lines.GetLineFromPosition(diagnostic.Location.SourceSpan.Start).LineNumber;
@@ -80,22 +111,11 @@ internal sealed record SecretVerificationContext(string? Account = null, string?
 
     private static bool IsSection(string line) => line.TrimStart().StartsWith('[') || line.Trim() == "---";
 
-    private static void Visit(JsonElement element, List<SecretVerificationContext> results, string secret)
+    private sealed class ObjectFields
     {
-        if (element.ValueKind == JsonValueKind.Object)
-        {
-            var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var duplicate = false;
-            foreach (var property in element.EnumerateObject())
-            {
-                if (property.Value.ValueKind == JsonValueKind.String && property.Name.StartsWith("aws_", StringComparison.OrdinalIgnoreCase))
-                    duplicate |= !fields.TryAdd(property.Name, property.Value.GetString()!);
-                Visit(property.Value, results, secret);
-            }
-            if (!duplicate && Bind(fields, secret) is { } bound) results.Add(bound);
-        }
-        else if (element.ValueKind == JsonValueKind.Array)
-            foreach (var item in element.EnumerateArray()) Visit(item, results, secret);
+        internal Dictionary<string, string> Fields { get; } = new(StringComparer.OrdinalIgnoreCase);
+        internal bool Duplicate;
+        internal bool ContainsFinding;
     }
 
     private static SecretVerificationContext? Bind(Dictionary<string, string> fields, string secret)

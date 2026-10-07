@@ -76,13 +76,15 @@ dotnetarium src/MyApp.sln --config-include '**/*.json' --config-include '.github
 
 Globs are relative to each printed config scan root. Includes are combined; exclusions take precedence. These options affect credential files, including explicit `AdditionalFiles`, without changing C# project selection or loading `dotnetarium.json`.
 
-Use `--verify-secrets` to add active/inactive/unknown status to console and SARIF findings. Verification retains all findings, including inactive credentials; `--fail` still applies to all findings. It uses fixed provider endpoints, checks each distinct credential/context once per scan, and has a thirty-second total budget. The analyzer remains offline. See [verification and reduction](docs/rules/DNA0022.md#verification-and-reduction).
+Add `--verify-secrets` to check whether detected configuration-file credentials still work. No separate provider login is needed; the CLI contacts the provider using the detected credential. The NuGet analyzer remains offline.
 
 ```sh
 dotnetarium src/MyApp.sln --verify-secrets --sarif findings.sarif --fail
 ```
 
-Verification covers GitHub, GitLab.com PATs, DigitalOcean access tokens, Terraform Cloud tokens, paired AWS credentials, and Azure Storage/Cosmos account keys (`DNA0022`), including in `-nb` mode. AWS and Azure require matching context from the scanned configuration. Refresh tokens, Vault, Google credentials, Azure SAS and messaging keys remain unknown; they are not submitted for verification. Self-hosted services and sovereign clouds are not supported. File exclusions and suppression are explicit; credential-aware baselines are a proposed follow-up.
+Results say **credential accepted**, **credential rejected**, or **not verified**. All findings remain reported and count for `--fail`.
+
+Checks cover GitHub, GitLab.com, DigitalOcean, Terraform Cloud, AWS credential pairs, and Azure Storage/Cosmos account keys. AWS and Azure need matching context in the scanned file. See [supported credentials and how to read results](docs/rules/DNA0022.md#verification-and-reduction).
 
 ### Experimental no-build mode (2.4+)
 

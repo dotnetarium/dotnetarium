@@ -10,6 +10,19 @@ namespace Dotnetarium.Analyzers.Tests;
 
 public class ProviderSecretVerificationTests
 {
+    [Theory]
+    [InlineData("active", "accepted-by-aws-sts", " [credential accepted]")]
+    [InlineData("inactive", "rejected-by-github-com", " [credential rejected]")]
+    [InlineData("unknown", "refresh-token-not-supported", " [not verified: credential type not supported]")]
+    [InlineData("unknown", "missing-or-ambiguous-credential-set", " [not verified: matching account or credential details missing or ambiguous]")]
+    [InlineData("unknown", "http-429", " [not verified: provider rate limit]")]
+    [InlineData("unknown", "verification-budget-exhausted", " [not verified: time or request limit reached]")]
+    [InlineData("unknown", "network-error", " [not verified: could not reach provider]")]
+    [InlineData("unknown", "access-restricted", " [not verified: access restricted]")]
+    [InlineData("unknown", "new-internal-reason", " [not verified: provider check inconclusive]")]
+    public void ConsoleResultsUsePlainLanguage(string status, string reason, string expected)
+        => Assert.Equal(expected, ProviderSecretVerifier.FormatResult(status, reason));
+
     private static string Body(int count) => string.Concat(Enumerable.Range(0, count).Select(i => "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"[i % 36]));
     private static string Key(int length) => Convert.ToBase64String(Enumerable.Range(0, length).Select(i => (byte)(i * 7 + 3)).ToArray());
     private static ProviderSecretVerifier.Candidate Candidate(string provider) => provider switch

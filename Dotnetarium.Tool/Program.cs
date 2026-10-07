@@ -183,7 +183,7 @@ internal static class Program
                 var cwe = DnaRuleCatalog.TryGetCwe(diagnostic.Id, out var id)
                     ? $" [CWE-{id}]" : string.Empty;
                 var verification = diagnostic.Properties.TryGetValue(ProviderSecretVerifier.StatusProperty, out var status)
-                    ? $" [verification: {status}; {diagnostic.Properties[ProviderSecretVerifier.ReasonProperty]}]" : string.Empty;
+                    ? ProviderSecretVerifier.FormatResult(status, diagnostic.Properties.GetValueOrDefault(ProviderSecretVerifier.ReasonProperty)) : string.Empty;
                 Console.WriteLine($"{path}({line.StartLinePosition.Line + 1},{line.StartLinePosition.Character + 1}): {diagnostic.Id}{cwe}: {diagnostic.GetMessage()}{verification}");
             }
 

@@ -15,6 +15,25 @@ internal sealed class ProviderSecretVerifier : IDisposable
 {
     internal const string StatusProperty = "dotnetarium.secretVerification";
     internal const string ReasonProperty = "dotnetarium.secretVerificationReason";
+    internal static string FormatResult(string? status, string? reason) => status switch
+    {
+        "active" => " [credential accepted]",
+        "inactive" => " [credential rejected]",
+        _ => reason switch
+        {
+            "provider-verification-not-supported" or "refresh-token-not-supported" or "token-type-not-supported"
+                => " [not verified: credential type not supported]",
+            "missing-or-ambiguous-credential-set" or "missing-context-or-unsupported-key-type"
+                => " [not verified: matching account or credential details missing or ambiguous]",
+            "provider-rate-limited" or "http-429" => " [not verified: provider rate limit]",
+            "timeout-or-budget" or "verification-budget-exhausted" or "verification-request-limit"
+                => " [not verified: time or request limit reached]",
+            "network-error" => " [not verified: could not reach provider]",
+            "access-restricted" => " [not verified: access restricted]",
+            _ => " [not verified: provider check inconclusive]"
+        }
+    };
+
     private readonly ConcurrentDictionary<(string Path, int Start), Candidate> candidates = new();
     private readonly HttpClient client;
 

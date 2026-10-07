@@ -41,7 +41,9 @@
     <Using Include="Xunit" />
     <Compile Include="../Dotnetarium.Tool/GitHubTokenChecksum.cs" Link="Tool/GitHubTokenChecksum.cs" />
     <Compile Include="../Dotnetarium.Tool/ConfigurationScanScope.cs" Link="Tool/ConfigurationScanScope.cs" />
-    <Compile Include="../Dotnetarium.Tool/GitHubSecretVerifier.cs" Link="Tool/GitHubSecretVerifier.cs" />
+    <Compile Include="../Dotnetarium.Tool/SecretVerificationContext.cs" Link="Tool/SecretVerificationContext.cs" />
+    <Compile Include="../Dotnetarium.Tool/SecretTokenValidation.cs" Link="Tool/SecretTokenValidation.cs" />
+    <Compile Include="../Dotnetarium.Tool/ProviderSecretVerifier.cs" Link="Tool/ProviderSecretVerifier.cs" />
   </ItemGroup>
 
 </Project>

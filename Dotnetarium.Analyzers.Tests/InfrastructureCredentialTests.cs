@@ -159,18 +159,6 @@ public sealed class InfrastructureCredentialTests
     }
 
     [Theory]
-    [MemberData(nameof(PrefixCases))]
-    public async Task UnsupportedProvidersNeverReachGitHub(string token, string provider)
-    {
-        using var verifier = new GitHubSecretVerifier(new RejectNetwork());
-        var findings = ProviderCredentialAnalyzer.Scan(".env", SourceText.From(token), onFinding: verifier.Capture).ToArray();
-        var result = Assert.Single(await verifier.VerifyAsync(findings));
-        Assert.Equal(provider, result.Properties["dotnetarium.provider"]);
-        Assert.Equal("unknown", result.Properties[GitHubSecretVerifier.StatusProperty]);
-        Assert.Equal("provider-verification-not-supported", result.Properties[GitHubSecretVerifier.ReasonProperty]);
-    }
-
-    [Theory]
     [InlineData(".aws/credentials")]
     [InlineData("src/.aws/credentials")]
     [InlineData(".terraformrc")]

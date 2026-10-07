@@ -317,17 +317,17 @@ if ($infraPackageFindings.Count -ne 23) { throw "Expected 23 package infrastruct
 foreach ($mode in @('project', 'no-build')) {
     $infraOutput = Join-Path $scratch "infra-$mode.sarif"
     $infraLog = Join-Path $scratch "infra-$mode.log"
-    $infraArgs = @($sln, '--config-include', '**/infra/**', '--verify-secrets', '--sarif', $infraOutput, '--fail')
+    $infraArgs = @($sln, '--config-include', '**/infra/**', '--sarif', $infraOutput, '--fail')
     if ($mode -eq 'no-build') { $infraArgs += '-nb' }
     Invoke-CredentialScan $infraArgs $infraLog
-    if ($LASTEXITCODE -ne 1) { throw 'Unsupported provider verification must retain --fail findings.' }
+    if ($LASTEXITCODE -ne 1) { throw 'Offline infrastructure findings must retain --fail behavior.' }
     $infraRaw = Get-Content $infraOutput -Raw
     $infraSarif = $infraRaw | ConvertFrom-Json
     $infraResults = @($infraSarif.runs.results | Where-Object ruleId -EQ 'DNA0022')
     if ($infraResults.Count -ne 23) { throw "Expected 23 CLI infrastructure findings; got $($infraResults.Count). Fixtures: $scratch" }
     foreach ($finding in $infraResults) {
-        if ($finding.properties.'dotnetarium.secretVerificationReason' -ne 'provider-verification-not-supported') {
-            throw 'Infrastructure credentials unexpectedly reached GitHub verification.'
+        if ($null -ne $finding.properties.'dotnetarium.secretVerification') {
+            throw 'Offline infrastructure scan unexpectedly attached verification status.'
         }
     }
     if ($infraRaw.Contains($storageKey) -or $infraRaw.Contains($infraPem) -or $infraRaw.Contains($terraformToken) -or

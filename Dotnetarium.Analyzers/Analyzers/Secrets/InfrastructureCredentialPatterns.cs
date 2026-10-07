@@ -25,7 +25,7 @@ namespace Dotnetarium.Analyzers.Secrets
             ("hvb.", "vault", "HashiCorp Vault", "batch token", Pattern(Left + @"hvb\.[A-Za-z0-9_-]{24,2048}" + Right)),
             ("hvr.", "vault", "HashiCorp Vault", "recovery token", Pattern(Left + @"hvr\.[A-Za-z0-9_-]{24,256}" + Right)),
             (".atlasv1.", "terraform", "Terraform Cloud", "API token", Pattern(Left + @"[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_=-]{60,70}(?![\p{L}\p{N}_=-])")),
-            ("glpat-", "gitlab", "GitLab", "personal access token", Pattern(Left + @"glpat-(?:[A-Za-z0-9_-]{27,300}\.[a-z0-9]{9}|[A-Za-z0-9_-]{20})" + Right)),
+            ("glpat-", "gitlab", "GitLab", "personal access token", Pattern(Left + @"glpat-(?:[A-Za-z0-9_-]{27,300}\.[a-z0-9]{2}\.[a-z0-9]{9}|[A-Za-z0-9_-]{27,300}\.[a-z0-9]{9}|[A-Za-z0-9_-]{20})" + Right)),
             ("gldt-", "gitlab", "GitLab", "deploy token", Pattern(Left + @"gldt-[A-Za-z0-9_-]{20}" + Right)),
             ("gloas-", "gitlab", "GitLab", "OAuth application secret", Pattern(Left + @"gloas-[A-Za-z0-9_-]{64}" + Right)),
             ("glagent-", "gitlab", "GitLab", "Kubernetes agent token", Pattern(Left + @"glagent-[A-Za-z0-9_-]{50}" + Right)),
@@ -42,6 +42,7 @@ namespace Dotnetarium.Analyzers.Secrets
         private static readonly Regex SasVersion = Pattern(@"(?:^|&(?:amp;)?)sv=[0-9]{4}-[0-9]{2}-[0-9]{2}(?=&|$)");
         private static readonly Regex SasResource = Pattern(@"(?:^|&(?:amp;)?)(?:sr=[bcdfs]{1,2}|ss=[bfqt]{1,4})(?=&|$)");
         private static readonly Regex SasPermissions = Pattern(@"(?:^|&(?:amp;)?)(?:sp=[racwdxltmeopiyf]{1,20}|si=[A-Za-z0-9_-]{1,256})(?=&|$)");
+        private const string CosmosEmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
         private const string EmulatorKey = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
         private static readonly Regex GcpPrivateKey = Pattern(@"""private_key""\s*:\s*(?<secret>""(?:\\.|[^""\\]){1,16384}"")");
         private static readonly Regex PrivateKeyPem = Pattern(@"\A-----BEGIN PRIVATE KEY-----\r?\n(?<body>[A-Za-z0-9+/=\r\n]{256,16384})-----END PRIVATE KEY-----\s*\z");
@@ -95,7 +96,7 @@ namespace Dotnetarium.Analyzers.Secrets
                     {
                         var secret = match.Groups["secret"];
                         var shared = match.Groups["field"].Value.Equals("SharedAccessKey", StringComparison.OrdinalIgnoreCase);
-                        if (!IsRealistic(secret.Value) || secret.Value == EmulatorKey) continue;
+                        if (!IsRealistic(secret.Value) || secret.Value == EmulatorKey || secret.Value == CosmosEmulatorKey) continue;
                         if (shared ? !bus || !Base64Length(secret.Value, 32) :
                             !(storage || cosmos) || !Base64Length(secret.Value, 64)) continue;
                         yield return new Finding("azure", "Azure", shared ? "Service Bus/Event Hubs shared access key" :

@@ -106,6 +106,7 @@ namespace Dotnetarium.Analyzers.Secrets
             }
             foreach (var finding in InfrastructureCredentialPatterns.Scan(path, text, cancellationToken))
             {
+                if (acceptToken != null && !acceptToken(finding.Secret)) continue;
                 var diagnostic = Diagnostic.Create(DnaRuleCatalog.EmbeddedProviderCredential,
                     Location.Create(path, finding.Span, text.Lines.GetLinePositionSpan(finding.Span)),
                     properties: ImmutableDictionary<string, string?>.Empty.Add("dotnetarium.provider", finding.Provider),

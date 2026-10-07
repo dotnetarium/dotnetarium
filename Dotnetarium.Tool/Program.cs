@@ -46,7 +46,7 @@ internal static class Program
                 : "Scan mode: project (default).");
             var configRoot = ConfigurationFileScanner.FindRoot(target);
             var outputRoot = configRoot;
-            using var verifier = options.VerifySecrets ? new GitHubSecretVerifier() : null;
+            using var verifier = options.VerifySecrets ? new ProviderSecretVerifier() : null;
             var configScanner = new ConfigurationFileScanner(report, options.ConfigScope, verifier);
             var diagnostics = new ConcurrentBag<Diagnostic>(configScanner.Scan(configRoot));
             ScanInputs? loadedInputs = null;
@@ -182,8 +182,8 @@ internal static class Program
                     path = Path.GetRelativePath(outputRoot, path);
                 var cwe = DnaRuleCatalog.TryGetCwe(diagnostic.Id, out var id)
                     ? $" [CWE-{id}]" : string.Empty;
-                var verification = diagnostic.Properties.TryGetValue(GitHubSecretVerifier.StatusProperty, out var status)
-                    ? $" [verification: {status}; {diagnostic.Properties[GitHubSecretVerifier.ReasonProperty]}]" : string.Empty;
+                var verification = diagnostic.Properties.TryGetValue(ProviderSecretVerifier.StatusProperty, out var status)
+                    ? $" [verification: {status}; {diagnostic.Properties[ProviderSecretVerifier.ReasonProperty]}]" : string.Empty;
                 Console.WriteLine($"{path}({line.StartLinePosition.Line + 1},{line.StartLinePosition.Character + 1}): {diagnostic.Id}{cwe}: {diagnostic.GetMessage()}{verification}");
             }
 
@@ -217,7 +217,7 @@ internal static class Program
         "  --config <path>            Override dotnetarium.json (version 2.0)\n" +
         "  --fail                     Return 1 when findings are present\n" +
         "  --respect-editorconfig     Apply configured rule severity and suppression\n" +
-        "  --verify-secrets           Check GitHub credentials online (opt-in)\n" +
+        "  --verify-secrets           Check supported credentials online (opt-in)\n" +
         "  --config-include <glob>    Include matching config files (repeatable)\n" +
         "  --config-exclude <glob>    Exclude matching config files (repeatable)\n" +
         "  -nb, --no-build            Experimental: scan without targets, restore or generators\n" +

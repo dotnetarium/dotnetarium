@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace Dotnetarium.Analyzers.Tests;
 
-public class GitHubSecretVerifierTests
+public class ProviderSecretVerifierTests
 {
     // Synthetic values are built at runtime; these tests never call GitHub.
     private static string Token(string prefix = "ghp_") => prefix + "0123456789abcdefghijklmnopqrstuvwxyz";
@@ -26,7 +26,7 @@ public class GitHubSecretVerifierTests
     {
         using var handler = new FakeHandler((_, _) => Task.FromResult(new HttpResponseMessage((HttpStatusCode)code)
         { Content = new StringContent(body) }));
-        using var verifier = new GitHubSecretVerifier(handler);
+        using var verifier = new ProviderSecretVerifier(handler);
         var result = await verifier.CheckAsync(Token());
         Assert.Equal(expected, result.Status);
     }
@@ -49,7 +49,7 @@ public class GitHubSecretVerifierTests
             Assert.DoesNotContain(Token(prefix), request.RequestUri.ToString());
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
         });
-        using var verifier = new GitHubSecretVerifier(handler);
+        using var verifier = new ProviderSecretVerifier(handler);
         Assert.Equal("active", (await verifier.CheckAsync(Token(prefix))).Status);
     }
 
@@ -58,7 +58,7 @@ public class GitHubSecretVerifierTests
     {
         using var handler = new FakeHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         { Content = new StringContent("{\"id\":1}") }));
-        using var verifier = new GitHubSecretVerifier(handler);
+        using var verifier = new ProviderSecretVerifier(handler);
         var findings = ProviderCredentialAnalyzer.Scan("config.json", SourceText.From(Token() + "\n" + Token()),
             onFinding: verifier.Capture).ToArray();
         ProviderCredentialAnalyzer.Scan("excluded.json", SourceText.From(Token("gho_")),
@@ -69,13 +69,13 @@ public class GitHubSecretVerifierTests
         Assert.NotEqual(result[0].Location.SourceSpan, result[1].Location.SourceSpan);
         Assert.All(result, finding =>
         {
-            Assert.Equal("active", finding.Properties[GitHubSecretVerifier.StatusProperty]);
+            Assert.Equal("active", finding.Properties[ProviderSecretVerifier.StatusProperty]);
             Assert.DoesNotContain(Token(), finding.ToString());
             Assert.DoesNotContain(Token(), string.Join(",", finding.Properties.Values));
         });
         // Captured credentials have been released.
         Assert.All(await verifier.VerifyAsync(findings), finding =>
-            Assert.False(finding.Properties.ContainsKey(GitHubSecretVerifier.StatusProperty)));
+            Assert.False(finding.Properties.ContainsKey(ProviderSecretVerifier.StatusProperty)));
         Assert.Equal(1, handler.Calls);
     }
 
@@ -83,7 +83,7 @@ public class GitHubSecretVerifierTests
     public async Task RefreshTokensAndExpiredBudgetMakeNoRequests()
     {
         using var handler = new FakeHandler((_, _) => throw new Exception("No request expected"));
-        using var verifier = new GitHubSecretVerifier(handler);
+        using var verifier = new ProviderSecretVerifier(handler);
         Assert.Equal("unknown", (await verifier.CheckAsync(Token("ghr_"))).Status);
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
@@ -98,7 +98,7 @@ public class GitHubSecretVerifierTests
     {
         using var handler = new FakeHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)
         { Content = new StringContent("{\"message\":\"Bad credentials\"}") }));
-        using var verifier = new GitHubSecretVerifier(handler);
+        using var verifier = new ProviderSecretVerifier(handler);
         var original = ProviderCredentialAnalyzer.Scan("config.json", SourceText.From(Token())).Single();
         var configured = Microsoft.CodeAnalysis.Diagnostic.Create(original.Descriptor, original.Location,
             severity, original.AdditionalLocations, original.Properties, "GitHub", "personal access token");
@@ -106,7 +106,7 @@ public class GitHubSecretVerifierTests
         var result = Assert.Single(await verifier.VerifyAsync([configured]));
         Assert.Equal(severity, result.Severity);
         Assert.Equal(original.GetMessage(), result.GetMessage());
-        Assert.Equal("inactive", result.Properties[GitHubSecretVerifier.StatusProperty]);
+        Assert.Equal("inactive", result.Properties[ProviderSecretVerifier.StatusProperty]);
     }
 
     [Theory]
@@ -117,7 +117,7 @@ public class GitHubSecretVerifierTests
         using var handler = new FakeHandler((_, _) => canceled
             ? Task.FromException<HttpResponseMessage>(new OperationCanceledException())
             : Task.FromException<HttpResponseMessage>(new HttpRequestException("Never output this response")));
-        using var verifier = new GitHubSecretVerifier(handler);
+        using var verifier = new ProviderSecretVerifier(handler);
         Assert.Equal("unknown", (await verifier.CheckAsync(Token())).Status);
     }
 
@@ -126,7 +126,7 @@ public class GitHubSecretVerifierTests
     {
         using var handler = new FakeHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         { Content = new StringContent(new string('a', 65537)) }));
-        using var verifier = new GitHubSecretVerifier(handler);
+        using var verifier = new ProviderSecretVerifier(handler);
         Assert.Equal("response-too-large", (await verifier.CheckAsync(Token())).Reason);
     }
 

@@ -699,6 +699,10 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             foreach (var value in new[] { "System", "System.Collections.Generic", "System.IO", "System.Linq", "System.Net.Http", "System.Threading", "System.Threading.Tasks" }) usings.Add(value);
             if (spec.Sdk == "Microsoft.NET.Sdk.Web")
                 foreach (var value in new[] { "System.Net.Http.Json", "Microsoft.AspNetCore.Builder", "Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Http", "Microsoft.AspNetCore.Routing", "Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.Hosting", "Microsoft.Extensions.Logging" }) usings.Add(value);
+            // Microsoft.NET.Sdk.BlazorWebAssembly/Sdk/Sdk.props adds these
+            // namespaces even when Razor generation is unavailable.
+            if (spec.Sdk == "Microsoft.NET.Sdk.BlazorWebAssembly")
+                foreach (var value in new[] { "Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.Logging" }) usings.Add(value);
         }
         foreach (var item in spec.Items.Where(item => item.Name.LocalName == "Using"))
         {

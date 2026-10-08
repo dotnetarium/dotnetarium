@@ -1,4 +1,4 @@
-param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly, [switch]$ReferencesOnly)
+param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly, [switch]$ReferencesOnly, [switch]$BlazorOnly)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
@@ -51,6 +51,11 @@ function AssertMode($Run, [string]$Mode, [string]$Coverage) {
 }
 function HasNotice($Run, [string]$Id) {
     return @($Run.invocations[0].toolExecutionNotifications | Where-Object { $_.descriptor.id -eq $Id }).Count -gt 0
+}
+if ($BlazorOnly) {
+    . (Join-Path $PSScriptRoot 'Test-BlazorUsings.ps1')
+    "No-build Blazor using checks passed. Reports: $scratch"
+    exit 0
 }
 if ($ReferencesOnly) {
     . (Join-Path $PSScriptRoot 'Test-References.ps1')
@@ -146,6 +151,7 @@ public class Entry : Controller {
     "PASS ${framework}: no targets/restore, both aliases, strict default, partial code, missing packages, generator coverage and preserved flows"
 }
 . (Join-Path $PSScriptRoot 'Test-References.ps1')
+. (Join-Path $PSScriptRoot 'Test-BlazorUsings.ps1')
 $unsupported = Join-Path $scratch 'Unsupported.csproj'
 '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net48</TargetFramework></PropertyGroup></Project>' | Set-Content -LiteralPath $unsupported
 $none = Scan $unsupported @('-nb') 2

@@ -38,8 +38,11 @@ The loader reads common properties, straightforward conditions, nearest
 `Directory.Build.props` and `Directory.Packages.props`, compile includes/removes,
 project references, explicit assembly references, implicit usings, JSON rules
 and editor configuration. By default it uses Debug and scans supported target
-frameworks. `--configuration` and `--framework` work in both modes; framework
-selection retains compatible source dependencies of the selected root projects.
+frameworks. Blazor WebAssembly's implicit configuration, dependency injection
+and logging namespaces are included when `ImplicitUsings` is enabled; explicit
+`Using Remove` items are respected. `--configuration` and `--framework` work in
+both modes; framework selection retains compatible source dependencies of the
+selected root projects.
 SDK-style transitive project outputs are included, so types exposed through
 service/repository dependencies can bind correctly. Direct reference aliases,
 `EmbedInteropTypes`, analyzer-only references, `ReferenceOutputAssembly=false`

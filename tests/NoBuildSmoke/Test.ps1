@@ -1,4 +1,4 @@
-param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly)
+param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly, [switch]$ReferencesOnly)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
@@ -51,6 +51,11 @@ function AssertMode($Run, [string]$Mode, [string]$Coverage) {
 }
 function HasNotice($Run, [string]$Id) {
     return @($Run.invocations[0].toolExecutionNotifications | Where-Object { $_.descriptor.id -eq $Id }).Count -gt 0
+}
+if ($ReferencesOnly) {
+    . (Join-Path $PSScriptRoot 'Test-References.ps1')
+    "No-build reference checks passed. Reports: $scratch"
+    exit 0
 }
 . (Join-Path $PSScriptRoot 'Test-Budgets.ps1')
 if ($BudgetsOnly) {
@@ -140,6 +145,7 @@ public class Entry : Controller {
     AssertMode $release 'no-build' 'complete'
     "PASS ${framework}: no targets/restore, both aliases, strict default, partial code, missing packages, generator coverage and preserved flows"
 }
+. (Join-Path $PSScriptRoot 'Test-References.ps1')
 $unsupported = Join-Path $scratch 'Unsupported.csproj'
 '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net48</TargetFramework></PropertyGroup></Project>' | Set-Content -LiteralPath $unsupported
 $none = Scan $unsupported @('-nb') 2

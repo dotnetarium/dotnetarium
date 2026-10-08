@@ -43,6 +43,56 @@ cutoffs, including with `--fail`. No-build mode accepts these as partial coverag
 and returns **0**, or **1** when findings are present with `--fail`. Genuine
 analyzer/tool failures still return **2** in both modes.
 
+## No-build loader
+
+The loader reconstructs SDK-style transitive project references. Previously,
+LANCommander's import project could load its service project while failing to
+bind types from the service's data project. This made a `Path.Combine` overload
+unresolvable and lost two archive traversal sink reports. Full-profile no-build
+analysis now matches the project-mode scan's 13 findings by rule, file, line and
+message. This comparison does not establish generated-code coverage.
+
+Assembly references and their metadata images are shared within a scan, with
+aliases and embedded interop settings preserved per reference. Project file
+inventories and source text are also reused across frameworks. Default source
+discovery avoids descending into `bin`, `obj` and `.git`; explicit generated-file
+includes still work and retain their provenance warning. Nothing is cached
+across separate scanner runs.
+
+Fresh scanner processes, all rules enabled, Windows, 29 LANCommander compilations:
+
+| Profile | Before / after seconds | Before / after peak MiB | Before / after findings |
+| --- | --- | --- | --- |
+| fast: 3 / 1,000 | 26.7 / 24.5 | 2,053 / 1,255 | 11 / 11 |
+| full: 5 / 5,000 | 61.3 / 50.5–58.1 | 2,347 / 1,481–1,622 | 11 / 13 |
+
+These timings use warm filesystem caches. The first baseline full run took
+74.7 seconds, including 23.2 seconds loading; a repeat loaded in 2.5 seconds.
+The improved loader took 1.5–2.1 seconds. The clearest benefits are lower memory
+and restored bindings, with a modest end-to-end speed improvement. Full analysis
+has more valid code to inspect after reference repair. Fast retains its limits
+and does not finish the two archive flows. All runs retain partial-coverage
+notices; findings are not a complete vulnerability count.
+
+The SARIF invocation's `dotnetarium.stageSeconds` separates loading from project
+processing. Compilation/analysis totals accumulate overlapping projects; use
+`project-stages-wall` for elapsed parallel project processing. Analysis includes
+compiler diagnostics and Roslyn's deferred compilation work.
+
+### Library information in taint models
+
+Sources, sinks and entry points already resolve configured metadata type names
+to Roslyn symbols. Entry points can require dependency types, and a taint rule
+skips operation-block analysis when its resolved source or sink map is empty.
+The loader uses validated restored package compile assets and compatible project
+outputs to provide those symbols. This also supports framework-provided APIs,
+type forwarders and custom models without requiring a NuGet package name.
+
+Package presence alone is insufficient to establish a source, sink or exposed
+endpoint. No package-name heuristic is added to the model format. Package/version
+constraints should only be added when a particular API's security behavior
+requires them, with tests for that behavior and alternate assembly delivery.
+
 ## Analysis profiles
 
 The package defaults to `fast`: source-method and lambda/local-function depth

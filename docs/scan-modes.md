@@ -40,6 +40,13 @@ project references, explicit assembly references, implicit usings, JSON rules
 and editor configuration. By default it uses Debug and scans supported target
 frameworks. `--configuration` and `--framework` work in both modes; framework
 selection retains compatible source dependencies of the selected root projects.
+SDK-style transitive project outputs are included, so types exposed through
+service/repository dependencies can bind correctly. Direct reference aliases,
+`EmbedInteropTypes`, analyzer-only references, `ReferenceOutputAssembly=false`
+and `DisableTransitiveProjectReferences=true` are respected. Transitive references
+respect compile-asset visibility (`PrivateAssets`, `IncludeAssets` and
+`ExcludeAssets`) and use the SDK's default reference metadata. Circular or unavailable
+references produce coverage notices.
 
 Custom imports, `Directory.Build.targets`, package build inputs and unsupported
 conditions can change source selection or compiler options. No-build mode warns
@@ -67,6 +74,12 @@ The console identifies the selected mode. SARIF invocation properties include
 `dotnetarium.loadingMode` (`project` or `no-build`), `dotnetarium.experimental`,
 and `dotnetarium.coverage` (`complete` or `partial`). Coverage notices remain in
 the console and `toolExecutionNotifications`.
+
+`dotnetarium.stageSeconds` records loading time, accumulated compilation and
+analysis times (`compilation-total` / `analysis-total`), and the wall time for
+parallel project processing (`project-stages-wall`). The accumulated times
+include overlapping projects and dependency waits; they must not be added to
+estimate total scan time. Analysis time includes Roslyn compiler diagnostics.
 
 For no-build scans, `complete` describes the supported reconstructed inputs: it
 does not certify that a real build would succeed or that custom build steps

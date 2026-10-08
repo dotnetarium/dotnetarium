@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
@@ -50,6 +51,7 @@ internal static class Program
             var configScanner = new ConfigurationFileScanner(report, options.ConfigScope, verifier);
             var diagnostics = new ConcurrentBag<Diagnostic>(configScanner.Scan(configRoot));
             ScanInputs? loadedInputs = null;
+            var loadingStarted = Stopwatch.GetTimestamp();
             try
             {
                 loadedInputs = options.NoBuild
@@ -62,6 +64,7 @@ internal static class Program
                 // Preserve independent configuration findings even when project loading fails.
                 report.Fail("project-load", error.Message);
             }
+            finally { report.RecordElapsed("loading", loadingStarted); }
             using var inputs = loadedInputs;
             var projects = inputs?.Projects.ToArray() ?? Array.Empty<Project>();
             foreach (var projectRoot in projects.Where(project => project.FilePath != null)
@@ -83,6 +86,7 @@ internal static class Program
             var projectConcurrency = Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
             // Start large projects first so one expensive compilation is not
             // left running after the smaller projects have drained the queue.
+            var projectStagesStarted = Stopwatch.GetTimestamp();
             await Parallel.ForEachAsync(projects.Where(project => project.Language == LanguageNames.CSharp)
                     .OrderByDescending(project => project.DocumentIds.Count)
                     .ThenBy(project => project.Name, StringComparer.Ordinal),
@@ -99,7 +103,9 @@ internal static class Program
                 foreach (var file in additionalFiles)
                     foreach (var finding in configScanner.ScanAdditional(additionalRoot, file)) diagnostics.Add(finding);
                 GeneratorCoverage.Observe(project, report);
+                var compilationStarted = Stopwatch.GetTimestamp();
                 var compilation = await project.GetCompilationAsync();
+                report.RecordElapsed("compilation-total", compilationStarted);
                 if (compilation == null || !compilation.SyntaxTrees.Any() ||
                     compilation.GetSpecialType(SpecialType.System_Object).TypeKind == TypeKind.Error)
                 {
@@ -127,7 +133,9 @@ internal static class Program
                     configOptions = await ProjectAnalysisOptions.WithTestProjectMetadataAsync(configOptions, project.FilePath!, inputs.MSBuildPath,
                         selection.Configuration, ScanSelection.FrameworkOf(project));
                 var analyzerOptions = new AnalyzerOptions(additionalFiles, new AnalysisProfileOptions(configOptions));
+                var analysisStarted = Stopwatch.GetTimestamp();
                 var result = await compilation.WithAnalyzers(analyzers, analyzerOptions).GetAllDiagnosticsAsync();
+                report.RecordElapsed("analysis-total", analysisStarted);
                 report.AnalyzedProjects.Add(project.Name);
                 var projectErrors = result.Where(diagnostic =>
                     diagnostic.Id == "AD0001" ||
@@ -149,6 +157,7 @@ internal static class Program
                         report.Warn("compiler-error-summary", $"{project.Name}: {projectErrors.Length} compiler/analyzer errors; the first 20 are shown.");
                     else report.Fail("compiler-error-summary", $"{project.Name}: {projectErrors.Length} compiler/analyzer errors; the first 20 are shown.");
             });
+            report.RecordElapsed("project-stages-wall", projectStagesStarted);
 
             if (report.AnalyzedProjects.Count == 0)
                 report.Fail("no-analysis", "No usable C# projects were analyzed.");

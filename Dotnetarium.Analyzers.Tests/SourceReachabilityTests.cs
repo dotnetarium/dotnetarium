@@ -171,6 +171,172 @@ public sealed class SourceReachabilityTests
         Assert.True(Checker(compilation).MayReachSource(Graph(compilation, "Run")));
     }
 
+    [Theory]
+    [InlineData("var input = Console.ReadLine(); return () => input;")]
+    [InlineData("var input = \"fixed\"; Func<string> read = () => input; input = Console.ReadLine(); return read;")]
+    [InlineData("var input = \"fixed\"; if (choose) input = Console.ReadLine(); return () => input;")]
+    [InlineData("var input = Console.ReadLine(); string Read() => input; return Read;")]
+    [InlineData("var input = Console.ReadLine(); return () => { string Read() => input; return Read(); };")]
+    [InlineData("return () => { var input = Console.ReadLine(); string Read() => input; return Read(); };")]
+    [InlineData("value = Console.ReadLine(); return () => value;")]
+    [InlineData("Assign(out value); return () => value;")]
+    [InlineData("state = Console.ReadLine(); return () => state;")]
+    [InlineData("state = Console.ReadLine(); return () => ReadState();")]
+    public void Nested_callable_keeps_captured_local_initialization_and_reassignment(string body)
+    {
+        var compilation = Compile($$"""
+            using System;
+            public static class Demo {
+                public static void Run(Func<string> read) { _ = read(); }
+                static string state;
+                static string ReadState() => state;
+                static void Assign(out string target) { target = Console.ReadLine(); }
+                static Func<string> Make(bool choose, string value) { {{body}} }
+            }
+            """);
+        Assert.True(Checker(compilation).MayReachSource(Graph(compilation, "Run")));
+    }
+
+    [Fact]
+    public void Nested_callable_keeps_configured_captured_parameter_origins()
+    {
+        var compilation = Compile("""
+            using System;
+            public static class Demo {
+                public static void Run(Func<string> read) { _ = read(); }
+                static Func<string> Make(string input) => () => input;
+            }
+            """);
+        using var reader = new StreamReader(new MemoryStream(Encoding.UTF8.GetBytes("""
+            {"Version":"2.0","TaintEntryPoints":{"Demo":{"Method":{"Name":"Make"}}}}
+            """)));
+        var model = new ConfigurationReader().DeserializeAndValidate<ConfigData>(reader, true);
+        var config = new TaintConfiguration(model, compilation, new AnalyzerOptions([]));
+        Assert.True(config.GetSourceReachability((SinkKind)(int)TaintType.CommandInjection).MayReachSource(Graph(compilation, "Run")));
+    }
+
+    [Fact]
+    public void Aborted_nested_summary_does_not_publish_a_source_free_result()
+    {
+        var noise = string.Concat(Enumerable.Repeat("_ = value.Trim();", 100));
+        var compilation = Compile($$"""
+            using System;
+            public static class Demo {
+                public static void Run(Func<string> read) { _ = read(); }
+                static Func<string> Make(string value) {
+                    {{noise}}
+                    var input = Console.ReadLine();
+                    return () => input;
+                }
+            }
+            """);
+        var checker = Checker(compilation);
+        var graph = Graph(compilation, "Run");
+        using (var budget = new AnalysisWorkBudget(40, CancellationToken.None))
+            Assert.Throws<AnalysisWorkLimitException>(() => checker.MayReachSource(graph));
+        Assert.True(checker.MayReachSource(graph));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Small_budget_retries_eventually_finish_without_dropping_a_late_source(bool hasSource)
+    {
+        var noise = string.Concat(Enumerable.Repeat("count++;", 100));
+        var compilation = Compile($$"""
+            using System;
+            public static class Demo {
+                public static void Run(Func<string> read) { _ = read(); }
+                static Func<string> Make(int count) {
+                    {{noise}}
+                    var input = {{(hasSource ? "Console.ReadLine()" : "\"fixed\"")}};
+                    return () => input;
+                }
+            }
+            """);
+        var checker = Checker(compilation);
+        var graph = Graph(compilation, "Run");
+        var completed = false;
+        var retries = 0;
+        for (; retries < 100; retries++)
+        {
+            using var budget = new AnalysisWorkBudget(40, CancellationToken.None);
+            try
+            {
+                Assert.Equal(hasSource, checker.MayReachSource(graph));
+                completed = true;
+                break;
+            }
+            catch (AnalysisWorkLimitException) { }
+        }
+        Assert.True(completed, "Repeated roots must be able to finish proof work larger than one root's budget.");
+        Assert.True(retries > 1);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Partial_proof_rechecks_member_providers_that_gain_an_origin(bool field)
+    {
+        var noise = string.Concat(Enumerable.Repeat("count++;", 100));
+        var compilation = Compile($$"""
+            public static class Demo {
+                static string Value {{(field ? "= \"fixed\";" : "=> \"fixed\";")}}
+                public static void Run(int count) { _ = Value; {{noise}} }
+            }
+            """);
+        var graph = Graph(compilation, "Run");
+        var types = WellKnownTypeProvider.GetOrCreate(compilation);
+        // Build the structural summary using a separate configuration first.
+        Assert.False(new SourceReachability(compilation, new TaintedDataSymbolMap<SourceInfo>(types, []))
+            .MayReachSource(graph));
+        var hasOrigin = false;
+        var visits = 0;
+        var info = new SourceInfo("Demo", false, [], [], [], [], [], [], [], false, null,
+            propertyReferenceMatcher: _ => { visits++; return hasOrigin; },
+            fieldReferenceMatcher: _ => { visits++; return hasOrigin; });
+        var checker = new SourceReachability(compilation, new TaintedDataSymbolMap<SourceInfo>(types, [info]));
+        using (var budget = new AnalysisWorkBudget(40, CancellationToken.None))
+            Assert.Throws<AnalysisWorkLimitException>(() => checker.MayReachSource(graph));
+        Assert.True(visits > 0);
+        hasOrigin = true;
+        Assert.True(checker.MayReachSource(graph));
+    }
+
+    [Fact]
+    public void Sibling_callbacks_share_parent_proof_work_across_small_budget_retries()
+    {
+        var noise = string.Concat(Enumerable.Repeat("count++;", 100));
+        var compilation = Compile($$"""
+            using System;
+            public static class Demo {
+                public static void Run(Func<string> read) { _ = read(); }
+                static Func<string> Make(int count) {
+                    {{noise}}
+                    var input = "fixed";
+                    Func<string> first = () => input;
+                    Func<string> second = () => input;
+                    Func<string> third = () => input;
+                    return () => input;
+                }
+            }
+            """);
+        var checker = Checker(compilation);
+        var graph = Graph(compilation, "Run");
+        for (var retry = 0; retry < 64; retry++)
+        {
+            using var budget = new AnalysisWorkBudget(40, CancellationToken.None);
+            try
+            {
+                Assert.False(checker.MayReachSource(graph));
+                return;
+            }
+            catch (AnalysisWorkLimitException) { }
+        }
+        Assert.Fail("Sibling callbacks must not each restart the same parent proof.");
+    }
+
+
     [Fact]
     public void Referenced_source_body_obeys_the_existing_engine_boundary_but_explicit_models_still_apply()
     {

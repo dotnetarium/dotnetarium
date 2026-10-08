@@ -18,6 +18,17 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     private readonly HashSet<string> visited = new(ProjectLoader.PathComparer);
     private readonly List<string> packRoots = FindPackRoots();
     private readonly ScanSelection selection = selection ?? new();
+    private readonly Dictionary<string, List<PortableExecutableReference>> metadata = new(ProjectLoader.PathComparer);
+    private readonly Dictionary<string, string[]> sourceInventories = new(ProjectLoader.PathComparer);
+    private readonly Dictionary<string, string[]> explicitInventories = new(ProjectLoader.PathComparer);
+    private readonly Dictionary<string, SourceText> texts = new(ProjectLoader.PathComparer);
+
+    private async Task<SourceText> ReadTextAsync(string path)
+    {
+        if (!texts.TryGetValue(path, out var text))
+            texts[path] = text = SourceText.From(await File.ReadAllTextAsync(path), Encoding.UTF8);
+        return text;
+    }
 
     internal async Task<ScanInputs> LoadAsync(string target)
     {
@@ -103,18 +114,18 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     metadataReferences: ReadReferences(spec, inputs)));
                 foreach (var source in ReadSources(spec))
                     solution = solution.AddDocument(DocumentId.CreateNewId(spec.Id), Path.GetFileName(source),
-                        SourceText.From(await File.ReadAllTextAsync(source), Encoding.UTF8), filePath: source);
+                        await ReadTextAsync(source), filePath: source);
                 var usings = ReadUsings(spec);
                 if (usings.Length > 0)
                     solution = solution.AddDocument(DocumentId.CreateNewId(spec.Id), "Dotnetarium.ImplicitUsings.g.cs",
                         SourceText.From(usings, Encoding.UTF8), filePath: Path.Combine(spec.Root, "obj", "Dotnetarium.ImplicitUsings.g.cs"));
                 foreach (var config in FindAnalyzerConfigs(spec))
                     solution = solution.AddAnalyzerConfigDocument(DocumentId.CreateNewId(spec.Id), Path.GetFileName(config),
-                        SourceText.From(await File.ReadAllTextAsync(config)), filePath: config);
+                        await ReadTextAsync(config), filePath: config);
                 foreach (var item in spec.Items.Where(item => item.Name.LocalName == "AdditionalFiles"))
                     foreach (var file in ExpandItem(spec.Root, Expand((string?)item.Attribute("Include") ?? "", spec.Properties)))
                         solution = solution.AddAdditionalDocument(DocumentId.CreateNewId(spec.Id), Path.GetFileName(file),
-                            SourceText.From(await File.ReadAllTextAsync(file)), filePath: file);
+                            await ReadTextAsync(file), filePath: file);
                 inputs.TestProjectMetadata[spec.Id] = spec.Properties.GetValueOrDefault("IsTestProject", "false");
                 inputs.InputProperties[spec.Id] = new(StringComparer.OrdinalIgnoreCase)
                 {
@@ -125,7 +136,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             }
             foreach (var spec in activeSpecs)
             {
-                foreach (var reference in spec.References)
+                foreach (var reference in spec.References.Distinct(ProjectLoader.PathComparer))
                 {
                     if (!specs.TryGetValue(reference, out var candidates) || candidates.Count == 0)
                     {
@@ -139,12 +150,43 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         Warn(spec.Path, "project-reference", $"No compatible framework for project reference: {reference}");
                         continue;
                     }
-                    var item = spec.Items.First(item => item.Name.LocalName == "ProjectReference" &&
-                        ProjectLoader.PathComparer.Equals(Resolve(spec.Root, Expand((string?)item.Attribute("Include") ?? "", spec.Properties)), reference));
-                    var metadata = ReferenceProperties(item, spec.Properties);
-                    try { solution = solution.AddProjectReference(spec.Id, new ProjectReference(dependency.Id, metadata.Aliases, metadata.EmbedInteropTypes)); }
+                    var items = spec.Items.Where(item => IsCompilationReference(item, spec.Properties) &&
+                        ProjectLoader.PathComparer.Equals(Resolve(spec.Root, Expand((string?)item.Attribute("Include") ?? "", spec.Properties)), reference)).ToArray();
+                    var properties = ReferenceProperties(items[0], spec.Properties);
+                    foreach (var item in items.Skip(1))
+                        properties = MergeReferenceProperties(properties, ReferenceProperties(item, spec.Properties), spec.Path);
+                    try { solution = solution.AddProjectReference(spec.Id, new ProjectReference(dependency.Id, properties.Aliases, properties.EmbedInteropTypes)); }
                     catch (InvalidOperationException error) { Warn(spec.Path, "project-reference", error.Message); }
                 }
+            }
+            // SDK projects expose transitive project outputs to the compiler.
+            // AdhocWorkspace does not infer these references from the graph.
+            // Snapshot accepted direct edges before adding closure references.
+            var directGraph = activeSpecs.ToDictionary(spec => spec.Id,
+                spec => solution.GetProject(spec.Id)!.ProjectReferences.ToArray());
+            var activeById = activeSpecs.ToDictionary(spec => spec.Id);
+            var exportedGraph = activeSpecs.ToDictionary(spec => spec.Id,
+                spec => directGraph[spec.Id].Where(edge => spec.Items.Any(item =>
+                    IsCompilationReference(item, spec.Properties) && ExportsCompileAssets(item, spec.Properties) &&
+                    ProjectLoader.PathComparer.Equals(Resolve(spec.Root, Expand((string?)item.Attribute("Include") ?? "", spec.Properties)),
+                        activeById[edge.ProjectId].Path))).ToArray());
+            foreach (var spec in activeSpecs)
+            {
+                if (IsTrue(spec.Properties.GetValueOrDefault("DisableTransitiveProjectReferences"))) continue;
+                var visitedIds = new HashSet<ProjectId> { spec.Id };
+                var pending = new Queue<ProjectId>();
+                foreach (var edge in directGraph[spec.Id])
+                    if (visitedIds.Add(edge.ProjectId)) pending.Enqueue(edge.ProjectId);
+                while (pending.TryDequeue(out var id))
+                    foreach (var edge in exportedGraph[id])
+                        if (visitedIds.Add(edge.ProjectId))
+                        {
+                            // Implicit SDK references use default metadata;
+                            // aliases on an intermediate edge are not inherited.
+                            try { solution = solution.AddProjectReference(spec.Id, new ProjectReference(edge.ProjectId)); }
+                            catch (InvalidOperationException error) { Warn(spec.Path, "project-reference", error.Message); }
+                            pending.Enqueue(edge.ProjectId);
+                        }
             }
             if (!workspace.TryApplyChanges(solution)) throw new InvalidOperationException("Could not create the direct analysis workspace.");
             return inputs;
@@ -207,9 +249,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 }
                 if (FindNearest(root, "Directory.Build.targets") is { } targets)
                     Warn(path, "import", $"Directory.Build.targets was not evaluated: {targets}");
-                var references = items.Where(item => item.Name.LocalName == "ProjectReference")
-                    .Where(item => !string.Equals(Expand(ItemMetadata(item, "OutputItemType") ?? "", evaluated), "Analyzer", StringComparison.OrdinalIgnoreCase))
-                    .Where(item => !IsFalse(Expand(ItemMetadata(item, "ReferenceOutputAssembly") ?? "true", evaluated)))
+                var references = items.Where(item => IsCompilationReference(item, evaluated))
                     .Select(item => Expand((string?)item.Attribute("Include") ?? "", evaluated))
                     .Where(value => value.Length > 0).Select(value => Resolve(root, value)).ToArray();
                 specs[path].Add(new(ProjectId.CreateNewId(), path, root, framework, sdk, evaluated, items, references));
@@ -414,12 +454,38 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 properties = hints.ContainsKey(path) ? MergeReferenceProperties(properties, packageProperties, spec.Path) : packageProperties;
             if ((hints.ContainsKey(path) || packageReferences.ContainsKey(path)) && paths.Contains(path))
                 properties = MergeReferenceProperties(properties, MetadataReferenceProperties.Assembly, spec.Path);
-            return (MetadataReference)MetadataReference.CreateFromFile(path, properties);
+            if (!metadata.TryGetValue(path, out var cached)) metadata[path] = cached = [];
+            var reference = cached.FirstOrDefault(reference => reference.Properties.Kind == properties.Kind &&
+                reference.Properties.EmbedInteropTypes == properties.EmbedInteropTypes &&
+                reference.Properties.Aliases.SequenceEqual(properties.Aliases));
+            if (reference == null)
+            {
+                reference = cached.Count == 0 ? MetadataReference.CreateFromFile(path, properties) : cached[0].WithProperties(properties);
+                cached.Add(reference);
+            }
+            return (MetadataReference)reference;
         }).ToList();
     }
 
     private static string? ItemMetadata(XElement item, string name) => (string?)item.Attribute(name) ??
         item.Elements().FirstOrDefault(element => element.Name.LocalName == name)?.Value;
+
+    private static bool IsCompilationReference(XElement item, Dictionary<string, string> properties) =>
+        item.Name.LocalName == "ProjectReference" &&
+        !string.Equals(Expand(ItemMetadata(item, "OutputItemType") ?? "", properties), "Analyzer", StringComparison.OrdinalIgnoreCase) &&
+        !IsFalse(Expand(ItemMetadata(item, "ReferenceOutputAssembly") ?? "true", properties));
+
+    private static bool ExportsCompileAssets(XElement item, Dictionary<string, string> properties)
+    {
+        bool HasCompile(string value) => Expand(value, properties)
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(asset => asset.Equals("all", StringComparison.OrdinalIgnoreCase) || asset.Equals("compile", StringComparison.OrdinalIgnoreCase));
+        // These assets remain usable by this project but may be hidden from
+        // its consumers. Copy-local metadata (Private) does not hide symbols.
+        return !HasCompile(ItemMetadata(item, "PrivateAssets") ?? "") &&
+            !HasCompile(ItemMetadata(item, "ExcludeAssets") ?? "") &&
+            HasCompile(ItemMetadata(item, "IncludeAssets") ?? "all");
+    }
 
     private static string AssetsPath(ProjectSpec spec) => Resolve(spec.Root, spec.Properties.GetValueOrDefault("ProjectAssetsFile",
         Path.Combine(spec.Properties.GetValueOrDefault("MSBuildProjectExtensionsPath",
@@ -599,7 +665,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     {
         var sources = new HashSet<string>(ProjectLoader.PathComparer);
         if (!IsFalse(spec.Properties.GetValueOrDefault("EnableDefaultItems")) && !IsFalse(spec.Properties.GetValueOrDefault("EnableDefaultCompileItems")))
-            foreach (var file in EnumerateFiles(spec.Root).Where(file => file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && !IsProjectOutputFile(spec, file)))
+            foreach (var file in SourceInventory(spec.Root).Where(file => file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && !IsProjectOutputFile(spec, file)))
                 sources.Add(file);
         var defaultExcludes = spec.Properties.GetValueOrDefault("DefaultItemExcludes", "")
             .Split(';', StringSplitOptions.RemoveEmptyEntries);
@@ -619,7 +685,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         var suppliedGenerated = sources.Where(file => IsProjectOutputFile(spec, file)).ToArray();
         if (suppliedGenerated.Length > 0)
             Warn(spec.Path, "generated-reuse", $"Using {suppliedGenerated.Length} explicitly selected generated/output C# file(s). Their freshness and framework/configuration provenance were not verified; generation was not run.");
-        if (EnumerateFiles(spec.Root).Any(file => !IsProjectOutputFile(spec, file) &&
+        if (SourceInventory(spec.Root).Any(file => !IsProjectOutputFile(spec, file) &&
             Path.GetExtension(file).ToLowerInvariant() is ".razor" or ".cshtml" or ".proto"))
             Warn(spec.Path, "generation", "Razor/Blazor/protobuf inputs require generated C#; generation was not run.");
         return sources.OrderBy(path => path, StringComparer.Ordinal);
@@ -633,6 +699,10 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             foreach (var value in new[] { "System", "System.Collections.Generic", "System.IO", "System.Linq", "System.Net.Http", "System.Threading", "System.Threading.Tasks" }) usings.Add(value);
             if (spec.Sdk == "Microsoft.NET.Sdk.Web")
                 foreach (var value in new[] { "System.Net.Http.Json", "Microsoft.AspNetCore.Builder", "Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Http", "Microsoft.AspNetCore.Routing", "Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.Hosting", "Microsoft.Extensions.Logging" }) usings.Add(value);
+            // Microsoft.NET.Sdk.BlazorWebAssembly/Sdk/Sdk.props adds these
+            // namespaces even when Razor generation is unavailable.
+            if (spec.Sdk == "Microsoft.NET.Sdk.BlazorWebAssembly")
+                foreach (var value in new[] { "Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.Logging" }) usings.Add(value);
         }
         foreach (var item in spec.Items.Where(item => item.Name.LocalName == "Using"))
         {
@@ -658,12 +728,38 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             }
             else if (pattern.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(pattern))
                 Warn(root, "source-item", $"Unsupported external wildcard: {pattern}");
-            else foreach (var file in EnumerateFiles(root).Where(file => GlobMatches(Path.GetRelativePath(root, file), pattern))) yield return file;
+            else
+            {
+                // Explicit includes may deliberately select generated outputs.
+                if (!explicitInventories.TryGetValue(root, out var files))
+                    explicitInventories[root] = files = EnumerateFiles(root).ToArray();
+                foreach (var file in files.Where(file => GlobMatches(Path.GetRelativePath(root, file), pattern))) yield return file;
+            }
         }
     }
 
     private static IEnumerable<string> EnumerateFiles(string root) => Directory.EnumerateFiles(root, "*",
         new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false });
+
+    private string[] SourceInventory(string root)
+    {
+        if (sourceInventories.TryGetValue(root, out var cached)) return cached;
+        var files = new List<string>();
+        var pending = new Stack<string>();
+        pending.Push(root);
+        var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false };
+        while (pending.TryPop(out var directory))
+        {
+            files.AddRange(Directory.EnumerateFiles(directory, "*", options));
+            foreach (var child in Directory.EnumerateDirectories(directory, "*", options))
+            {
+                var name = Path.GetFileName(child);
+                if (!name.Equals("bin", StringComparison.OrdinalIgnoreCase) &&
+                    !name.Equals("obj", StringComparison.OrdinalIgnoreCase) && name != ".git") pending.Push(child);
+            }
+        }
+        return sourceInventories[root] = files.ToArray();
+    }
     private static bool IsOutputFile(string root, string file) => Path.GetRelativePath(root, file).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
         .Any(part => part.Equals("bin", StringComparison.OrdinalIgnoreCase) || part.Equals("obj", StringComparison.OrdinalIgnoreCase) || part == ".git");
     private static bool IsProjectOutputFile(ProjectSpec spec, string file) => IsOutputFile(spec.Root, file) ||
@@ -686,14 +782,14 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             if (File.Exists(Path.Combine(directory.FullName, name))) return Path.Combine(directory.FullName, name);
         return null;
     }
-    private static IEnumerable<string> FindAnalyzerConfigs(ProjectSpec spec)
+    private IEnumerable<string> FindAnalyzerConfigs(ProjectSpec spec)
     {
         var root = spec.Root;
         var paths = new HashSet<string>(ProjectLoader.PathComparer);
         for (var directory = new DirectoryInfo(root); directory != null; directory = directory.Parent)
             foreach (var name in new[] { ".editorconfig", ".globalconfig" })
                 if (File.Exists(Path.Combine(directory.FullName, name))) paths.Add(Path.Combine(directory.FullName, name));
-        foreach (var file in EnumerateFiles(root).Where(file => !IsProjectOutputFile(spec, file) &&
+        foreach (var file in SourceInventory(root).Where(file => !IsProjectOutputFile(spec, file) &&
             Path.GetFileName(file) is ".editorconfig" or ".globalconfig")) paths.Add(file);
         return paths;
     }

@@ -1,4 +1,9 @@
 using Dotnetarium.Analyzers.Taint;
+using Dotnetarium.Config;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using System.Collections;
+using System.Reflection;
 
 namespace Dotnetarium.Analyzers.Tests;
 
@@ -58,5 +63,336 @@ public sealed class ComponentStateTests
             """, new XssTaintAnalyzer());
         Assert.True(expected == findings.Length, $"{handler} / {render}: expected {expected}, actual {findings.Length}");
         Assert.All(findings, finding => Assert.Contains(finding.AdditionalLocations, location => location.SourceTree!.GetText().ToString(location.SourceSpan).Contains("args.Value")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Unrelated_large_render_does_not_exhaust_browser_state_summary(bool sharedBase)
+    {
+        var noise = string.Join("\n", Enumerable.Range(0, 600).Select(i => $"builder.AddContent({i}, \"fixed\");"));
+        var source = """
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class Noisy : ComponentBase
+            {
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+            """ + noise + """
+                }
+            }
+            public sealed class Input : ComponentBase
+            {
+                private string value = "fixed";
+                private void Changed(ChangeEventArgs args) => value = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder)
+                {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(2, value);
+                }
+            }
+            """;
+        if (sharedBase)
+            source = source.Replace(": ComponentBase", ": SharedBase") + "public abstract class SharedBase : ComponentBase {}";
+        var findings = await FrameworkProbe.Analyze(source, new XssTaintAnalyzer());
+        Assert.Single(findings.Where(d => d.Id == "DNA0003"));
+        Assert.DoesNotContain(findings, d => d.Id == "DNA9000" && d.GetMessage().Contains("Input.BuildRenderTree"));
+    }
+
+    [Fact]
+    public async Task Connected_parents_and_transitive_child_parameters_keep_their_origins()
+    {
+        var findings = await FrameworkProbe.Analyze("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class UnsafeParent : ComponentBase {
+                private string text = "fixed";
+                private void Changed(ChangeEventArgs args) => text = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.OpenComponent<Child>(2);
+                    builder.AddComponentParameter(3, "Value", text);
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class SafeParent : ComponentBase {
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<Child>(0);
+                    builder.AddComponentParameter(1, "Value", "fixed");
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class Child : ComponentBase {
+                [Parameter] public string Value { get; set; } = "fixed";
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<Grandchild>(0);
+                    builder.AddComponentParameter(1, "Value", Value);
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class Grandchild : ComponentBase {
+                [Parameter] public string Value { get; set; } = "fixed";
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddMarkupContent(0, Value);
+            }
+            """, new XssTaintAnalyzer());
+        var finding = Assert.Single(findings.Where(d => d.Id == "DNA0003"));
+        Assert.Equal("Grandchild", finding.Location.SourceTree!.GetRoot().FindNode(finding.Location.SourceSpan)
+            .AncestorsAndSelf().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.ClassDeclarationSyntax>().First().Identifier.ValueText);
+        Assert.Contains(finding.AdditionalLocations, location => location.SourceTree!.GetText().ToString(location.SourceSpan).Contains("args.Value"));
+    }
+
+    [Fact]
+    public async Task Inherited_component_state_stays_in_the_same_group()
+    {
+        var findings = await FrameworkProbe.Analyze("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public abstract class BaseInput : ComponentBase { protected string text = "fixed"; }
+            public sealed class DerivedInput : BaseInput {
+                private void Changed(ChangeEventArgs args) => text = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(2, text);
+                }
+            }
+            """, new XssTaintAnalyzer());
+        Assert.Single(findings.Where(d => d.Id == "DNA0003"));
+    }
+
+    [Fact]
+    public async Task Metadata_component_parameters_do_not_join_unrelated_source_render_groups()
+    {
+        var noise = string.Join("\n", Enumerable.Range(0, 600).Select(i => $"builder.AddContent({i + 2}, \"fixed\");"));
+        var source = """
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Forms;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class NoisyParent : ComponentBase {
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<InputText>(0);
+                    builder.AddComponentParameter(1, "Value", "fixed");
+            """ + noise + """
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class SourceInput : InputText {
+                private string text = "fixed";
+                private void Changed(ChangeEventArgs args) => text = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(2, text);
+                }
+            }
+            """;
+        var findings = await FrameworkProbe.Analyze(source, new XssTaintAnalyzer());
+        Assert.True(findings.Any(d => d.Id == "DNA0003"), string.Join("\n", findings.Select(d => d.ToString())));
+        var finding = Assert.Single(findings.Where(d => d.Id == "DNA0003"));
+        Assert.Contains(finding.AdditionalLocations, location =>
+            location.SourceTree!.GetText().ToString(location.SourceSpan).Contains("args.Value"));
+        Assert.DoesNotContain(findings, d => d.Id == "DNA9000" && d.GetMessage().Contains("SourceInput.BuildRenderTree"));
+    }
+
+    [Fact]
+    public async Task Parameterless_components_do_not_join_unrelated_source_render_groups()
+    {
+        var noise = string.Join("\n", Enumerable.Range(0, 600).Select(i => $"builder.AddContent({i + 1}, \"fixed\");"));
+        var findings = await FrameworkProbe.Analyze("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class FixedChild : ComponentBase {
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddContent(0, "fixed");
+            }
+            public sealed class NoisyParent : ComponentBase {
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<FixedChild>(0);
+            """ + noise + """
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class SourceInput : ComponentBase {
+                private string text = "fixed";
+                private void Changed(ChangeEventArgs args) => text = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.OpenComponent<FixedChild>(2);
+                    builder.CloseComponent();
+                    builder.AddMarkupContent(3, text);
+                }
+            }
+            """, new XssTaintAnalyzer());
+        Assert.Single(findings.Where(d => d.Id == "DNA0003"));
+        Assert.DoesNotContain(findings, d => d.Id == "DNA9000" && d.GetMessage().Contains("SourceInput.BuildRenderTree"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("builder.AddComponentParameter(1, \"Value\", \"fixed\");")]
+    [InlineData("builder.AddAttribute(1, \"Value\", (object)\"fixed\");")]
+    [InlineData("builder.AddComponentParameter(1, \"Value\", null);")]
+    public async Task Child_opening_and_literal_parameters_do_not_join_unrelated_summary_work(string parameter)
+    {
+        var noise = string.Join("\n", Enumerable.Range(0, 600).Select(i => $"builder.AddContent({i + 2}, \"fixed\");"));
+        var findings = await FrameworkProbe.Analyze("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class FixedChild : ComponentBase {
+                [Parameter] public string Value { get; set; } = "fixed";
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddContent(0, Value);
+            }
+            public sealed class NoisyParent : ComponentBase {
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<FixedChild>(0);
+            """ + parameter + noise + """
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class SourceInput : ComponentBase {
+                private string text = "fixed";
+                private void Changed(ChangeEventArgs args) => text = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.OpenComponent<FixedChild>(2);
+                    builder.AddComponentParameter(3, "Value", "fixed");
+                    builder.CloseComponent();
+                    builder.AddMarkupContent(4, text);
+                }
+            }
+            """, new XssTaintAnalyzer());
+        Assert.Single(findings.Where(finding => finding.Id == "DNA0003"));
+        Assert.DoesNotContain(findings, finding => finding.Id == "DNA9000" && finding.GetMessage().Contains("SourceInput.BuildRenderTree"));
+    }
+
+    [Theory]
+    [InlineData("(Payload)\"fixed\"", true)]
+    [InlineData("Parent.Fixed", true)]
+    [InlineData("Parent.Read()", true)]
+    [InlineData("\"fixed\"", false)]
+    [InlineData("(object)\"fixed\"", false)]
+    [InlineData("null", false)]
+    public void Parameter_groups_keep_possible_origins_and_separate_literals(string value, bool connected)
+    {
+        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+            .Select(path => MetadataReference.CreateFromFile(path));
+        var source = """
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class Payload {
+                public static implicit operator Payload(string _) => new Payload();
+            }
+            public sealed class Parent : ComponentBase {
+                public const string Fixed = "fixed";
+                public static string Read() => "fixed";
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<Child>(0);
+            """ + $"builder.AddComponentParameter(1, \"Value\", {value});" + """
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class Child : ComponentBase {
+                [Parameter] public object Value { get; set; }
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddContent(0, Value);
+            }
+            """;
+        var compilation = CSharpCompilation.Create("ParameterGroups",
+            [CSharpSyntaxTree.ParseText(source)], references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        Assert.Empty(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
+        var options = LocalSourceTestOptions.Options;
+        var configuration = new TaintConfiguration(
+            ConfigurationManager.GetProjectConfiguration(LocalSourceTestOptions.Files), compilation, options);
+        var model = new ComponentStateInputModel(compilation, options, configuration);
+        // Scope must stay conservative for calls, conversion operators and fields:
+        // any of them can be configured sources or read request data in their body.
+        var groups = (IDictionary)typeof(ComponentStateInputModel)
+            .GetField("groups", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(model)!;
+        var parentGroup = groups[compilation.GetTypeByMetadataName("Parent")!];
+        Assert.NotNull(parentGroup);
+        var childGroup = groups[compilation.GetTypeByMetadataName("Child")!];
+        Assert.NotNull(childGroup);
+        if (connected) Assert.Same(parentGroup, childGroup);
+        else Assert.NotSame(parentGroup, childGroup);
+    }
+
+    [Fact]
+    public async Task Request_sources_in_rendering_flow_to_child_parameters_without_browser_callbacks()
+    {
+        var findings = await FrameworkProbe.Analyze("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            using Microsoft.AspNetCore.Http;
+            public sealed class Parent : ComponentBase {
+                [Inject] public IHttpContextAccessor Context { get; set; } = default!;
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenComponent<Child>(0);
+                    builder.AddComponentParameter(1, "Value", Context.HttpContext.Request.Query["html"].ToString());
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class Child : ComponentBase {
+                [Parameter] public string Value { get; set; } = "fixed";
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddMarkupContent(0, Value);
+            }
+            """, new XssTaintAnalyzer());
+        var finding = Assert.Single(findings.Where(d => d.Id == "DNA0003"));
+        Assert.Contains(finding.AdditionalLocations, location =>
+            location.SourceTree!.GetText().ToString(location.SourceSpan).Contains("Request.Query"));
+        Assert.DoesNotContain(findings, d => d.Id == "DNA9000");
+    }
+
+    [Theory]
+    [InlineData("fast", false, false)]
+    [InlineData("full", false, false)]
+    [InlineData("max", false, false)]
+    [InlineData("full", true, false)]
+    [InlineData("fast", false, true)]
+    [InlineData("full", false, true)]
+    [InlineData("max", false, true)]
+    [InlineData("full", true, true)]
+    public async Task Reused_callback_graphs_recompute_taint_when_component_state_changes(string profile, bool reset, bool helper)
+    {
+        var source = """
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class Input : ComponentBase {
+                private string first = "fixed", second = "fixed";
+                private void Relay() {
+                    second = first;
+            """ + (reset ? "second = \"fixed\";" : "") + """
+                }
+                private void Changed(ChangeEventArgs args) => first = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "button");
+                    builder.AddAttribute(1, "onclick", EventCallback.Factory.Create(this, Relay));
+                    builder.CloseElement();
+                    builder.OpenElement(2, "input");
+                    builder.AddAttribute(3, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(4, second);
+                }
+            }
+            """;
+        if (helper) source = source.Replace("private void Relay() {", "private void Relay() => Copy(); private void Copy() {");
+        var findings = await FrameworkProbe.Analyze(source, new XssTaintAnalyzer(), configuration:
+            $$"""{"Version":"2.0","AnalysisProfile":"{{profile}}"}""");
+        Assert.DoesNotContain(findings, finding => finding.Id == "DNA9000");
+        if (reset) Assert.Empty(findings);
+        else
+        {
+            var finding = Assert.Single(findings);
+            Assert.Equal("DNA0003", finding.Id);
+            Assert.Contains(finding.AdditionalLocations, location =>
+                location.SourceTree!.GetText().ToString(location.SourceSpan).Contains("args.Value"));
+        }
     }
 }

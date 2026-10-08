@@ -43,6 +43,56 @@ cutoffs, including with `--fail`. No-build mode accepts these as partial coverag
 and returns **0**, or **1** when findings are present with `--fail`. Genuine
 analyzer/tool failures still return **2** in both modes.
 
+## No-build loader
+
+The loader reconstructs SDK-style transitive project references. Previously,
+LANCommander's import project could load its service project while failing to
+bind types from the service's data project. This made a `Path.Combine` overload
+unresolvable and lost two archive traversal sink reports. Full-profile no-build
+analysis now matches the project-mode scan's 13 findings by rule, file, line and
+message. This comparison does not establish generated-code coverage.
+
+Assembly references and their metadata images are shared within a scan, with
+aliases and embedded interop settings preserved per reference. Project file
+inventories and source text are also reused across frameworks. Default source
+discovery avoids descending into `bin`, `obj` and `.git`; explicit generated-file
+includes still work and retain their provenance warning. Nothing is cached
+across separate scanner runs.
+
+Fresh scanner processes, all rules enabled, Windows, 29 LANCommander compilations:
+
+| Profile | Before / after seconds | Before / after peak MiB | Before / after findings |
+| --- | --- | --- | --- |
+| fast: 3 / 1,000 | 26.7 / 24.5 | 2,053 / 1,255 | 11 / 11 |
+| full: 5 / 5,000 | 61.3 / 50.5–58.1 | 2,347 / 1,481–1,622 | 11 / 13 |
+
+These timings use warm filesystem caches. The first baseline full run took
+74.7 seconds, including 23.2 seconds loading; a repeat loaded in 2.5 seconds.
+The improved loader took 1.5–2.1 seconds. The clearest benefits are lower memory
+and restored bindings, with a modest end-to-end speed improvement. Full analysis
+has more valid code to inspect after reference repair. Fast retains its limits
+and does not finish the two archive flows. All runs retain partial-coverage
+notices; findings are not a complete vulnerability count.
+
+The SARIF invocation's `dotnetarium.stageSeconds` separates loading from project
+processing. Compilation/analysis totals accumulate overlapping projects; use
+`project-stages-wall` for elapsed parallel project processing. Analysis includes
+compiler diagnostics and Roslyn's deferred compilation work.
+
+### Library information in taint models
+
+Sources, sinks and entry points already resolve configured metadata type names
+to Roslyn symbols. Entry points can require dependency types, and a taint rule
+skips operation-block analysis when its resolved source or sink map is empty.
+The loader uses validated restored package compile assets and compatible project
+outputs to provide those symbols. This also supports framework-provided APIs,
+type forwarders and custom models without requiring a NuGet package name.
+
+Package presence alone is insufficient to establish a source, sink or exposed
+endpoint. No package-name heuristic is added to the model format. Package/version
+constraints should only be added when a particular API's security behavior
+requires them, with tests for that behavior and alternate assembly delivery.
+
 ## Analysis profiles
 
 The package defaults to `fast`: source-method and lambda/local-function depth
@@ -187,3 +237,230 @@ The paired LANCommander runs below use the same harness, inputs and explicit pro
 `*-full` uses 5 / 5,000; other runs use fast 3 / 1,000. The 11 Server findings are identical in both implementations for each profile. All paired runs have zero analyzer exceptions. Cutoffs remain incomplete-root notices, not missed-vulnerability counts. Guardrails are still required for genuinely recursive or broad compatible graphs. An initially stale pre-profile baseline package was detected by AD0001/schema errors and discarded; only rebuilt, profile-aware packages are used in this table.
 
 References: [issue 26](https://github.com/dotnetarium/dotnetarium/issues/26), [PR 27](https://github.com/dotnetarium/dotnetarium/pull/27), [pinned reproduction](https://github.com/alexaka1/repro-dotnetarium--dotnetarium-interface-dispatch/tree/7f34b1d42889523779f1f7bb53f348ea4bfc1825).
+
+## Razor component-state summary investigation
+
+Profiling LANCommander with the full profile identified an XSS-specific cost in
+component state propagation. Reading a component member could start a summary of
+all 183 render methods and 18 browser callbacks. The summary exhausted the
+caller's work budget and was retried by subsequent roots; a trace recorded 671
+attempts, without completing that global summary.
+
+The state model now groups connected components through parameter forwarding and
+inheritance. It summarizes browser callback state and render methods that can
+forward parameters to another tracked component. Members outside those inputs do
+not start a state summary. Ordinary raw-markup sink analysis still runs, and
+aborted summaries remain incomplete rather than being cached as complete.
+
+A regression demonstrates that an unrelated large render method could prevent a
+small browser-input-to-markup flow from being reported. Checks cover independent
+components, shared base classes, inherited state, multiple parents and transitive
+child parameter forwarding, including preservation of the browser-input origin.
+
+On the same Windows machine, isolated full-profile XSS analysis of LANCommander
+Server's 343 syntax trees dropped from **31.6 to 17.7 seconds**. Root cutoffs fell
+from **702 to 278**, with no analyzer exceptions. Loading and compilation are
+excluded. The production CLI whole-solution run dropped from **112.4 to 76.8
+seconds**, with peak scanner working set falling from **1.82 to 1.58 GiB**. Both
+runs analyzed 32 compilations and retained identical SARIF result and flow objects
+for all 13 findings. Existing workspace/compiler failures still make these partial
+scans. Single-run times vary with machine load and concurrent scheduling.
+
+Some connected component groups still exhaust the configured budget;
+these measurements do not establish complete XSS coverage.
+
+The SDK trace points to a separate cost: source-reachability checks around generic
+delegate dispatch in `AsyncEventHandler<T>` and connection helpers. Unknown
+receivers retain compatible source targets, and each target framework is analyzed
+separately. These conservative boundaries are retained in this change. The next
+SDK optimization should investigate reuse of completed reachability proofs and
+known delegate receiver information, with coverage tests before narrowing targets.
+
+### Reusing completed component method summaries
+
+A follow-up trace recorded 218 component summary attempts. Of those, 198 reached
+the same callback before exhausting their budget. Serialized summary work consumed
+13.7 seconds of a 17.3-second isolated XSS run. Even callbacks that had completed
+against unchanged inputs were being analyzed again on every retry.
+
+The component model now reuses CFGs and completed method results while its state
+inputs are unchanged. Any added or merged tainted state clears both caches; new
+CFG identities also prevent nested interprocedural results from retaining an older
+state. Budget/depth exceptions leave no completed result. The caches belong to the
+compilation's component model and use its existing lock. Profile limits, source
+eligibility, sinks and incomplete-coverage reporting are unchanged.
+
+Tests exercise state relaying between separate events, direct and helper-mediated
+field updates, safe resets, source origins and all three profiles. Connected groups
+can still exceed their budgets; reusing completed work does not make an incomplete
+group complete or establish exhaustive coverage.
+
+An initial reuse CLI run took 84.2 seconds with 1.41 GiB peak scanner working set
+and retained all 13 finding/flow objects from the earlier grouping run. It remained
+a partial scan with 32 compilations and existing workspace/compiler errors.
+
+**Measurement correction:** the later reported 98.4/82.3-second control pair and
+17.6-second final isolated check are discarded. Restoring source after building
+the control preserved an older timestamp, letting MSBuild reuse the control DLL.
+Those runs cannot support conclusions about completed-method reuse. Subsequent
+comparisons use separate source copies or forced rebuilds and record assembly
+hashes. Whole-solution timing variation and cutoff totals do not quantify coverage.
+
+The instrumented pilot reuse result was 10.1 seconds; a fresh snapshot of the
+committed implementation measured 14.1 seconds in the next pass. The Release
+suite, focused component/profile checks (including helper relays and resets) and
+packaged Razor/Blazor smoke checks passed.
+
+### Limiting dependency edges and proving source absence
+
+The next trace identified a large group with 18 callbacks and 107 render methods.
+Metadata component types joined otherwise unrelated source components: reading
+`AntDesign.Table<T>.Loading` alone triggered 43 summary attempts. Across all
+requests, `MetadataLookupPanel.BuildRenderTree` was retried 166 times. Component
+summary work occupied 10.4 seconds of the 14.1-second isolated XSS run.
+
+Parameter-forwarding edges now require a child declared in the current compilation
+with a parameter property this model can write. Metadata-only render bodies and
+parameterless children contribute no such writes. Library input callback discovery,
+inheritance edges and ordinary sink analysis still run. Regression cases show both
+unnecessary connections could hide a small browser-state-to-markup finding behind
+an unrelated large render's budget exhaustion.
+
+Component method summaries now use the source-absence proof already applied to
+ordinary taint roots. Completed negative proofs skip taint/points-to analysis;
+uncertainty retains analysis, and exceptions publish no negative result. All
+proof caches are discarded whenever component state changes. Tests cover later
+events making an earlier callback tainted, helper calls, safe resets, all profiles
+and direct request-to-child forwarding without a browser callback.
+
+Attribute frame classification also ignores names that cannot represent browser
+bindings before walking the enclosing render block. The trace found 7,300 frame
+checks taking 0.56–0.78 seconds; DOM event names and `ValueChanged` still undergo
+full frame validation.
+
+| Instrumented isolated Server XSS | Seconds | Root cutoffs | Component summary seconds |
+| --- | ---: | ---: | ---: |
+| Committed completed-method reuse | 14.1 | 276 | 10.4 |
+| Source-only parameter edges | 10.9 | 233 | 7.0 |
+| Also remove parameterless edges | 11.7 | 221 | 5.9 |
+| Also prove component source absence | 5.9 | 224 | 2.3 |
+
+All four runs used the full profile and 343 syntax trees, with zero findings and
+zero analyzer exceptions. Loading/compilation are excluded. These are individual
+instrumented runs with scheduling variation, not guaranteed scan times. Remaining
+source proofs can still exhaust their budgets; coverage remains incomplete.
+
+The final clean production analyzer measured **5.3 seconds** for isolated Server
+XSS, with 225 cutoffs, zero findings and zero analyzer exceptions. Its assembly hash
+matched the production CLI's analyzer. All 996 Release tests and the packaged
+Razor/Blazor smoke checks passed.
+
+A fresh baseline copy of the committed implementation and a forced rebuild of the
+new implementation produced distinct analyzer assemblies. A whole-solution CLI
+pair measured **86.9 to 70.1 seconds**, with peak scanner working set falling from
+**1.73 to 1.37 GiB**. Both analyzed 32 compilations and reported 13 findings; all
+normalized finding and flow objects match. Both scans returned exit 2 for existing
+workspace/compiler failures. A separate new-implementation run took 90.7 seconds.
+The baseline also emitted transient SignalR generator workspace notices absent
+from the paired new run; these timings therefore include loading/generation
+variation and are not a guarantee of the isolated optimization's end-to-end gain.
+Total root cutoffs were 2,612 and 2,711 respectively; these remain notices of
+incomplete analysis, not counts of missed findings.
+
+### Reusing enclosing graphs and unfinished source proofs
+
+The render-lambda fallback repeatedly recreated the enclosing executable graph.
+Sibling callbacks now share that graph, indexed by syntax tree and executable-root
+span. The full enclosing body remains visible: narrowing to the lambda alone can
+lose a captured local, a reassigned outer parameter, or shared state populated
+before the callback runs.
+
+Structural indexing and completed operation checks now retain progress across
+root-budget retries. No incomplete candidate set or call closure is published as
+source-free. Previously checked property and field providers are reevaluated on
+each retry; component state changes still discard the configured proof checker.
+Each graph is processed once per closure. Cancellation and the per-root work and
+method limits remain enforced, including very broad delegate target lists.
+
+Regression cases cover captured locals, branches, reassignment, `out` writes,
+local functions, nested callbacks, shared state, configured captured parameters,
+late origins after repeated small-budget cutoffs, changing member providers and
+sibling callbacks sharing a parent. The complete Release suite has 1,013 passing
+tests; the packed Razor/Blazor smoke checks pass.
+
+The clean production Server XSS run measured **5.0 seconds**, versus **7.5 seconds**
+in the sequential baseline. Both used 343 trees and reported zero findings, zero
+analyzer exceptions and 225 root cutoffs. The instrumented component summary work
+fell from 2.93 to 2.02 seconds. These are individual runs, not a latency guarantee.
+
+Whole-solution CLI runs measured **72.8 seconds before and 82.8 seconds after**,
+with peak scanner working set of **1.69 and 1.72 GiB**. Both analyzed 32 compilations
+and reported 13 findings; all normalized finding and flow objects match. Total
+budget notices fell from 2,735 to 1,948. Both runs retained the same existing
+workspace/compiler failures and returned exit 2. The measurements do not establish
+an end-to-end speedup; loading, compilation and analyzer scheduling still dominate
+and vary across runs. Fewer cutoffs do not establish complete coverage.
+
+#### Remaining delegate and render retry work
+
+The next trace identified delegate compatibility searches that restart across all
+methods after a cutoff. An experiment retained their search progress without
+exposing partial targets. It allowed more component summaries to run, but uncovered
+repeated taint/points-to budget exhaustion in `MediaGrabberDialog.BuildRenderTree`:
+the trace's component flow work grew from zero to 5.36 seconds. Production isolated
+XSS rose from 5.0 to 7.7 seconds, with only five fewer cutoffs. A whole scan took
+90.7 seconds and still reported 13 findings.
+
+That delegate-search change is deferred. Keep the existing incomplete-analysis
+notices until render-summary retries can be reused or bounded without inventing a
+negative result. The current optimization does not narrow captured origins or
+claim that the remaining budget-limited methods are safe.
+
+### Limiting component dependencies to parameter writes
+
+Opening a source component no longer joins its parent's state-summary group by
+itself. Dependencies now come from the same block-local parameter-write frames
+used by value propagation. Literal values, including `null` and built-in
+conversions of literals, cannot forward input and do not connect these groups.
+Fields (including constants), calls, locals and user-defined conversions remain
+eligible. Inheritance links and the normal XSS analysis of each render remain.
+The discovered links are deduplicated, and render graphs are reused when their
+summaries run. No incomplete analysis is cached as a negative result.
+
+Regression checks keep browser-state findings visible with a large unrelated
+parent sharing the same child. They cover missing parameters, literal strings,
+boxed strings and nulls. Scope checks distinguish those literals from configured
+field candidates, method calls and conversion operators. Existing request-source,
+transitive forwarding and state-change regressions remain covered.
+
+A sequential isolated Server XSS pair measured **5.1 seconds before and 6.5 seconds
+after**, with cutoffs falling from **224 to 144**, zero findings and zero analyzer
+exceptions. The initial candidate preceded the dictionary-based link lookup; a
+trace of the final scope implementation took 5.8 seconds. Its constructor took
+0.34 seconds and component-summary work took 1.53 seconds, including 0.73 seconds
+of taint analysis. Additional summaries could run once unrelated dependencies
+were removed. These measurements do not demonstrate an isolated speedup.
+
+A clean baseline archive and forced production rebuild were then compared through
+the whole CLI. Times were **100.6 and 103.8 seconds**, and peak scanner working set
+was **1.47 and 1.72 GiB**. Both analyzed 32 compilations and reported the same 13
+findings. Every normalized result, including all 13 flows, matched exactly.
+Budget notices fell from **1,924 to 1,849**. Both retained 224 compiler errors,
+11 compiler-error summaries and three workspace errors, returning exit 2. This is
+fewer incomplete roots at similar total time, with higher measured peak memory;
+it is not proof of additional vulnerability coverage or an end-to-end speedup.
+
+The complete Release suite passed 1,020 tests before adding three further literal
+scope cases. All 35 final component cases passed, and the packaged Razor/Blazor
+smoke checks passed. The three new literal-isolation scope assertions fail against
+the unchanged baseline; the conservative nonliteral cases pass in both versions.
+
+Repeated delegate/source-proof cutoffs remain the next performance target. The
+previous delegate-index experiment stays deferred; no partial target list is
+published and failed render summaries are still retried with normal budget notices.
+
+A separate conversion-flow probe also exposed an existing boundary: request data
+introduced inside a user-defined string-to-object conversion and then forwarded
+through a child parameter was not reported by either baseline or candidate.
+Keeping that dependency eligible is necessary but does not repair the underlying
+flow model. This performance change does not claim support for that case.

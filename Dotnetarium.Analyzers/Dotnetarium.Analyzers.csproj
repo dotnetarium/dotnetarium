@@ -13,7 +13,7 @@
 
   <PropertyGroup>
     <PackageId>Dotnetarium.Analyzers</PackageId>
-    <PackageVersion>2.4.1</PackageVersion>
+    <PackageVersion>2.5.0</PackageVersion>
     <Authors>Dmitry Balikhin</Authors>
     <PackageProjectUrl>https://github.com/dotnetarium/dotnetarium</PackageProjectUrl>
     <PackageIcon>icon.png</PackageIcon>

@@ -7,7 +7,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dotnetarium</ToolCommandName>
     <PackageId>dotnetarium</PackageId>
-    <Version>2.4.1</Version>
+    <Version>2.5.0</Version>
     <Authors>Dmitry Balikhin</Authors>
     <Description>Dotnetarium security scanner for modern .NET projects</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>

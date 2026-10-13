@@ -464,3 +464,19 @@ introduced inside a user-defined string-to-object conversion and then forwarded
 through a child parameter was not reported by either baseline or candidate.
 Keeping that dependency eligible is necessary but does not repair the underlying
 flow model. This performance change does not claim support for that case.
+# Shared Razor layouts and early source proofs
+
+Component state dependencies now point from a child to the parents supplying its
+parameters. A parent does not join sibling pages merely because they use the same
+layout. Its own render runs as an ordinary root; only upstream renders contribute
+parameter summaries. Source eligibility can also stop indexing as soon as a known
+entry parameter or browser binder proves that an origin is possible. Incomplete
+indexing is never used as a source-absence proof.
+
+On `AlexGoOn/the-most-vulnerable-dotnet-app` at `60d060f`, with the default full
+profile and Release configuration, these changes recovered four mapped HTML
+findings that 2.5.0 missed. Total finding records increased from 9 to 13 and cutoff
+notices fell from 56 to 40. Aggregate analysis time fell from 4.58 to 3.57 seconds;
+whole-process time varied from 9.84 to 11.45 seconds, so this single comparison
+does not establish an end-to-end speedup. Two attribute findings still exhausted
+the budget. No work or call-depth limits were raised.

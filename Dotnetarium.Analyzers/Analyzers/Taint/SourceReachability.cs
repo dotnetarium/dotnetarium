@@ -57,7 +57,9 @@ namespace Dotnetarium.Analyzers.Taint
                     if (cached) return true;
                     continue;
                 }
-                var summary = Summaries.GetValue(graph, root => new SummaryBuilder(root)).GetSummary(cancellationToken);
+                var summary = Summaries.GetValue(graph, root => new SummaryBuilder(root)).GetSummary(cancellationToken,
+                    operation => operation is IParameterReferenceOperation parameter && IsSourceParameter(parameter.Parameter) ||
+                        operation is IFlowAnonymousFunctionOperation lambda && lambda.Symbol.Parameters.Any(IsSourceParameter));
                 var scan = scans.GetOrAdd(graph, _ => new SourceScan());
                 lock (scan)
                 {
@@ -250,7 +252,7 @@ namespace Dotnetarium.Analyzers.Taint
 
             internal SummaryBuilder(ControlFlowGraph root) => pending.Enqueue(root);
 
-            internal Summary GetSummary(CancellationToken cancellationToken)
+            internal Summary GetSummary(CancellationToken cancellationToken, Func<IOperation, bool> hasParameterSource)
             {
                 lock (this)
                 {
@@ -286,6 +288,14 @@ namespace Dotnetarium.Analyzers.Taint
                         if (operation is IFlowAnonymousFunctionOperation lambda)
                             pending.Enqueue(currentGraph!.GetAnonymousFunctionControlFlowGraph(lambda));
                         nextOperation = null;
+                        // Positive evidence needs no complete absence proof. A
+                        // browser binder can appear near the start of a large
+                        // render fragment; do not index every sibling callback
+                        // before allowing its ordinary taint analysis to run.
+                        if (hasParameterSource(operation))
+                        {
+                            return new Summary(ImmutableArray<(IOperation, ControlFlowGraph)>.Empty, Unknown: true);
+                        }
                         if (operation is IInvalidOperation or IDynamicInvocationOperation or IDynamicObjectCreationOperation or
                             IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation or IFunctionPointerInvocationOperation ||
                             operation is IObjectCreationOperation { Constructor: null }) return Complete(true);

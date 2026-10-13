@@ -9,6 +9,50 @@ namespace Dotnetarium.Analyzers.Tests;
 
 public sealed class ComponentStateTests
 {
+    [Fact]
+    public async Task Shared_layout_does_not_pull_sibling_callbacks_into_parent_state()
+    {
+        var noise = string.Join("\n", Enumerable.Range(0, 600).Select(i => $"builder.AddContent({i + 2}, \"fixed\");"));
+        var findings = await FrameworkProbe.Analyze("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class SharedLayout : ComponentBase {
+                [Parameter] public string Heading { get; set; } = "fixed";
+                protected override void BuildRenderTree(RenderTreeBuilder builder) => builder.AddContent(0, Heading);
+            }
+            public sealed class NoisySibling : ComponentBase {
+                private string heading = "fixed";
+                private void Changed(ChangeEventArgs args) => heading = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+            """ + noise + """
+                    builder.OpenComponent<SharedLayout>(700);
+                    builder.AddComponentParameter(701, "Heading", heading);
+                    builder.CloseComponent();
+                }
+            }
+            public sealed class SourceInput : ComponentBase {
+                private string text = "fixed";
+                private string heading = "fixed";
+                private void Changed(ChangeEventArgs args) => text = args.Value.ToString();
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.OpenComponent<SharedLayout>(2);
+                    builder.AddComponentParameter(3, "Heading", heading);
+                    builder.CloseComponent();
+                    builder.AddMarkupContent(4, text);
+                }
+            }
+            """, new XssTaintAnalyzer());
+        var finding = Assert.Single(findings.Where(d => d.Id == "DNA0003"));
+        Assert.Contains("text", finding.Location.SourceTree!.GetText().ToString(finding.Location.SourceSpan));
+        Assert.DoesNotContain(findings, d => d.Id == "DNA9000" && d.GetMessage().Contains("SourceInput.BuildRenderTree"));
+    }
+
     [Theory]
     [InlineData("builder.OpenElement(0, \"input\"); builder.AddAttribute(1, \"onchange\", EventCallback.Factory.CreateBinder<string>(this, value => text = value, text)); builder.CloseElement();", 1)]
     [InlineData("builder.OpenComponent<InputText>(0); builder.AddComponentParameter(1, \"ValueChanged\", RuntimeHelpers.CreateInferredEventCallback(this, (string value) => text = value, text)); builder.CloseComponent();", 1)]
@@ -320,8 +364,10 @@ public sealed class ComponentStateTests
         Assert.NotNull(parentGroup);
         var childGroup = groups[compilation.GetTypeByMetadataName("Child")!];
         Assert.NotNull(childGroup);
-        if (connected) Assert.Same(parentGroup, childGroup);
-        else Assert.NotSame(parentGroup, childGroup);
+        Assert.NotSame(parentGroup, childGroup);
+        var upstreamRenders = (IMethodSymbol[])childGroup!.GetType()
+            .GetProperty("Renders", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(childGroup)!;
+        Assert.Equal(connected, upstreamRenders.Any(method => method.ContainingType.Name == "Parent"));
     }
 
     [Fact]

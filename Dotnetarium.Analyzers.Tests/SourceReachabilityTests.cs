@@ -14,6 +14,24 @@ namespace Dotnetarium.Analyzers.Tests;
 public sealed class SourceReachabilityTests
 {
     [Fact]
+    public void Entry_parameter_proves_possible_source_before_indexing_large_body()
+    {
+        var noise = string.Join("\n", Enumerable.Range(0, 300).Select(i => $"System.Console.WriteLine(\"fixed {i}\");"));
+        var compilation = Compile("""
+            using Microsoft.AspNetCore.Mvc;
+            public sealed class Demo : ControllerBase {
+                public void Run(string input) {
+                    System.Console.WriteLine(input);
+            """ + noise + """
+                }
+            }
+            """);
+        using var budget = new AnalysisWorkBudget(100, CancellationToken.None);
+        Assert.True(Checker(compilation).MayReachSource(Graph(compilation, "Run")));
+        Assert.True(budget.Work < 100);
+    }
+
+    [Fact]
     public void Object_entry_point_container_does_not_make_ordinary_parameters_or_calls_sources()
     {
         var compilation = Compile("""

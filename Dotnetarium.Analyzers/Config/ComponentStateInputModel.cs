@@ -144,8 +144,10 @@ namespace Dotnetarium.Config
 
         private void BuildGroups()
         {
-            // State flows between source components through parameters and
-            // inherited members. Unrelated render trees must not share a budget.
+            // A child depends on parents that supply its parameters. The parent
+            // does not depend on its children or the other parents of a shared
+            // layout: those are separate component instances at runtime.
+            // Inherited state still needs callbacks from both declaring types.
             var neighbors = new Dictionary<INamedTypeSymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
             void Register(INamedTypeSymbol component)
             {
@@ -167,7 +169,6 @@ namespace Dotnetarium.Config
                 if (neighbors.TryGetValue(parent, out var parentNeighbors) && neighbors.TryGetValue(child, out var childNeighbors))
                 {
                     forwardingTypes.Add(parent);
-                    parentNeighbors.Add(child);
                     childNeighbors.Add(parent);
                 }
             foreach (var start in neighbors.Keys)
@@ -188,8 +189,11 @@ namespace Dotnetarium.Config
                     // another tracked component. Rendering text or markup alone
                     // is handled by the ordinary XSS root, not this state model.
                     renders.Where(method => members.Contains(method.ContainingType.OriginalDefinition) &&
-                        forwardingTypes.Contains(method.ContainingType.OriginalDefinition)).ToArray());
-                foreach (var member in members) groups[member] = group;
+                        forwardingTypes.Contains(method.ContainingType.OriginalDefinition) &&
+                        (!SymbolEqualityComparer.Default.Equals(method.ContainingType.OriginalDefinition, start) ||
+                         links.Any(link => SymbolEqualityComparer.Default.Equals(link.Parent, start) &&
+                             SymbolEqualityComparer.Default.Equals(link.Child, start)))).ToArray());
+                groups[start] = group;
             }
         }
 
@@ -331,7 +335,10 @@ namespace Dotnetarium.Config
                 sources, configuration.GetSanitizerSymbolMap(kind), configuration.GetSinkSymbolMap(kind),
                 CancellationToken.None, configuration.AnalysisSettings.MethodDepth,
                 configuration.AnalysisSettings.LambdaDepth, cacheResult: false);
-            if (result != null) summaries[method] = result;
+            if (result != null)
+            {
+                summaries[method] = result;
+            }
             return result;
         }
 

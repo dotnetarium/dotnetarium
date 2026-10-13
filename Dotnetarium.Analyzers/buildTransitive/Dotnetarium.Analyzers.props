@@ -1,6 +1,7 @@
 <Project>
   <ItemGroup>
     <CompilerVisibleProperty Include="IsTestProject" />
+    <CompilerVisibleProperty Include="UsingMicrosoftNETSdkBlazorWebAssembly" />
   </ItemGroup>
   <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)/dotnetarium.json')">
     <AdditionalFiles Include="$(MSBuildProjectDirectory)/dotnetarium.json" />

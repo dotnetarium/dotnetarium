@@ -128,8 +128,10 @@ internal static class Program
                     configOptions = new CliDiagnosticPolicy.UnsuppressedOptions(configOptions);
                 }
                 if (inputs!.TestProjectMetadata.TryGetValue(project.Id, out var isTestProject))
-                    configOptions = new ProjectAnalysisOptions(configOptions, isTestProject);
-                else if (!configOptions.GlobalOptions.TryGetValue("build_property.IsTestProject", out _) && inputs.MSBuildPath != null)
+                    configOptions = new ProjectAnalysisOptions(configOptions, isTestProject,
+                        inputs.InputProperties.TryGetValue(project.Id, out var properties) ? properties.GetValueOrDefault("UsingMicrosoftNETSdkBlazorWebAssembly") : null);
+                else if ((!configOptions.GlobalOptions.TryGetValue("build_property.IsTestProject", out _) ||
+                    !configOptions.GlobalOptions.TryGetValue("build_property.UsingMicrosoftNETSdkBlazorWebAssembly", out _)) && inputs.MSBuildPath != null)
                     configOptions = await ProjectAnalysisOptions.WithTestProjectMetadataAsync(configOptions, project.FilePath!, inputs.MSBuildPath,
                         selection.Configuration, ScanSelection.FrameworkOf(project));
                 var analyzerOptions = new AnalyzerOptions(additionalFiles, new AnalysisProfileOptions(configOptions));

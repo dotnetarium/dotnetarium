@@ -106,12 +106,28 @@ namespace Dotnetarium.Analyzers.Taint
                 root.Length > 3 && char.IsLetter(root[0]) && root[1] == ':' && root[2] is '/' or '\\';
         });
 
-        internal static bool HasFixedRequestAuthority(Location sink, Compilation compilation)
+        internal static bool HasFixedRequestAuthority(Location sink, Compilation compilation, Func<IOperation, bool>? isTainted = null)
         {
             var operation = Unwrap(SinkValue(sink, compilation));
             if (operation is IObjectCreationOperation creation && creation.Type?.ToDisplayString() == "System.Uri" && creation.Arguments.Length == 1)
                 operation = Unwrap(creation.Arguments[0].Value);
-            return HasFixedHttpAuthority(ConstantStringPrefix(operation, compilation));
+            if (HasFixedHttpAuthority(ConstantStringPrefix(operation, compilation))) return true;
+            if (isTainted == null) return false;
+            if (operation is ILocalReferenceOperation local) operation = Unwrap(StableInitializer(local.Local, compilation));
+            if (operation is not IInterpolatedStringOperation template) return false;
+            bool query = false, encodedInput = false;
+            foreach (var part in template.Parts)
+            {
+                if (part is IInterpolatedStringTextOperation text)
+                { query |= (text.Text.ConstantValue.Value as string)?.Contains('?') == true; continue; }
+                if (part is not IInterpolationOperation interpolation || !isTainted(interpolation.Expression)) continue;
+                if (!query || Unwrap(interpolation.Expression) is not IInvocationOperation encoder ||
+                    encoder.TargetMethod.ContainingType.ToDisplayString() != "System.Uri" || encoder.TargetMethod.Name != "EscapeDataString") return false;
+                encodedInput = true;
+            }
+            // This source can only change query data; an untainted dynamic base
+            // is not made attacker-selected by an encoded query interpolation.
+            return encodedInput;
         }
 
         internal static bool HasFixedRedirectDestination(Location sink, Compilation compilation)

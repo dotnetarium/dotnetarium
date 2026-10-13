@@ -130,6 +130,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 inputs.InputProperties[spec.Id] = new(StringComparer.OrdinalIgnoreCase)
                 {
                     ["TargetFramework"] = spec.Framework,
+                    ["UsingMicrosoftNETSdkBlazorWebAssembly"] = (spec.Sdk == "Microsoft.NET.Sdk.BlazorWebAssembly").ToString(),
                     ["Configuration"] = spec.Properties.GetValueOrDefault("Configuration", "Debug"),
                     ["Platform"] = spec.Properties.GetValueOrDefault("Platform", "AnyCPU")
                 };

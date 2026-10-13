@@ -199,6 +199,11 @@
       ]
     },
     {
+      "Type": "Microsoft.AspNetCore.Components.ComponentBase", "Scope": "remote",
+      "TaintTypes": [ "SqlInjection", "CommandInjection", "XPathInjection", "PathEscape", "OpenRedirect", "LdapFilterInjection", "LdapDnInjection", "ServerSideRequestForgery", "DynamicCodeExecution", "XmlExternalEntity" ],
+      "Properties": []
+    },
+    {
       "Type": "Microsoft.AspNetCore.Components.MarkupString",
       "Scope": "independent",
       "TaintTypes": [

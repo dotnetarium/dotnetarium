@@ -16,12 +16,13 @@ namespace Dotnetarium.Analyzers.Taint
         public override void Initialize(AnalysisContext context)
         {
             context.EnableConcurrentExecution();
-            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
+            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.Analyze | GeneratedCodeAnalysisFlags.ReportDiagnostics);
             context.RegisterOperationAction(AnalyzeAssignment, OperationKind.SimpleAssignment);
         }
 
         private static void AnalyzeAssignment(OperationAnalysisContext context)
         {
+            if (context.IsGeneratedCode && !RazorCodeAnalysis.IsUserCode(context.Operation.Syntax)) return;
             var assignment = (ISimpleAssignmentOperation)context.Operation;
             if (assignment.Target is not IPropertyReferenceOperation property ||
                 property.Property.Name != "TypeNameHandling" ||

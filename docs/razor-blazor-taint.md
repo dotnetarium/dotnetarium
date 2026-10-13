@@ -13,12 +13,16 @@ diagnostics back to `.cshtml` and `.razor` through Razor's line directives.
 | Interactive Auto | Both server and browser paths are possible | Same raw-output sinks |
 | Interactive WebAssembly with `prerender: false` | Query and route parameters; form binding is excluded | Same raw-output sinks |
 
-Only the XSS rule consumes the new component input sources. A WebAssembly
-assembly can be prerendered on the server, so assembly type alone cannot
-justify either server-only findings or server-only suppressions. Additional
-Blazor rules for server sinks will need a project and render-mode execution
-context. The analyzer currently excludes server form provenance only when a
-component explicitly declares WebAssembly rendering with `prerender: false`.
+XSS consumes browser input in all interactive modes. SQL, commands, XPath,
+files, redirects, LDAP, SSRF, dynamic C# execution and XXE also consume component
+state when an applied render-mode attribute or an inspected parent establishes
+Interactive Server or Auto execution. Unknown interactivity is not guessed.
+WebAssembly browser callbacks are excluded from these server sink contexts even
+when prerendering is enabled; prerendering does not execute browser events.
+Query/form properties remain eligible during inspected server lifecycle/render
+methods of prerendered components. Client-only rendering excludes those paths.
+The NuGet package and both CLI loaders expose the WebAssembly SDK property so an
+unannotated client project is not mistaken for static server rendering.
 
 Ordinary string rendering through Razor or `AddContent(string)` is encoded.
 A plain `[Parameter]` is not a source unless its name appears in the
@@ -28,9 +32,11 @@ Browser DOM event callbacks, native `@bind`, and framework `InputBase<T>`
 `ValueChanged` bindings carry input through component fields/properties into later
 renders. Source-defined parent render trees can pass that provenance into child
 `[Parameter]` properties. The same callback's constant overwrite stays clean.
-These sources are used only for XSS; they do not imply that a component executes
-server-only commands. A component without an explicit render mode may inherit
-interactivity from its parent.
+Each taint context computes its own state summaries, so an HTML encoder does not
+sanitize SQL or commands. A component without an explicit render mode may inherit
+interactivity from an inspected, source-defined parent. Dynamic router-selected
+parents and metadata-only mode attributes cannot establish server browser-event
+execution in this slice.
 
 Callbacks must be connected to a DOM event or a recognized framework input;
 an unrelated component parameter named `onchange` is not an input source.

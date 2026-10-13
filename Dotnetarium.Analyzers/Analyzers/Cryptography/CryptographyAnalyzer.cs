@@ -19,13 +19,14 @@ namespace Dotnetarium.Analyzers.Cryptography
         public override void Initialize(AnalysisContext context)
         {
             context.EnableConcurrentExecution();
-            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
+            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.Analyze | GeneratedCodeAnalysisFlags.ReportDiagnostics);
             context.RegisterOperationBlockAction(AnalyzeBlock);
         }
 
         private static void AnalyzeBlock(OperationBlockAnalysisContext context)
         {
-            var operations = context.OperationBlocks.SelectMany(root => root.DescendantsAndSelf()).ToArray();
+            var operations = context.OperationBlocks.SelectMany(root => root.DescendantsAndSelf())
+                .Where(operation => !context.IsGeneratedCode || RazorCodeAnalysis.IsUserCode(operation.Syntax)).ToArray();
             foreach (var operation in operations)
             {
                 switch (operation)

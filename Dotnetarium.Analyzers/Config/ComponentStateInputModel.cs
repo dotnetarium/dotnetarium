@@ -13,12 +13,14 @@ using Dotnetarium.Analyzers.Taint;
 
 namespace Dotnetarium.Config
 {
-    /// <summary>Cross-callback component state summaries for XSS; no server-only sink inference.</summary>
+    /// <summary>Context-specific component state summaries with explicit execution evidence.</summary>
     internal sealed class ComponentStateInputModel
     {
         private readonly Compilation compilation;
         private readonly AnalyzerOptions options;
         private readonly TaintConfiguration configuration;
+        private readonly SinkKind kind;
+        private readonly ComponentExecutionModel execution;
         private readonly HashSet<IMethodSymbol> callbacks = new(SymbolEqualityComparer.Default);
         private readonly HashSet<IMethodSymbol> renders = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<ISymbol, TaintedDataAbstractValue> values = new(SymbolEqualityComparer.Default);
@@ -42,9 +44,11 @@ namespace Dotnetarium.Config
             { Callbacks = callbacks; Renders = renders; }
         }
 
-        internal ComponentStateInputModel(Compilation compilation, AnalyzerOptions options, TaintConfiguration configuration)
+        internal ComponentStateInputModel(Compilation compilation, AnalyzerOptions options, TaintConfiguration configuration,
+            SinkKind kind = (SinkKind)(int)TaintType.CrossSiteScripting, ComponentExecutionModel? execution = null)
         {
             this.compilation = compilation; this.options = options; this.configuration = configuration;
+            this.kind = kind; this.execution = execution ?? new ComponentExecutionModel(compilation, options);
             foreach (var tree in compilation.SyntaxTrees)
             {
                 var model = compilation.GetSemanticModel(tree);
@@ -79,13 +83,17 @@ namespace Dotnetarium.Config
                             operation.TargetMethod.Name is not ("Create" or "CreateBinder" or "CreateInferredEventCallback")) continue;
                         foreach (var argument in operation.Arguments)
                             foreach (var candidate in argument.Value.DescendantsAndSelf())
-                                if (candidate is IAnonymousFunctionOperation lambda) callbacks.Add(lambda.Symbol);
-                                else if (candidate is IMethodReferenceOperation method) callbacks.Add(method.Method);
+                                if (candidate is IAnonymousFunctionOperation lambda && HasBrowserSources(lambda.Symbol.ContainingType)) callbacks.Add(lambda.Symbol);
+                                else if (candidate is IMethodReferenceOperation method && HasBrowserSources(method.Method.ContainingType)) callbacks.Add(method.Method);
                     }
                 }
                 foreach (var syntax in tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>())
-                    if (syntax.Identifier.ValueText == "BuildRenderTree" && model.GetDeclaredSymbol(syntax) is IMethodSymbol method &&
-                        method.IsOverride && IsComponent(method.ContainingType)) renders.Add(method);
+                    if (model.GetDeclaredSymbol(syntax) is IMethodSymbol method && method.IsOverride && IsComponent(method.ContainingType))
+                    {
+                        if (method.Name == "BuildRenderTree") renders.Add(method);
+                        else if (kind != (SinkKind)(int)TaintType.CrossSiteScripting && execution.HasServerLifecycle(method.ContainingType) &&
+                            method.Name is "OnInitialized" or "OnInitializedAsync" or "OnParametersSet" or "OnParametersSetAsync") callbacks.Add(method);
+                    }
             }
             foreach (var callback in callbacks)
                 for (var type = callback.ContainingType; type != null && IsComponent(type); type = type.BaseType)
@@ -113,6 +121,9 @@ namespace Dotnetarium.Config
             }
             BuildGroups();
         }
+
+        private bool HasBrowserSources(INamedTypeSymbol type) =>
+            kind == (SinkKind)(int)TaintType.CrossSiteScripting || execution.HasServerCallbacks(type);
 
         private static IEnumerable<(INamedTypeSymbol Component, IPropertySymbol Property, IOperation Value)> ParameterWrites(ControlFlowGraph graph)
         {
@@ -319,7 +330,6 @@ namespace Dotnetarium.Config
             // later roots can continue past already completed callbacks.
             if (summaries.TryGetValue(method, out var summary)) return summary;
             if (sourceFreeSummaries.Contains(method)) return null;
-            var kind = (SinkKind)(int)TaintType.CrossSiteScripting;
             var sources = configuration.GetSourceSymbolMap(kind);
             // Ordinary XSS roots already prove source absence before running
             // taint/points-to analysis. Apply that gate to component summaries
@@ -331,7 +341,20 @@ namespace Dotnetarium.Config
                 sourceFreeSummaries.Add(method);
                 return null;
             }
-            var result = TaintedDataAnalysis.TryGetOrComputeResult(graph, compilation, method, options, DnaRuleCatalog.CrossSiteScripting,
+            var rule = (TaintType)(int)kind switch
+            {
+                TaintType.SqlInjection => DnaRuleCatalog.SqlInjection,
+                TaintType.CommandInjection => DnaRuleCatalog.CommandInjection,
+                TaintType.XPathInjection => DnaRuleCatalog.XPathInjection,
+                TaintType.PathEscape => DnaRuleCatalog.PathEscape,
+                TaintType.OpenRedirect => DnaRuleCatalog.OpenRedirect,
+                TaintType.LdapDnInjection or TaintType.LdapFilterInjection => DnaRuleCatalog.LdapInjection,
+                TaintType.ServerSideRequestForgery => DnaRuleCatalog.ServerSideRequestForgery,
+                TaintType.DynamicCodeExecution => DnaRuleCatalog.DynamicCodeExecution,
+                TaintType.XmlExternalEntity => DnaRuleCatalog.XmlExternalEntity,
+                _ => DnaRuleCatalog.CrossSiteScripting
+            };
+            var result = TaintedDataAnalysis.TryGetOrComputeResult(graph, compilation, method, options, rule,
                 sources, configuration.GetSanitizerSymbolMap(kind), configuration.GetSinkSymbolMap(kind),
                 CancellationToken.None, configuration.AnalysisSettings.MethodDepth,
                 configuration.AnalysisSettings.LambdaDepth, cacheResult: false);

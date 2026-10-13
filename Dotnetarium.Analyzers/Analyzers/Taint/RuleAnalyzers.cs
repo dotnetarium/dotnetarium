@@ -18,7 +18,8 @@ namespace Dotnetarium.Analyzers.Taint
         LdapFilterInjection,
         ServerSideRequestForgery,
         DynamicCodeExecution,
-        XmlExternalEntity
+        XmlExternalEntity,
+        UnsafeDeserialization
     }
 
     [DiagnosticAnalyzer(LanguageNames.CSharp)]

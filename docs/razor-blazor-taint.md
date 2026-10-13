@@ -48,6 +48,31 @@ output instead of relying on callback ordering to make raw HTML safe.
 
 For stored chat/article content, Markdown transfers, explicit property-source
 contracts and CLI generator coverage, see [stored HTML and Markdown](stored-html.md).
+Native `List<T>` additions of newly initialized records preserve taint for the
+specific record properties rendered by a component's `foreach`. Another safe
+property is not made tainted merely because the record contains unsafe text.
+An unconditional immediate clear/replacement in the same callback is respected;
+a separate reset event cannot establish that all renders are safe. This does not
+correlate database persistence, arbitrary collection adapters, projections or
+mutable item aliases across components.
+
+Literal global `eval`, `window.eval` and `globalThis.eval` dispatch through
+`IJSRuntime`, `IJSInProcessRuntime` and supported extensions is an XSS sink.
+Ordinary interop names and object-reference methods named `eval` are not assumed
+to execute JavaScript text. RazorLight's `CompileRenderStringAsync` treats template
+content as code input; model data is not a template-code sink.
+
+Native dictionary `TryGetValue` separates a lookup key from the returned payload:
+a browser-controlled selector does not make a server-generated file path unsafe.
+Tainted dictionary contents and inspected custom lookup implementations remain
+eligible. This is not a general model of individual dictionary writes or database
+storage; use explicit property-source contracts for persisted untrusted data.
+
+Default work limits still apply. Large component methods can exhaust the budget
+before reaching a sink, even when the API and browser source are modeled. Inspect
+coverage notices before interpreting an absent finding as safe. No-build mode
+does not supply missing Razor generator output; use project mode for that coverage.
+
 The CLI uses Roslyn 5.9 for current SDK generator compatibility and reports
 analyzer/generator assembly load failures as incomplete coverage. The analyzer
 package keeps its Roslyn 5.0 minimum. Mapped console/SARIF locations point to

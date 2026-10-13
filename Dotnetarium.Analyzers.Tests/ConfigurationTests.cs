@@ -10,11 +10,12 @@ namespace Dotnetarium.Analyzers.Tests;
 public sealed class ConfigurationTests
 {
     [Fact]
-    public void Built_in_models_drop_legacy_deserializers_and_web_forms()
+    public void Built_in_models_drop_web_forms_and_scope_restored_BinaryFormatter()
     {
         var config = new ConfigurationReader().GetBuiltinConfiguration();
         Assert.Contains(config.Sinks, sink => sink.Type == "System.Net.Http.HttpClient");
-        Assert.DoesNotContain(config.Sinks, sink => sink.Type.Contains("BinaryFormatter", StringComparison.Ordinal));
+        var formatter = Assert.Single(config.Sinks, sink => sink.Type == "System.Runtime.Serialization.Formatters.Binary.BinaryFormatter");
+        Assert.Equal([TaintType.UnsafeDeserialization], formatter.TaintTypes);
         Assert.DoesNotContain(config.Sinks, sink => sink.Type.StartsWith("System.Web.", StringComparison.Ordinal));
         Assert.DoesNotContain(config.TaintSources, source => source.Type.StartsWith("System.Web.", StringComparison.Ordinal));
         Assert.DoesNotContain(config.TaintSources, source => source.Type == "Microsoft.EntityFrameworkCore.DbContext");

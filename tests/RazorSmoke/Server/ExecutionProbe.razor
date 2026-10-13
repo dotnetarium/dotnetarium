@@ -1,0 +1,11 @@
+@page "/execution-probe"
+@rendermode InteractiveServer
+<input @bind="text" />
+<button @onclick="Run">Run</button>
+@code {
+    private string text = "fixed";
+    private void Run() {
+        System.Diagnostics.Process.Start(text);
+        _ = System.Security.Cryptography.DES.Create();
+    }
+}

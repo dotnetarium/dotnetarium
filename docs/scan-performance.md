@@ -480,3 +480,20 @@ notices fell from 56 to 40. Aggregate analysis time fell from 4.58 to 3.57 secon
 whole-process time varied from 9.84 to 11.45 seconds, so this single comparison
 does not establish an end-to-end speedup. Two attribute findings still exhausted
 the budget. No work or call-depth limits were raised.
+
+After the mapped direct rules, server execution models, collection provenance and
+execution sinks were added, two final default-budget project scans reported the
+same **25 finding records** in **12.06 and 11.25 seconds**, using **385–388 MiB**.
+The upload dictionary-selector path false positive was removed. No-build reported
+**8 records in 2.62 seconds**, using **218 MiB**; missing Razor generation still
+prevents equivalent coverage. Both modes remain partial on this fixture.
+
+Default project scans retained **53 budget notices**. A diagnostic retry at 50,000
+work units reported **30 records** and **2 budget notices**, recovering two
+attribute XSS paths, SQL, XPath and compatibility-package BinaryFormatter paths.
+It took **11.25 seconds** in this small fixture. That does not justify increasing
+the product default for larger applications. Earlier intermediate builds reported
+the BinaryFormatter path at the default budget; final builds cut off that method.
+API coverage and a clean compiler therefore do not guarantee complete bounded
+interprocedural analysis. Project loading also retained the fixture's two NuGet
+vulnerability advisory workspace notices.

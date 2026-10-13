@@ -24,6 +24,7 @@ namespace Dotnetarium.Config
         private readonly HashSet<IMethodSymbol> callbacks = new(SymbolEqualityComparer.Default);
         private readonly HashSet<IMethodSymbol> renders = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<ISymbol, TaintedDataAbstractValue> values = new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<ISymbol, Dictionary<ISymbol, TaintedDataAbstractValue>> collectionValues = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<IMethodSymbol, ControlFlowGraph?> graphs = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<IMethodSymbol, TaintedDataAnalysisResult> summaries = new(SymbolEqualityComparer.Default);
         private readonly HashSet<IMethodSymbol> sourceFreeSummaries = new(SymbolEqualityComparer.Default);
@@ -250,6 +251,23 @@ namespace Dotnetarium.Config
         internal TaintedDataAbstractValue? GetFieldInput(IFieldReferenceOperation field) =>
             IsComponent(field.Field.ContainingType) ? GetMemberInput(field.Field, field.Instance) : null;
 
+        internal TaintedDataAbstractValue? GetCollectionPropertyInput(IPropertyReferenceOperation property)
+        {
+            var model = compilation.GetSemanticModel(property.Syntax.SyntaxTree);
+            var local = property.Instance is ILocalReferenceOperation reference ? reference.Local :
+                property.Instance != null ? model.GetSymbolInfo(property.Instance.Syntax).Symbol as ILocalSymbol : null;
+            if (local == null) return null;
+            var loop = property.Syntax.Ancestors().OfType<ForEachStatementSyntax>().FirstOrDefault(candidate =>
+                SymbolEqualityComparer.Default.Equals(model.GetDeclaredSymbol(candidate), local));
+            if (loop == null || CollectionField(model.GetOperation(loop.Expression)) is not { } field ||
+                !groups.TryGetValue(field.ContainingType.OriginalDefinition, out var group)) return null;
+            lock (gate)
+            {
+                if (!computing && !group.Completed) Compute(group);
+                return collectionValues.TryGetValue(field, out var members) && members.TryGetValue(property.Property, out var value) ? value : null;
+            }
+        }
+
         private TaintedDataAbstractValue? GetMemberInput(ISymbol member, IOperation? instance)
         {
             // A component without an indexed browser callback cannot write its
@@ -282,6 +300,7 @@ namespace Dotnetarium.Config
                     {
                         var graph = GetGraph(method);
                         if (graph == null || Analyze(graph, method) is not { } result) continue;
+                        changed |= AddCollectionWrites(graph, result);
                         foreach (var entry in result.ExitBlockOutput.Data)
                             if (entry.Key.Symbol is IFieldSymbol or IPropertySymbol && IsComponent(entry.Key.Symbol.ContainingType) &&
                                 entry.Value.Kind == TaintedDataAbstractValueKind.Tainted &&
@@ -304,6 +323,72 @@ namespace Dotnetarium.Config
             finally { computing = false; }
         }
 
+        private bool AddCollectionWrites(ControlFlowGraph graph, TaintedDataAnalysisResult result)
+        {
+            bool changed = false;
+            foreach (var call in graph.DescendantOperations().OfType<IInvocationOperation>())
+            {
+                if (call.TargetMethod.Name != "Add" || CollectionField(call.Instance) is not { } field) continue;
+                var block = graph.Blocks.FirstOrDefault(candidate => candidate.Operations.Any(operation => operation.DescendantsAndSelf().Any(child => ReferenceEquals(child, call))));
+                if (block != null && ClearedAfter(block, call, field)) continue;
+                var argument = call.Arguments.LastOrDefault();
+                if (argument == null) continue;
+                var item = compilation.GetSemanticModel(argument.Syntax.SyntaxTree).GetOperation(argument.Value.Syntax) ?? argument.Value;
+                while (item is IConversionOperation { OperatorMethod: null } conversion) item = conversion.Operand;
+                if (item.Type?.SpecialType == SpecialType.System_String && result[item].Kind == TaintedDataAbstractValueKind.Tainted)
+                    changed |= Add(field, result[item]);
+                if (item is not IObjectCreationOperation { Initializer: { } initializer }) continue;
+                foreach (var assignment in initializer.Initializers.OfType<ISimpleAssignmentOperation>())
+                {
+                    var member = assignment.Target is IPropertyReferenceOperation property ? (ISymbol)property.Property :
+                        assignment.Target is IFieldReferenceOperation target ? target.Field : null;
+                    var lowered = graph.DescendantOperations().OfType<ISimpleAssignmentOperation>()
+                        .FirstOrDefault(operation => operation.Syntax.Span == assignment.Syntax.Span);
+                    var value = result[lowered?.Value ?? assignment.Value];
+                    if (member == null || value.Kind != TaintedDataAbstractValueKind.Tainted) continue;
+                    if (!collectionValues.TryGetValue(field, out var members))
+                        collectionValues[field] = members = new Dictionary<ISymbol, TaintedDataAbstractValue>(SymbolEqualityComparer.Default);
+                    if (members.TryGetValue(member, out var old)) value = TaintedDataAbstractValue.MergeTainted(new[] { old, value });
+                    if (old != null && old.Equals(value)) continue;
+                    members[member] = value;
+                    InvalidateSummaries();
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
+        private bool ClearedAfter(BasicBlock first, IInvocationOperation add, IFieldSymbol field)
+        {
+            var seen = new HashSet<BasicBlock>();
+            for (BasicBlock? block = first; block != null && seen.Add(block) && seen.Count <= 64;
+                block = block.ConditionKind == ControlFlowConditionKind.None ? block.FallThroughSuccessor?.Destination : null)
+            {
+                foreach (var operation in block.Operations.SelectMany(value => value.DescendantsAndSelf()))
+                {
+                    if (operation.Syntax.SpanStart <= add.Syntax.SpanStart) continue;
+                    if (operation is IInvocationOperation clear && clear.TargetMethod.Name == "Clear" &&
+                        SymbolEqualityComparer.Default.Equals(CollectionField(clear.Instance), field)) return true;
+                    if (operation is ISimpleAssignmentOperation reset && reset.Target is IFieldReferenceOperation target &&
+                        SymbolEqualityComparer.Default.Equals(target.Field, field) && reset.Value is IObjectCreationOperation { Initializer: null }) return true;
+                    if (operation is IInvocationOperation) return false;
+                }
+            }
+            return false;
+        }
+
+        private IFieldSymbol? CollectionField(IOperation? operation)
+        {
+            if (operation is IFlowCaptureReferenceOperation)
+                operation = compilation.GetSemanticModel(operation.Syntax.SyntaxTree).GetOperation(operation.Syntax);
+            while (operation is IConversionOperation { OperatorMethod: null } conversion) operation = conversion.Operand;
+            if (operation is not IFieldReferenceOperation field || !IsComponent(field.Field.ContainingType) ||
+                field.Field.Type is not INamedTypeSymbol type) return null;
+            var definition = type.OriginalDefinition;
+            return definition.ContainingNamespace.ToDisplayString() == "System.Collections.Generic" &&
+                definition.MetadataName is "List`1" or "Dictionary`2" ? field.Field : null;
+        }
+
         private bool Add(ISymbol member, TaintedDataAbstractValue value)
         {
             if (values.TryGetValue(member, out var old))
@@ -313,6 +398,12 @@ namespace Dotnetarium.Config
                 values[member] = merged;
             }
             else values.Add(member, value);
+            InvalidateSummaries();
+            return true;
+        }
+
+        private void InvalidateSummaries()
+        {
             // Changing modeled inputs invalidates completed taint summaries.
             // Refresh CFG identity too, so nested interprocedural caches cannot
             // reuse results obtained against an earlier component state.
@@ -320,7 +411,6 @@ namespace Dotnetarium.Config
             graphs.Clear();
             sourceFreeSummaries.Clear();
             summarySources = null;
-            return true;
         }
 
         private TaintedDataAnalysisResult? Analyze(ControlFlowGraph graph, IMethodSymbol method)
@@ -352,6 +442,7 @@ namespace Dotnetarium.Config
                 TaintType.ServerSideRequestForgery => DnaRuleCatalog.ServerSideRequestForgery,
                 TaintType.DynamicCodeExecution => DnaRuleCatalog.DynamicCodeExecution,
                 TaintType.XmlExternalEntity => DnaRuleCatalog.XmlExternalEntity,
+                TaintType.UnsafeDeserialization => DnaRuleCatalog.UnsafeBinaryFormatter,
                 _ => DnaRuleCatalog.CrossSiteScripting
             };
             var result = TaintedDataAnalysis.TryGetOrComputeResult(graph, compilation, method, options, rule,

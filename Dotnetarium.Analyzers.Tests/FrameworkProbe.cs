@@ -8,12 +8,12 @@ namespace Dotnetarium.Analyzers.Tests;
 internal static class FrameworkProbe
 {
     internal static async Task<Diagnostic[]> Analyze(string source, DiagnosticAnalyzer analyzer, bool includeLocalSources = false,
-        string? configuration = null, string filePath = "Framework.cs")
+        string? configuration = null, string filePath = "Framework.cs", IEnumerable<MetadataReference>? references = null)
     {
-        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+        var metadataReferences = references ?? ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
             .Select(path => MetadataReference.CreateFromFile(path));
         var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Preview), filePath);
-        var compilation = CSharpCompilation.Create("FrameworkProbe", [tree], references,
+        var compilation = CSharpCompilation.Create("FrameworkProbe", [tree], metadataReferences,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         Assert.Empty(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
         var diagnostics = await compilation.WithAnalyzers([analyzer],

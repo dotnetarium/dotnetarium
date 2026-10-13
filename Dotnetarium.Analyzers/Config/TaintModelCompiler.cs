@@ -232,7 +232,12 @@ namespace Dotnetarium.Config
         {
             if (property.Property.ContainingType.ToDisplayString() == "Microsoft.AspNetCore.Components.ChangeEventArgs")
                 return ComponentInputs(kind).GetPropertyInput(property);
-            if (!ComponentExecutionModel.IsComponent(property.Property.ContainingType)) return null;
+            if (!ComponentExecutionModel.IsComponent(property.Property.ContainingType))
+            {
+                var owner = compilation.GetSemanticModel(property.Syntax.SyntaxTree).GetEnclosingSymbol(property.Syntax.SpanStart)?.ContainingType;
+                return owner != null && ComponentExecutionModel.IsComponent(owner)
+                    ? ComponentInputs(kind).GetCollectionPropertyInput(property) : null;
+            }
             if (kind != (SinkKind)(int)TaintType.CrossSiteScripting && componentExecution.IsServerProperty(property))
                 return TaintedDataAbstractValue.CreateTainted(property.Property, property.Syntax,
                     compilation.GetSemanticModel(property.Syntax.SyntaxTree).GetEnclosingSymbol(property.Syntax.SpanStart)!);

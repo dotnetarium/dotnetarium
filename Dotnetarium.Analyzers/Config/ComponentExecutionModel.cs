@@ -95,6 +95,9 @@ namespace Dotnetarium.Config
                                 _ => Mode.Unknown
                             };
                 }
+                // An explicit, unresolved mode overrides the parent. Do not
+                // infer server execution from a host in that case.
+                return Mode.Unknown;
             }
             var result = Mode.Unknown;
             if (parents.Value.TryGetValue(type, out var hosts))

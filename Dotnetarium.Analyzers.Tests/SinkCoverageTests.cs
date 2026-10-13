@@ -17,6 +17,12 @@ public sealed partial class SinkCoverageTests
     // inheriting this type-level coverage without a corresponding witness.
     private static readonly SinkProbe[] Probes =
     [
+        new("Microsoft.JSInterop.IJSRuntime", "DNA0003", "_ = ((Microsoft.JSInterop.IJSRuntime)null!).InvokeAsync<object>(\"eval\", new object[] { input });"),
+        new("Microsoft.JSInterop.JSRuntimeExtensions", "DNA0003", "_ = Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync((Microsoft.JSInterop.IJSRuntime)null!, \"eval\", input);"),
+        new("Microsoft.JSInterop.IJSInProcessRuntime", "DNA0003", "_ = ((Microsoft.JSInterop.IJSInProcessRuntime)null!).Invoke<object>(\"eval\", input);"),
+        new("RazorLight.RazorLightEngine", "DNA0012", "_ = new RazorLight.RazorLightEngineBuilder().UseMemoryCachingProvider().Build().CompileRenderStringAsync(\"key\", input, new object());"),
+        new("RazorLight.IRazorLightEngine", "DNA0012", "_ = ((RazorLight.IRazorLightEngine)null!).CompileRenderStringAsync(\"key\", input, new object());"),
+        new("System.Runtime.Serialization.Formatters.Binary.BinaryFormatter", "DNA0023", "_ = new System.Runtime.Serialization.Formatters.Binary.BinaryFormatter().Deserialize(new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(input)));"),
         new("System.Xml.XmlReader", "DNA0021", "_ = System.Xml.XmlReader.Create(new System.IO.StringReader(input), new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Parse, XmlResolver = new System.Xml.XmlUrlResolver() });"),
         new("System.Xml.XmlDocument", "DNA0021", "new System.Xml.XmlDocument { XmlResolver = new System.Xml.XmlUrlResolver() }.LoadXml(input);"),
         new("System.Xml.XmlTextReader", "DNA0021", "var reader = new System.Xml.XmlTextReader(new System.IO.StringReader(input)) { DtdProcessing = System.Xml.DtdProcessing.Parse, XmlResolver = new System.Xml.XmlUrlResolver() }; reader.Read();"),
@@ -151,6 +157,7 @@ public sealed partial class SinkCoverageTests
 
     private static readonly MetadataReference[] References =
         ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+        .Where(path => !Path.GetFileName(path).Equals("System.Runtime.Serialization.Formatters.dll", StringComparison.OrdinalIgnoreCase))
         .Select(path => MetadataReference.CreateFromFile(path))
         .Concat(new[]
         {
@@ -159,7 +166,8 @@ public sealed partial class SinkCoverageTests
             MetadataReference.CreateFromFile(typeof(Sodium.SecretBox).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(Microsoft.Data.SqlClient.SqlCommand).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(MySqlConnector.MySqlCommand).Assembly.Location),
-            MetadataReference.CreateFromFile(typeof(Grpc.Net.Client.GrpcChannel).Assembly.Location)
+            MetadataReference.CreateFromFile(typeof(Grpc.Net.Client.GrpcChannel).Assembly.Location),
+            MetadataReference.CreateFromFile(Path.Combine(Environment.GetEnvironmentVariable("NUGET_PACKAGES") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages"), "system.runtime.serialization.formatters", "9.0.0", "lib", "net8.0", "System.Runtime.Serialization.Formatters.dll"))
         }).ToArray();
 
     private static DiagnosticAnalyzer AnalyzerFor(string rule) => rule switch
@@ -175,6 +183,7 @@ public sealed partial class SinkCoverageTests
         "DNA0011" => new ServerSideRequestForgeryTaintAnalyzer(),
         "DNA0012" => new DynamicCodeExecutionTaintAnalyzer(),
         "DNA0021" => new XmlExternalEntityTaintAnalyzer(),
+        "DNA0023" => new BinaryFormatterTaintAnalyzer(),
         _ => throw new ArgumentOutOfRangeException(nameof(rule))
     };
 
@@ -191,6 +200,7 @@ public sealed partial class SinkCoverageTests
         TaintType.ServerSideRequestForgery => "DNA0011",
         TaintType.DynamicCodeExecution => "DNA0012",
         TaintType.XmlExternalEntity => "DNA0021",
+        TaintType.UnsafeDeserialization => "DNA0023",
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 

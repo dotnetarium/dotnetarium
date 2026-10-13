@@ -17,13 +17,14 @@ namespace Dotnetarium.Analyzers.Taint
         public override void Initialize(AnalysisContext context)
         {
             context.EnableConcurrentExecution();
-            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
+            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.Analyze | GeneratedCodeAnalysisFlags.ReportDiagnostics);
             context.RegisterOperationAction(AnalyzeAssignment, OperationKind.SimpleAssignment);
             context.RegisterOperationAction(AnalyzeInvocation, OperationKind.Invocation);
         }
 
         private static void AnalyzeAssignment(OperationAnalysisContext context)
         {
+            if (context.IsGeneratedCode && !RazorCodeAnalysis.IsUserCode(context.Operation.Syntax)) return;
             var assignment = (ISimpleAssignmentOperation)context.Operation;
             if (assignment.Target is not IPropertyReferenceOperation property ||
                 property.Property.Name != "EnableDetailedErrors" ||
@@ -47,6 +48,7 @@ namespace Dotnetarium.Analyzers.Taint
 
         private static void AnalyzeInvocation(OperationAnalysisContext context)
         {
+            if (context.IsGeneratedCode && !RazorCodeAnalysis.IsUserCode(context.Operation.Syntax)) return;
             var invocation = (IInvocationOperation)context.Operation;
             if (invocation.TargetMethod.Name != "ForAddress" ||
                 invocation.TargetMethod.ContainingType.ToDisplayString() != "Grpc.Net.Client.GrpcChannel" ||

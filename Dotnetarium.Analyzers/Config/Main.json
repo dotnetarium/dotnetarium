@@ -200,7 +200,7 @@
     },
     {
       "Type": "Microsoft.AspNetCore.Components.ComponentBase", "Scope": "remote",
-      "TaintTypes": [ "SqlInjection", "CommandInjection", "XPathInjection", "PathEscape", "OpenRedirect", "LdapFilterInjection", "LdapDnInjection", "ServerSideRequestForgery", "DynamicCodeExecution", "XmlExternalEntity" ],
+      "TaintTypes": [ "SqlInjection", "CommandInjection", "XPathInjection", "PathEscape", "OpenRedirect", "LdapFilterInjection", "LdapDnInjection", "ServerSideRequestForgery", "DynamicCodeExecution", "XmlExternalEntity", "UnsafeDeserialization" ],
       "Properties": []
     },
     {
@@ -2396,6 +2396,42 @@
             "code"
           ]
         }
+      ]
+    },
+    {
+      "Type": "RazorLight.RazorLightEngine", "TaintTypes": [ "DynamicCodeExecution" ],
+      "Methods": [ { "Name": "CompileRenderStringAsync", "Arguments": [ "content" ] } ]
+    },
+    {
+      "Type": "System.Runtime.Serialization.Formatters.Binary.BinaryFormatter", "TaintTypes": [ "UnsafeDeserialization" ],
+      "Methods": [ { "Name": "Deserialize", "Arguments": [ "serializationStream" ] } ]
+    },
+    {
+      "Type": "RazorLight.IRazorLightEngine", "IsInterface": true, "TaintTypes": [ "DynamicCodeExecution" ],
+      "Methods": [ { "Name": "CompileRenderStringAsync", "Arguments": [ "content" ] } ]
+    },
+    {
+      "Type": "Microsoft.JSInterop.IJSRuntime", "IsInterface": true, "TaintTypes": [ "CrossSiteScripting" ],
+      "Methods": [
+        { "Name": "InvokeAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "eval" } ] },
+        { "Name": "InvokeAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "window.eval" } ] },
+        { "Name": "InvokeAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "globalThis.eval" } ] }
+      ]
+    },
+    {
+      "Type": "Microsoft.JSInterop.JSRuntimeExtensions", "TaintTypes": [ "CrossSiteScripting" ],
+      "Methods": [
+        { "Name": "InvokeVoidAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "eval" } ] },
+        { "Name": "InvokeVoidAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "window.eval" } ] },
+        { "Name": "InvokeVoidAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "globalThis.eval" } ] }
+      ]
+    },
+    {
+      "Type": "Microsoft.JSInterop.IJSInProcessRuntime", "IsInterface": true, "TaintTypes": [ "CrossSiteScripting" ],
+      "Methods": [
+        { "Name": "Invoke", "Arguments": [ "args" ], "Condition": [ { "identifier": "eval" } ] },
+        { "Name": "Invoke", "Arguments": [ "args" ], "Condition": [ { "identifier": "window.eval" } ] },
+        { "Name": "Invoke", "Arguments": [ "args" ], "Condition": [ { "identifier": "globalThis.eval" } ] }
       ]
     }
   ]

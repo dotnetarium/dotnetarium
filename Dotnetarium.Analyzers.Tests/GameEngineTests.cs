@@ -6,6 +6,19 @@ namespace Dotnetarium.Analyzers.Tests;
 public sealed class GameEngineTests
 {
     [Theory]
+    [InlineData("_ = new Microsoft.Data.SqlClient.SqlCommand(\"SELECT * FROM Players WHERE Name='\" + input + \"'\");", "DNA0001")]
+    [InlineData("_ = new System.Net.Http.HttpClient().GetStringAsync(input);", "DNA0011")]
+    public async Task Godot_rpc_sources_feed_existing_sql_and_network_rules(string statement, string rule)
+    {
+        var source = "using Godot; public partial class Demo : Node { [Rpc(MultiplayerApi.RpcMode.AnyPeer)] " +
+            "private void Receive(string input) { " + statement + " } }";
+        var analyzer = rule == "DNA0001" ? (Microsoft.CodeAnalysis.Diagnostics.DiagnosticAnalyzer)new SqlInjectionTaintAnalyzer() :
+            new ServerSideRequestForgeryTaintAnalyzer();
+        var diagnostics = await FrameworkProbe.Analyze(source, analyzer);
+        Assert.Single(diagnostics.Where(d => d.Id == rule));
+    }
+
+    [Theory]
     [InlineData("[Rpc(MultiplayerApi.RpcMode.AnyPeer)]", "input", 1)]
     [InlineData("[Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = true)]", "input", 1)]
     [InlineData("[Rpc(mode: MultiplayerApi.RpcMode.AnyPeer)]", "input", 1)]

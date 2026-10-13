@@ -749,6 +749,14 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                         return value; // return the already computed value if there was a transfer/sanitization rule
                     }
 
+                    // A dictionary key selects stored data; it is not copied into
+                    // the retrieved value. Preserve taint of the dictionary's
+                    // contents rather than the merged key/return approximation.
+                    if (operation.Parameter?.RefKind == RefKind.Out && IsDictionaryLookup(invocationOperation))
+                        return invocationOperation.Instance != null
+                            ? GetCachedAbstractValue(invocationOperation.Instance)
+                            : TaintedDataAbstractValue.NotTainted;
+
                     // Treat ref or out arguments as the same as the invocation operation.
                     TaintedDataAbstractValue returnValueAbstractValue = this.GetCachedAbstractValue(invocationOperation);
                     return returnValueAbstractValue;
@@ -757,6 +765,23 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 {
                     return defaultValue;
                 }
+            }
+
+            private bool IsDictionaryLookup(IInvocationOperation operation)
+            {
+                if (operation.TargetMethod.Name != "TryGetValue" || operation.Arguments.Length != 2) return false;
+                if (NativeDictionary(operation.TargetMethod.ContainingType)) return true;
+                if (operation.Instance == null) return false;
+                var locations = GetPointsToAbstractValue(operation.Instance).Locations;
+                return !locations.IsEmpty && locations.All(location => location.LocationType is INamedTypeSymbol type && NativeDictionary(type));
+
+                static bool NativeDictionary(INamedTypeSymbol type) => type.OriginalDefinition.MetadataName is
+                    "Dictionary`2" or "SortedDictionary`2" or "SortedList`2" &&
+                    type.ContainingNamespace.ToDisplayString() == "System.Collections.Generic" ||
+                    type.OriginalDefinition.MetadataName == "ConcurrentDictionary`2" &&
+                    type.ContainingNamespace.ToDisplayString() == "System.Collections.Concurrent" ||
+                    type.OriginalDefinition.MetadataName == "ImmutableDictionary`2" &&
+                    type.ContainingNamespace.ToDisplayString() == "System.Collections.Immutable";
             }
 
             // So we can treat the array as tainted when it's passed to other object constructors.

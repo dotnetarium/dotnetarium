@@ -26,6 +26,9 @@ jobs:
       - name: Test Razor and Blazor flows
         shell: pwsh
         run: ./tests/RazorSmoke/Test.ps1
+      - name: Check Godot RPC and crypto coverage in both loading modes
+        shell: pwsh
+        run: ./tests/GameEngineSmoke/Test.ps1
       - name: Pack analyzer and global tool
         run: |
           dotnet pack Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj -c Release -p:RunAnalyzers=false -o artifacts
@@ -70,6 +73,9 @@ jobs:
       - name: Scan with lowercase project config
         shell: pwsh
         run: ./tests/CliSmoke/Test.ps1
+      - name: Check Godot RPC and crypto coverage in both loading modes
+        shell: pwsh
+        run: ./tests/GameEngineSmoke/Test.ps1
       - name: Check provider credentials in project and repository configuration
         shell: pwsh
         run: ./tests/ProviderCredentialSmoke/Test.ps1

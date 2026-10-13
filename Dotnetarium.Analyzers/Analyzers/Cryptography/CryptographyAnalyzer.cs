@@ -49,6 +49,16 @@ namespace Dotnetarium.Analyzers.Cryptography
         {
             var method = invocation.TargetMethod;
             var type = method.ContainingType;
+            if (type.Name == "AesContext" && type.ContainingType == null &&
+                type.ContainingNamespace.ToDisplayString() == "Godot" && method.Name == "Start")
+            {
+                var mode = Argument(invocation.Arguments, "mode");
+                if (IsGodotMode(mode, "EcbEncrypt"))
+                    Report(context, DnaRuleCatalog.EcbMode, invocation, "Godot AES");
+                if (IsGodotMode(mode, "CbcEncrypt") && Argument(invocation.Arguments, "iV") is { } iv &&
+                    IsFixedMaterial(iv, operations))
+                    Report(context, DnaRuleCatalog.FixedNonce, iv, "Godot AES");
+            }
             AnalyzeLibraryInvocation(context, invocation, operations);
             if (type.ToDisplayString() == "Microsoft.AspNetCore.Cryptography.KeyDerivation.KeyDerivation" &&
                 method.Name == "Pbkdf2")
@@ -264,6 +274,14 @@ namespace Dotnetarium.Analyzers.Cryptography
 
         private static bool IsCryptoType(INamedTypeSymbol? type) =>
             type?.ContainingNamespace.ToDisplayString() == CryptoNamespace;
+
+        private static bool IsGodotMode(IOperation? operation, string member)
+        {
+            operation = Unwrap(operation);
+            return operation?.Type is INamedTypeSymbol type && type.ToDisplayString() == "Godot.AesContext.Mode" &&
+                operation.ConstantValue.HasValue && type.GetMembers(member).OfType<IFieldSymbol>().Any(field =>
+                    field.HasConstantValue && Equals(field.ConstantValue, operation.ConstantValue.Value));
+        }
 
         private static bool IsSymmetricType(INamedTypeSymbol type)
         {

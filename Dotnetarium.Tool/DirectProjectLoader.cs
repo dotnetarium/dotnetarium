@@ -203,7 +203,10 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var root = Path.GetDirectoryName(path)!;
             var project = XDocument.Load(path);
             var sdk = (string?)project.Root?.Attribute("Sdk") ?? "";
-            if (sdk is not ("Microsoft.NET.Sdk" or "Microsoft.NET.Sdk.Web" or "Microsoft.NET.Sdk.Razor" or "Microsoft.NET.Sdk.BlazorWebAssembly"))
+            var godotVersion = sdk.StartsWith("Godot.NET.Sdk/", StringComparison.Ordinal) ? sdk["Godot.NET.Sdk/".Length..] : null;
+            if (godotVersion != null && (!Version.TryParse(godotVersion, out var version) || version.Major != 4 || version.Minor > 100 || version.Build > 100))
+                throw new NotSupportedException($"Unsupported Godot SDK version '{godotVersion}'.");
+            if (godotVersion == null && sdk is not ("Microsoft.NET.Sdk" or "Microsoft.NET.Sdk.Web" or "Microsoft.NET.Sdk.Razor" or "Microsoft.NET.Sdk.BlazorWebAssembly"))
                 throw new NotSupportedException($"Unsupported SDK '{sdk}'. Direct loading supports conventional .NET SDK projects.");
             var documents = new List<(string Path, XDocument Document)>();
             var props = FindNearest(root, "Directory.Build.props");
@@ -235,12 +238,70 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 evaluated["MSBuildProjectName"] = Path.GetFileNameWithoutExtension(path);
                 evaluated["MSBuildProjectFullPath"] = path;
                 ReadProperties(documents, evaluated, path, preserveFramework: true);
+                if (godotVersion != null)
+                {
+                    var godotRoot = Resolve(root, evaluated.GetValueOrDefault("GodotProjectDir", root));
+                    evaluated.TryAdd("BaseIntermediateOutputPath", Path.Combine(godotRoot, ".godot", "mono", "temp", "obj"));
+                    evaluated.TryAdd("IntermediateOutputPath", Path.Combine(evaluated["BaseIntermediateOutputPath"], evaluated.GetValueOrDefault("Configuration", "Debug")));
+                    var parsed = Version.Parse(godotVersion);
+                    var constants = new List<string> { "GODOT", "GODOT4", "GODOT4_OR_GREATER", $"GODOT4_{parsed.Minor}" };
+                    for (var minor = 0; minor <= parsed.Minor; minor++) constants.Add($"GODOT4_{minor}_OR_GREATER");
+                    if (parsed.Build >= 0)
+                    {
+                        constants.Add($"GODOT4_{parsed.Minor}_{parsed.Build}");
+                        for (var patch = 0; patch <= parsed.Build; patch++) constants.Add($"GODOT4_{parsed.Minor}_{patch}_OR_GREATER");
+                    }
+                    if (evaluated.GetValueOrDefault("Configuration", "Debug") == "Debug") constants.Add("TOOLS");
+                    if (evaluated.GetValueOrDefault("Configuration") == "ExportDebug") constants.Add("DEBUG");
+                    if (evaluated.GetValueOrDefault("Configuration") == "ExportRelease") evaluated.TryAdd("Optimize", "true");
+                    if (IsTrue(evaluated.GetValueOrDefault("GodotFloat64"))) constants.Add("GODOT_REAL_T_IS_DOUBLE");
+                    var godotPlatform = evaluated.GetValueOrDefault("GodotTargetPlatform", "");
+                    if (godotPlatform.Length == 0)
+                    {
+                        var rid = evaluated.GetValueOrDefault("RuntimeIdentifier", "");
+                        godotPlatform = rid.StartsWith("ios", StringComparison.Ordinal) ? "ios" :
+                            rid.StartsWith("android", StringComparison.Ordinal) ? "android" :
+                            rid.StartsWith("browser", StringComparison.Ordinal) ? "web" :
+                            rid.StartsWith("linux", StringComparison.Ordinal) ? "linuxbsd" :
+                            rid.StartsWith("freebsd", StringComparison.Ordinal) ? "linuxbsd" :
+                            rid.StartsWith("osx", StringComparison.Ordinal) ? "macos" :
+                            rid.StartsWith("win", StringComparison.Ordinal) ? "windows" :
+                            OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linuxbsd";
+                    }
+                    constants.AddRange(godotPlatform switch
+                    {
+                        "windows" => new[] { "GODOT_WINDOWS", "GODOT_PC" },
+                        "linuxbsd" => new[] { "GODOT_LINUXBSD", "GODOT_PC" },
+                        "macos" => new[] { "GODOT_OSX", "GODOT_MACOS", "GODOT_PC" },
+                        "android" => new[] { "GODOT_ANDROID", "GODOT_MOBILE" },
+                        "ios" => new[] { "GODOT_IPHONE", "GODOT_IOS", "GODOT_MOBILE" },
+                        "web" => new[] { "GODOT_JAVASCRIPT", "GODOT_HTML5", "GODOT_WASM", "GODOT_WEB" },
+                        _ => Array.Empty<string>()
+                    });
+                    evaluated["DefineConstants"] = evaluated.GetValueOrDefault("DefineConstants", "") + ";" + string.Join(';', constants);
+                    Warn(path, "godot-sdk", "Godot SDK inputs were reconstructed without executing its targets. Platform-specific constants, custom SDK options and generated members may be incomplete.");
+                }
                 evaluated.TryAdd("BaseIntermediateOutputPath", "obj" + Path.DirectorySeparatorChar);
                 evaluated.TryAdd("IntermediateOutputPath", Path.Combine(evaluated["BaseIntermediateOutputPath"],
                     evaluated.GetValueOrDefault("Configuration", "Debug"), framework) + Path.DirectorySeparatorChar);
                 var items = documents.SelectMany(document => document.Document.Root!.Elements())
                     .Where(group => group.Name.LocalName == "ItemGroup" && Condition(group, evaluated, path))
                     .SelectMany(group => group.Elements()).Where(item => Condition(item, evaluated, path)).ToArray();
+                if (godotVersion != null && !IsTrue(evaluated.GetValueOrDefault("EnableGodotDotNetPreview")))
+                {
+                    var implicitItems = new List<XElement>();
+                    if (!IsTrue(evaluated.GetValueOrDefault("DisableImplicitGodotSharpReferences")))
+                    {
+                        implicitItems.Add(new XElement("PackageReference", new XAttribute("Include", "GodotSharp"), new XAttribute("Version", evaluated.GetValueOrDefault("PackageVersion_GodotSharp", godotVersion))));
+                        if (evaluated.GetValueOrDefault("Configuration", "Debug") == "Debug")
+                            implicitItems.Add(new XElement("PackageReference", new XAttribute("Include", "GodotSharpEditor"), new XAttribute("Version", evaluated.GetValueOrDefault("PackageVersion_GodotSharp", godotVersion))));
+                    }
+                    if (!IsTrue(evaluated.GetValueOrDefault("DisableImplicitGodotGeneratorReferences")))
+                        implicitItems.Add(new XElement("PackageReference", new XAttribute("Include", "Godot.SourceGenerators"), new XAttribute("Version", evaluated.GetValueOrDefault("PackageVersion_Godot_SourceGenerators", godotVersion)), new XAttribute("PrivateAssets", "all")));
+                    items = items.Concat(implicitItems.Where(item => !items.Any(existing =>
+                        string.Equals((string?)existing.Attribute("Include"), (string?)item.Attribute("Include"), StringComparison.OrdinalIgnoreCase)))).ToArray();
+                    Warn(path, "generation", "Godot source generators were not executed. RPC declarations and ordinary C# bodies can be analyzed; generated signal/property/method helpers may be absent.");
+                }
                 foreach (var document in documents)
                 {
                     foreach (var import in document.Document.Descendants().Where(element => element.Name.LocalName == "Import"))
@@ -756,13 +817,13 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             {
                 var name = Path.GetFileName(child);
                 if (!name.Equals("bin", StringComparison.OrdinalIgnoreCase) &&
-                    !name.Equals("obj", StringComparison.OrdinalIgnoreCase) && name != ".git") pending.Push(child);
+                    !name.Equals("obj", StringComparison.OrdinalIgnoreCase) && name is not (".git" or ".godot")) pending.Push(child);
             }
         }
         return sourceInventories[root] = files.ToArray();
     }
     private static bool IsOutputFile(string root, string file) => Path.GetRelativePath(root, file).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-        .Any(part => part.Equals("bin", StringComparison.OrdinalIgnoreCase) || part.Equals("obj", StringComparison.OrdinalIgnoreCase) || part == ".git");
+        .Any(part => part.Equals("bin", StringComparison.OrdinalIgnoreCase) || part.Equals("obj", StringComparison.OrdinalIgnoreCase) || part is ".git" or ".godot");
     private static bool IsProjectOutputFile(ProjectSpec spec, string file) => IsOutputFile(spec.Root, file) ||
         new[] { "BaseIntermediateOutputPath", "IntermediateOutputPath", "BaseOutputPath", "OutputPath" }
             .Select(property => spec.Properties.GetValueOrDefault(property)).OfType<string>().Where(value => !string.IsNullOrWhiteSpace(value))

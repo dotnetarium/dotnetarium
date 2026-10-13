@@ -342,6 +342,8 @@ namespace Dotnetarium.Config
                 return false;
             return entry.Parameter?.Binding switch
             {
+                "GodotRpc" => GameRpcInputModel.IsGodotInput(parameter),
+                "UnityServerRpc" => GameRpcInputModel.IsUnityServerInput(parameter),
                 "SignalR" => signalRInputs.Value.IsInput(parameter),
                 "AzureFunctions" => IsAzureFunctionInput(parameter, method),
                 "Messaging" => messageInputs.Value.IsParameterInput(parameter),

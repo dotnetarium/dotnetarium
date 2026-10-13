@@ -23,6 +23,8 @@ Input coverage includes MVC and Razor Pages, Minimal APIs and endpoint filters, 
 
 Razor/Blazor checks distinguish encoded text from raw HTML and account for explicit render modes. Markdown rendering preserves untrusted data; it does not sanitize HTML. Stored content can be modeled through an explicit property source; database writes and later reads are not automatically correlated. See [Razor/Blazor](docs/razor-blazor-taint.md) and [stored HTML and Markdown](docs/stored-html.md).
 
+Game engine C# models include Godot `AnyPeer` RPCs, Unity Netcode server RPCs and native Godot process/AES APIs. Godot .NET 8/10 projects have CLI checks in both modes; full Unity project loading remains a separate integration gap. See [game engine coverage and limitations](docs/game-engines.md).
+
 ## Install
 
 Add the analyzer to each C# project you want checked:

@@ -17,6 +17,8 @@ public sealed partial class SinkCoverageTests
     // inheriting this type-level coverage without a corresponding witness.
     private static readonly SinkProbe[] Probes =
     [
+        new("Godot.AesContext", "DNA0009", "_ = new Godot.AesContext().Start(Godot.AesContext.Mode.CbcEncrypt, new byte[32], new byte[16]);", true),
+        new("Godot.OS", "DNA0002", "_ = Godot.OS.Execute(input, new string[0]);"),
         new("Microsoft.JSInterop.IJSRuntime", "DNA0003", "_ = ((Microsoft.JSInterop.IJSRuntime)null!).InvokeAsync<object>(\"eval\", new object[] { input });"),
         new("Microsoft.JSInterop.JSRuntimeExtensions", "DNA0003", "_ = Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync((Microsoft.JSInterop.IJSRuntime)null!, \"eval\", input);"),
         new("Microsoft.JSInterop.IJSInProcessRuntime", "DNA0003", "_ = ((Microsoft.JSInterop.IJSInProcessRuntime)null!).Invoke<object>(\"eval\", input);"),

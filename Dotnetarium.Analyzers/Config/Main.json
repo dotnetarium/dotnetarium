@@ -2,6 +2,16 @@
   "ThreatModels": [ "remote" ],
   "TaintFlowVisualizationEnabled": true,
   "TaintEntryPoints": {
+    "GodotRpc": {
+      "SourceType": "Godot.Node", "Scope": "remote",
+      "Class": { "Parent": "Godot.Node" },
+      "Parameter": { "Binding": "GodotRpc" }
+    },
+    "UnityServerRpc": {
+      "SourceType": "Unity.Netcode.NetworkBehaviour", "Scope": "remote",
+      "Class": { "Parent": "Unity.Netcode.NetworkBehaviour" },
+      "Parameter": { "Binding": "UnityServerRpc" }
+    },
     "CommandLine": {
       "SourceType": "System.Object",
       "Scope": "local",
@@ -1127,6 +1137,18 @@
     }
   ],
   "Sinks": [
+    {
+      "Type": "Godot.AesContext", "TaintTypes": [ "HardcodedSecret" ],
+      "Methods": [ { "Name": "Start", "Arguments": [ "key" ] } ]
+    },
+    {
+      "Type": "Godot.OS", "TaintTypes": [ "CommandInjection" ],
+      "Methods": [
+        { "Name": "Execute", "Arguments": [ "path" ] },
+        { "Name": "ExecuteWithPipe", "Arguments": [ "path" ] },
+        { "Name": "CreateProcess", "Arguments": [ "path" ] }
+      ]
+    },
     {
       "Type": "System.Xml.XmlReader", "TaintTypes": [ "XmlExternalEntity" ],
       "Methods": [ { "Name": "Create", "Arguments": [ "input" ] } ]

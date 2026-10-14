@@ -35,8 +35,8 @@ foreach ($framework in @('net8.0', 'net10.0')) {
 using System.IO;
 using Microsoft.AspNetCore.Mvc;
 public class EntryController : Controller {
-    public void Unsafe(string input) => File.WriteAllText(Path.Combine(Bridge.Get().Directory, input), "data");
-    public void Safe(string input) => File.WriteAllText(Path.Combine(Other.Get().Directory, "fixed"), "data");
+    public void Unsafe(string input) => System.IO.File.WriteAllText(Path.Combine(Bridge.Get().Directory, input), "data");
+    public void Safe(string input) => System.IO.File.WriteAllText(Path.Combine(Other.Get().Directory, "fixed"), "data");
 }
 '@
     $source | Set-Content -LiteralPath (Join-Path $graph 'App/Entry.cs')

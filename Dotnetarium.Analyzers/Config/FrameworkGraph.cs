@@ -25,6 +25,12 @@ namespace Dotnetarium.Config
 
             ControlFlowGraph? Find(ControlFlowGraph current)
             {
+                foreach (var local in current.LocalFunctions)
+                {
+                    var nested = current.GetLocalFunctionControlFlowGraph(local);
+                    if (SymbolEqualityComparer.Default.Equals(local, method)) return nested;
+                    if (Find(nested) is { } match) return match;
+                }
                 foreach (var lambda in current.DescendantOperations<IFlowAnonymousFunctionOperation>(OperationKind.FlowAnonymousFunction))
                 {
                     var nested = current.GetAnonymousFunctionControlFlowGraph(lambda);

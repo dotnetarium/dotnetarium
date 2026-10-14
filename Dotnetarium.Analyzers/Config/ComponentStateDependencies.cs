@@ -1,9 +1,12 @@
 using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Linq;
 using Analyzer.Utilities.Extensions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Dotnetarium.Config
 {
@@ -13,17 +16,28 @@ namespace Dotnetarium.Config
     {
         private readonly Compilation compilation;
         private readonly System.Func<IMethodSymbol, ControlFlowGraph?> graphForMethod;
+        private static readonly ConditionalWeakTable<Compilation, StructuralCache> Caches = new();
+        private readonly StructuralCache cache;
         internal ComponentStateDependencies(Compilation compilation, System.Func<IMethodSymbol, ControlFlowGraph?> graphForMethod)
-        { this.compilation = compilation; this.graphForMethod = graphForMethod; }
+        { this.compilation = compilation; this.graphForMethod = graphForMethod; cache = Caches.GetValue(compilation, _ => new StructuralCache()); }
         internal sealed class Footprint
         {
             internal readonly HashSet<ISymbol> Reads = new(SymbolEqualityComparer.Default);
             internal readonly HashSet<ISymbol> Writes = new(SymbolEqualityComparer.Default);
             internal bool Unknown;
         }
-        private readonly Dictionary<IMethodSymbol, Footprint> cache = new(SymbolEqualityComparer.Default);
+        private sealed class StructuralCache
+        {
+            internal readonly ConcurrentDictionary<IMethodSymbol, Footprint> Methods = new(SymbolEqualityComparer.Default);
+            internal readonly ConcurrentDictionary<(SyntaxTree Tree, TextSpan Span), Footprint> Values = new();
+        }
 
-        internal Footprint ForValue(IOperation value)
+        // Dependencies describe immutable syntax/symbols, not modeled taint state.
+        // Share only completed facts across rule models in this compilation.
+        internal Footprint ForValue(IOperation value) =>
+            cache.Values.GetOrAdd((value.Syntax.SyntaxTree, value.Syntax.Span), _ => ComputeValue(value));
+
+        private Footprint ComputeValue(IOperation value)
         {
             var result = new Footprint();
             if (!compilation.ContainsSyntaxTree(value.Syntax.SyntaxTree))
@@ -55,9 +69,10 @@ namespace Dotnetarium.Config
             return result;
         }
 
-        internal Footprint ForMethod(IMethodSymbol method)
+        internal Footprint ForMethod(IMethodSymbol method) => cache.Methods.GetOrAdd(method, ComputeMethod);
+
+        private Footprint ComputeMethod(IMethodSymbol method)
         {
-            if (cache.TryGetValue(method, out var cached)) return cached;
             var result = new Footprint();
             var pending = new Queue<IMethodSymbol>();
             var seen = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
@@ -72,7 +87,6 @@ namespace Dotnetarium.Config
                 if (graphForMethod(current) is not { } graph) { result.Unknown = true; continue; }
                 Visit(graph);
             }
-            cache[method] = result;
             return result;
 
             void Visit(ControlFlowGraph graph)

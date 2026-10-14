@@ -1,9 +1,81 @@
 # Taint cutoff families
 
 October 13, 2026 investigation of the vulnerable .NET app, Sarifintown and
-LANCommander. All comparisons use remote + local sources, fast analysis at
-method/lambda depth **3** and **2,500 work units**, Release/net10.0. Cross-app
+LANCommander. Comparisons use remote + local sources, fast analysis at
+method/lambda depth **3**, Release/net10.0. Work budgets are **2,500** unless
+explicitly marked **1,000** below. Cross-app
 phase tracing used no-build mode. Application source and budgets were unchanged.
+
+## Follow-up: helper and component prerequisite reuse
+
+After correcting missed nullable event-state writes, completed structural facts
+are reused across rule models within a compilation:
+
+- Component read/write footprints and parameter-value dependencies are shared.
+- Parameter reassignment/ref-out checks index their executable owner once rather
+  than traversing the same syntax for every input-property access.
+- Source helper body/CFG lookups are shared. Missing bodies and failed CFG
+  extraction retain distinct conservative behavior; no partial source closure
+  or taint result is cached.
+- Local-function CFGs are resolved, including nested local functions. They no
+  longer widen component dependency selection merely because lookup failed.
+
+Nullable assignments use Roslyn flow captures for their destination and receiver.
+Resolving those captures fixes the previously missing InteractiveAuto event flow;
+immediate resets and reassigned receivers still remain safe controls. Compiler
+smoke expectations were preserved, not reduced.
+
+Single sequential no-build comparisons against the corrected baseline, using
+remote + local and depth 3. The lower 1,000 budget was tested separately to
+expose repeated prerequisite work; the shipped fast default remains 2,500:
+
+| Application | Work budget | Seconds before / after | Cutoffs before / after | Findings before / after |
+| --- | ---: | ---: | ---: | ---: |
+| Vulnerable .NET app | 1,000 | 14.45 / 12.34 | 145 / 151 | 9 / 9 |
+| Sarifintown | 1,000 | 7.11 / 4.82 | 358 / 351 | 0 / 0 |
+| LANCommander | 1,000 | 64.84 / 36.77 | 2,502 / 2,471 | 12 / 12 |
+
+All finding locations were unchanged at 1,000. This is a prerequisite-time
+improvement, not recovered coverage at that budget. The vulnerable app's cutoff
+count increased by six; bounded work and cache ordering can change which roots
+hit their limits. Reducing the per-root budget does not eliminate repeated work
+across roots and rules. Peak scanner memory before/after was 341/335 MiB,
+326/310 MiB and 1,417/1,419 MiB respectively; LANCommander's speedup did not
+require a material memory increase.
+
+The initial 2,500 comparison was:
+
+| Application | Seconds before / after | Cutoffs before / after | Findings before / after |
+| --- | ---: | ---: | ---: |
+| Vulnerable .NET app | 14.00 / 10.84 | 80 / 79 | 16 / 16 |
+| Sarifintown | 9.34 / 5.12 | 266 / 261 | 1 / 1 |
+| LANCommander | 67.88 / 42.63 | 1,710 / 1,692 | 16 / 16 |
+
+The final candidate check returned to 2,500 after the 1,000 comparisons:
+
+| Application | Seconds | Cutoffs | Findings |
+| --- | ---: | ---: | ---: |
+| Vulnerable .NET app | 7.68 | 80 | 16 |
+| Sarifintown | 5.57 | 266 | 1 |
+| LANCommander | 44.14 | 1,688 | 16 |
+
+This retained the same locations as the corrected 2,500 baseline. The lower
+budget still misses seven vulnerable-app findings, Sarifintown's finding and
+four LANCommander findings that are reported at 2,500. These measurements do
+not justify reverting the shipped fast profile to 1,000. All scans remain
+partial, including existing no-build loading/generation limitations.
+
+Finding locations were unchanged; no analyzer exceptions occurred. These are
+single-run observations, not guaranteed timings. The corrected baseline includes
+the nullable-flow fix, so older faster/incomplete runs are not directly comparable.
+The full 1,330-case suite passed, including compilation isolation, nested helper
+selection, nullable sources and safe reset/reassignment controls.
+
+The remaining actual dataflow and depth-limit families stay eligible. This work
+optimizes their prerequisites; it does not suppress recursion or treat aborted
+analyses as clean. Larger symbolic transfer summaries or operation-level slicing
+require separate alias/side-effect proofs and cannot safely be approximated by
+excluding entire helper, interface or render families.
 
 ## Follow-up: resumable delegate matching
 
@@ -83,7 +155,7 @@ phase can also invoke component-state dataflow; it is not just source indexing.
 | Family | Evidence | Recommended next work | Safety requirement |
 | --- | --- | --- | --- |
 | Interrupted delegate matching | LANCommander stopped inside `SourceDelegateTargets.Compatible`; its cache factory lost unfinished matching work. | Resumable matching is implemented. Cheap arity/return-shape indexes remain a possible follow-up. | Never publish a partial target set. Preserve late targets, generic/optional/params/ref/variance adaptations and unknown types. |
-| Broad source/helper closure | Source checks traverse media interfaces, generic callbacks and snippet/file helpers. Operation indexing already resumes, but target matching and transitive closure can still repeat. | Reuse completed method dependencies; investigate resumable closure traversal per configured checker. | Unknown calls and cycles are not absence proofs. Invalidate state-dependent negatives when component state changes. |
+| Broad source/helper closure | Source checks traverse media interfaces, generic callbacks and snippet/file helpers. | Completed body/CFG and component dependency facts are now reused. Fully resumable state-dependent closure remains separate work. | Unknown calls and cycles are not absence proofs. Invalidate state-dependent negatives when component state changes. |
 | Repeated points-to/dataflow work | Array, argument, assignment and flow-capture visits exhaust budgets; several roots stop across nine rules. | Profile a single handler and its component-state prerequisites. Reduce irrelevant state/captured-input dependencies. | Completed exact-context results already have caches. Do not simply add another cache or share partial/stale taint results. Preserve aliases, captured values and inherited state. |
 | Deep wrappers | About two-thirds of Sarifintown/LANCommander stops are depth limits, including ordinary fluent/helper chains. | Inspect helper dependency summaries and precise transfer models; consider demand-driven prerequisite analysis. | A depth abort cannot be reused as a clean result. Blanket recursion, interface, array or render exclusions would lose real flows. |
 | Incomplete bindings | LANCommander has missing restored assets and Razor diagnostics; project loading additionally reports npm/Aspire failures. | Improve scan inputs separately before interpreting coverage differences. | Invalid or unresolved code must remain uncertain, not sink-free. |

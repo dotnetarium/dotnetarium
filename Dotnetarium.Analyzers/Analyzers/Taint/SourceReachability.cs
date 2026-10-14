@@ -37,6 +37,7 @@ namespace Dotnetarium.Analyzers.Taint
         }
         internal const int MethodBudget = 2048;
         private static readonly ConditionalWeakTable<ControlFlowGraph, SummaryBuilder> Summaries = new();
+        private static readonly ConditionalWeakTable<Compilation, ConcurrentDictionary<IMethodSymbol, MethodGraphLookup>> MethodGraphs = new();
         private readonly Compilation compilation;
         private readonly WellKnownTypeProvider types;
         private readonly TaintedDataSymbolMap<SourceInfo> sources;
@@ -152,8 +153,17 @@ namespace Dotnetarium.Analyzers.Taint
                         // existing body boundary like metadata; explicit source models
                         // and entry parameters have already been checked above.
                         if (!SymbolEqualityComparer.Default.Equals(target.ContainingAssembly, compilation.Assembly)) continue;
-                        var body = definition.GetTopmostOperationBlock(compilation, cancellationToken);
-                        if (body == null)
+                        // Body/CFG lookup is a structural fact. Reuse successful
+                        // lookups across roots/rules; never cache partial source
+                        // closure, dataflow values or a budget exception.
+                        var lookup = MethodGraphs.GetValue(compilation, _ => new(SymbolEqualityComparer.Default))
+                            .GetOrAdd(definition, method =>
+                            {
+                                var body = method.GetTopmostOperationBlock(compilation, cancellationToken);
+                                if (body == null) return new MethodGraphLookup(false, null);
+                                return new MethodGraphLookup(true, body.TryGetEnclosingControlFlowGraph(out var found) ? found : null);
+                            });
+                        if (!lookup.HasBody)
                         {
                             if (definition.MethodKind is MethodKind.AnonymousFunction or MethodKind.LocalFunction &&
                                 TryGetContainingGraph(definition, cancellationToken, out var containingGraph))
@@ -168,9 +178,9 @@ namespace Dotnetarium.Analyzers.Taint
                             // become an invented taint origin.
                             continue;
                         }
-                        if (!body.TryGetEnclosingControlFlowGraph(out var calledGraph) &&
-                            !TryGetContainingGraph(definition, cancellationToken, out calledGraph)) return true;
-                        pending.Enqueue(calledGraph);
+                        if (lookup.Graph is { } calledGraph) pending.Enqueue(calledGraph);
+                        else if (TryGetContainingGraph(definition, cancellationToken, out calledGraph)) pending.Enqueue(calledGraph);
+                        else return true;
                     }
                 }
             }
@@ -344,5 +354,6 @@ namespace Dotnetarium.Analyzers.Taint
 
         private sealed record Summary(ImmutableArray<(IOperation Operation, ControlFlowGraph Graph)> Operations, bool Unknown);
         private sealed record GraphLookup(ControlFlowGraph? Graph);
+        private sealed record MethodGraphLookup(bool HasBody, ControlFlowGraph? Graph);
     }
 }

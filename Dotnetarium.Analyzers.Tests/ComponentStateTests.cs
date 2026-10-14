@@ -10,6 +10,60 @@ namespace Dotnetarium.Analyzers.Tests;
 
 public sealed class ComponentStateTests
 {
+    [Fact]
+    public void Structural_dependencies_are_shared_across_rule_models_but_not_compilations()
+    {
+        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+            .Select(path => MetadataReference.CreateFromFile(path));
+        CSharpCompilation Make(bool copy) => CSharpCompilation.Create("Dependencies", [CSharpSyntaxTree.ParseText($$"""
+            public sealed class Page : Microsoft.AspNetCore.Components.ComponentBase {
+                public string input = "fixed", output = "fixed";
+                public void Copy() { output = {{(copy ? "input" : "\"fixed\"")}}; }
+            }
+            """)], references, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var compilation = Make(true);
+        var method = (IMethodSymbol)compilation.GetTypeByMetadataName("Page")!.GetMembers("Copy").Single();
+        var count = 0;
+        Microsoft.CodeAnalysis.FlowAnalysis.ControlFlowGraph? Read(IMethodSymbol symbol)
+        { count++; return FrameworkGraph.ForMethod(symbol, compilation); }
+        var first = new ComponentStateDependencies(compilation, Read).ForMethod(method);
+        var second = new ComponentStateDependencies(compilation, Read).ForMethod(method);
+        Assert.Contains(first.Reads, symbol => symbol.Name == "input");
+        Assert.Contains(second.Writes, symbol => symbol.Name == "output");
+        Assert.Equal(1, count);
+        var changed = Make(false);
+        var changedMethod = (IMethodSymbol)changed.GetTypeByMetadataName("Page")!.GetMembers("Copy").Single();
+        var changedFacts = new ComponentStateDependencies(changed, symbol => FrameworkGraph.ForMethod(symbol, changed)).ForMethod(changedMethod);
+        Assert.DoesNotContain(changedFacts.Reads, symbol => symbol.Name == "input");
+    }
+
+    [Fact]
+    public async Task Nested_local_callback_helpers_do_not_pull_unrelated_state_into_analysis()
+    {
+        var noise = string.Concat(Enumerable.Repeat("noise = noise.Trim();", 900));
+        var findings = await FrameworkProbe.Analyze($$"""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class Page : ComponentBase {
+                private string input = "fixed", output = "fixed", noise = "fixed";
+                private void Changed(ChangeEventArgs args) => input = args.Value.ToString();
+                private void Relay() { void Outer() { void Inner() => output = input; Inner(); } Outer(); }
+                private void Noise(ChangeEventArgs args) { noise = args.Value.ToString(); {{noise}} }
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.AddAttribute(2, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, Noise));
+                    builder.CloseElement();
+                    builder.OpenElement(3, "button");
+                    builder.AddAttribute(4, "onclick", EventCallback.Factory.Create(this, Relay));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(5, output);
+                }
+            }
+            """, new XssTaintAnalyzer());
+        Assert.Contains(findings, finding => finding.Id == "DNA0003");
+        Assert.DoesNotContain(findings, finding => finding.Id == "DNA9000" && finding.GetMessage().Contains("BuildRenderTree"));
+    }
     [Theory]
     [InlineData("args.Value.ToString()")]
     [InlineData("args.Value?.ToString() ?? \"\"")]

@@ -6,6 +6,46 @@ method/lambda depth **3**, Release/net10.0. Work budgets are **2,500** unless
 explicitly marked **1,000** below. Cross-app
 phase tracing used no-build mode. Application source and budgets were unchanged.
 
+## Stop point: resumable source/helper closure experiment
+
+An October 14 prototype retained each source proof's pending helper queue and
+visited methods across work/cancellation retries. A compilation-wide state epoch
+discarded unfinished progress when component inputs changed; a change during a
+proof could not establish source absence. This was additional machinery beyond
+the completed structural-fact reuse below.
+
+A focused regression with 100 helpers and a 40-unit budget failed to complete
+after 100 retries on the baseline. The prototype completed both the source-free
+case and the case with a source in the final helper. Cancellation/state-change
+and recursive-helper checks also passed in the initial focused test run.
+This establishes a retry limitation, not a measured benefit for ordinary scans.
+
+Paired no-build runs used remote + local sources and method/lambda depth 3:
+
+| Application | Work budget | Seconds baseline / prototype | Cutoffs baseline / prototype | Findings baseline / prototype |
+| --- | ---: | ---: | ---: | ---: |
+| Vulnerable .NET app | 1,000 | 7.98 / 11.28 | 152 / 157 | 9 / 9 |
+| Sarifintown | 1,000 | 4.82 / 4.82 | 364 / 363 | 0 / 0 |
+| LANCommander | 1,000 | 38.15 / 41.15 | 2,462 / 2,500 | 12 / 12 |
+| Vulnerable .NET app | 2,500 | 12.19 / 9.79 | 80 / 89 | 16 / 16 |
+| Sarifintown | 2,500 | 5.12 / 5.28 | 265 / 262 | 1 / 1 |
+| LANCommander | 2,500 | 43.63 / 43.69 | 1,698 / 1,690 | 16 / 16 |
+
+Every finding location was retained at each budget; none was added. LANCommander
+peak scanner memory at 2,500 was 1,388 / 1,526 MiB. These are single-run
+observations, with timing and cache-order variation; they do not establish a
+useful end-to-end speedup. The prototype was discarded and production code
+restored to `6aa39e3`. The shipped fast profile remains 3/2,500.
+
+**Stop general performance work here for this pass.** Retain the established
+structural reuse, resumable sink/delegate indexing and scoped component
+dependencies. Further source-closure resumption, finer component recomputation,
+delegate indexes or symbolic helper summaries need a demonstrated real-project
+hotspot or missed flow before adding more caches and invalidation complexity.
+The wide-helper retry limitation remains: budget notices report partial coverage;
+an interrupted proof is never reported as a clean scan. Higher explicit budgets
+can help but do not guarantee complete coverage.
+
 ## Follow-up: helper and component prerequisite reuse
 
 After correcting missed nullable event-state writes, completed structural facts
@@ -209,8 +249,9 @@ LINQ/channel pipelines. These are legitimate application patterns, not evidence
 that all recursion or delegates should be skipped. Prefer proven lexical delegate
 targets when available, while retaining a conservative fallback. There were 102
 deduplicated candidate stops inside delegate compatibility matching in the
-earlier trace. That restart problem is now addressed. Broader source/helper
-closure and component-state prerequisites are the next targets.
+earlier trace. That restart problem is now addressed. Completed source/helper and
+component prerequisite facts are now shared. Broader closure resumption was
+evaluated and discarded as described above; further optimization is deferred.
 
 All application scans remain partial. Keep [profile coverage notices](RuleConfiguration.md#analysis-profiles-and-call-depth)
 visible when assessing findings. [Performance measurements](scan-performance.md)

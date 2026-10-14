@@ -90,6 +90,44 @@ future work should isolate one of the named source-proof paths and demonstrate
 recovered coverage or a repeatable speedup before changing its dispatch or
 dataflow behavior. Failed/budget-aborted summaries remain uncertain, never safe.
 
+## Isolated follow-up: InfiniteLoader source proof
+
+Temporary instrumentation narrowed the previous trace to the command-rule source
+proof for `InfiniteLoader<T>.OnInitializedAsync`. In one depth 3 / 1,000 run,
+eight attempts took 459 ms in aggregate. Member rechecks accounted for 265 ms;
+delegate matching was only 3 ms, structural summaries 16 ms and target-body
+lookup 20 ms. These phases overlap with operation traversal and are not additive.
+
+The generic delegate closure reached `FileManager.BuildRenderTree`,
+`ChatThread.LoadMessages`, `ChatThread.BuildRenderTree` and related helpers.
+FileManager render-member rechecks alone took 92 ms across 544 checks. A further
+trace split operation-aware matching from providers: property-reference matchers
+took 100 ms and property-value providers 151 ms, while static property-symbol
+checks took 4 ms. This does not support prioritizing a delegate-signature index
+or static symbol-info cache for this particular hotspot.
+
+The operation-aware paths both resolve stable receiver aliases. Prototypes reused
+completed lexical alias-origin facts, including negatives, without caching source
+predicates or taint values. A transport-member name prefilter also avoided alias
+work for names the messaging model cannot recognize. Operation-key caching was
+then narrowed to explicit locals; a final variant used local-identifier syntax
+locations within each compilation to reuse facts across regenerated operations.
+
+None established an end-to-end gain. LANCommander at 3/1,000 took 41.63, 39.67 and
+38.46 seconds respectively, versus the recent baseline's 38.15 seconds. The final
+variant retained all 12 finding locations and had 2,511 cutoffs versus 2,462.
+All vulnerable-app and Sarifintown finding locations were retained too. Timing
+and cutoff ordering vary; these are single runs, not evidence of a speedup.
+The prototypes and instrumentation were discarded, and unchanged production
+code was rebuilt successfully. No new test or unvalidated cache was shipped.
+
+**Close this optimization pass.** A future improvement would need to model actual
+delegate values/assignments precisely enough to avoid unrelated helper/render
+reachability while retaining unknown-target fallbacks, captures, generic
+adaptations and cross-component callback inputs. That is a separate engine
+feature requiring coverage evidence, rather than another broad cache adjustment.
+Keep the shipped 3/2,500 fast profile and the already-tested PR improvements.
+
 ## Follow-up: helper and component prerequisite reuse
 
 After correcting missed nullable event-state writes, completed structural facts

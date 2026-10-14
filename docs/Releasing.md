@@ -11,7 +11,8 @@ Framework 4.8 projects. New features go to 2.x, whose source of truth is
    enable **Prevent self-review**. Leave **Allow administrators to bypass
    configured protection rules** enabled. If a release was initiated under your
    GitHub account, use **Start all waiting jobs** to bypass the pending
-   publishing job as an administrator. If another account initiated it, you
+   publishing job as an administrator yourself; agents must not bypass protection
+   rules. If another account initiated it, you
    can use the normal **Review deployments** approval instead.
 2. In the `dbalikhin` NuGet.org account, add a Trusted Publishing policy with:
    GitHub owner `dotnetarium`, repository `dotnetarium`, workflow file
@@ -24,7 +25,10 @@ Framework 4.8 projects. New features go to 2.x, whose source of truth is
 ## Release
 
 1. Set the same version in `Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj`
-   and `Dotnetarium.Tool/Dotnetarium.Tool.csproj`. Merge the change to `main`
+   and `Dotnetarium.Tool/Dotnetarium.Tool.csproj`. Align assembly, file and
+   informational versions in `Directory.Build.props`. Check existing GitHub
+   releases and both NuGet package version histories before selecting the next
+   version; an already-published version cannot be reused. Merge the change to `main`
    after CI passes.
 2. Tag that merged commit `v<version>`, such as `v2.0.0`. Verify the tag
    points to the release commit before publishing the GitHub release.

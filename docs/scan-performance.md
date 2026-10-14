@@ -1,5 +1,12 @@
 # Bounded taint analysis and scanner performance
 
+Current defaults are **fast: 3 / 2,500** for the analyzer and **full: 5 / 5,000**
+for the CLI, including no-build mode. See the [final budget comparison](performance-budget-matrix.md)
+for both loading modes and [cutoff families](cutoff-families.md) for the completed
+and discarded optimizations. Measurements below are historical snapshots with
+their stated inputs and explicit limits; tables using 3 / 1,000 do not describe
+the current fast default.
+
 The build-independent experiment exposed repeated and sometimes exponential
 interprocedural work in the shared analyzer engine. The following improvements
 are also applied to the MSBuild-based global tool and NuGet analyzer.
@@ -59,7 +66,8 @@ discovery avoids descending into `bin`, `obj` and `.git`; explicit generated-fil
 includes still work and retain their provenance warning. Nothing is cached
 across separate scanner runs.
 
-Fresh scanner processes, all rules enabled, Windows, 29 LANCommander compilations:
+Earlier loader comparison: fresh scanner processes, all rules enabled, Windows,
+29 LANCommander compilations, using the profile limits at that time:
 
 | Profile | Before / after seconds | Before / after peak MiB | Before / after findings |
 | --- | --- | --- | --- |
@@ -149,7 +157,7 @@ measured project rather than thousands of individual warnings. Cutoff counts
 describe incomplete roots, not vulnerabilities or a proportion of safe code.
 
 An earlier 3 / 500 trial took 3.42 seconds for Services and 3.01 for Server,
-with 2,403 and 157 cutoffs respectively. The default 3 / 1,000 leaves more room
+with 2,403 and 157 cutoffs respectively. The then-default 3 / 1,000 leaves more room
 for common controller/service/repository flows at a modest cost. A 500-unit override remains available for
 latency-sensitive projects. Compilation, generators, dependencies, cold caches
 and other IDE analyzers add their own cost; these figures are not an end-to-end

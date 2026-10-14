@@ -95,8 +95,28 @@ requires them, with tests for that behavior and alternate assembly delivery.
 
 ## Analysis profiles
 
+### LANCommander regression verification (October 13, 2026)
+
+Remote + local, Release/net10.0, fast policy with depth 3 and 2,500 work units,
+on LANCommander `4a2eef7`. Single sequential Windows runs; application setup was
+unchanged. Missing restored references, Razor generation gaps and project-mode
+npm/Aspire errors remain disclosed, so these are partial scans.
+
+| Mode | Before / after seconds | Before / after cutoffs | Before / after analyzer exceptions | Findings |
+| --- | --- | --- | --- | --- |
+| Project | 82.23 / 90.52 | 2,247 / 3,491 | 840 / 0 | 16 / 16 |
+| No-build | 44.28 / 47.51 | 1,743 / 1,769 | 17 / 0 | 16 / 16 |
+
+Both modes now exclude all six test projects (project mode previously excluded
+four). Findings retain the same locations. More work cutoffs are expected where
+the analyzer previously threw before completing a method: old counts understated
+incomplete analysis. The foreign-compilation graph fix preserves unknown
+dependency eligibility rather than treating unavailable bodies as safe.
+
+### Defaults and earlier measurements
+
 The package defaults to `fast`: source-method and lambda/local-function depth
-**3**, with **1,000 work units** per root/rule. The tool defaults to `full`:
+**3**, with **2,500 work units** per root/rule. The tool defaults to `full`:
 depth **5**, with **5,000 units**. The opt-in `max` profile uses depth **10** and
 **10,000 units**. Explicit JSON profiles and numeric limits
 override these defaults. Binder and component-state summaries use the same

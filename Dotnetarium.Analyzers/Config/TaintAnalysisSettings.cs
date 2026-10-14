@@ -21,7 +21,7 @@ namespace Dotnetarium.Config
             MethodDepth = data.MaxInterproceduralMethodCallChain ?? depth;
             LambdaDepth = data.MaxInterproceduralLambdaOrLocalFunctionCallChain ?? depth;
             Work = data.MaxTaintAnalysisWork ??
-                (Profile switch { AnalysisProfile.Max => 10000u, AnalysisProfile.Full => 5000u, _ => 1000u });
+                (Profile switch { AnalysisProfile.Max => 10000u, AnalysisProfile.Full => 5000u, _ => 2500u });
         }
 
         internal AnalysisProfile Profile { get; }

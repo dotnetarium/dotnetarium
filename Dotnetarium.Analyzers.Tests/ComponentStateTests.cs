@@ -2,6 +2,7 @@ using Dotnetarium.Analyzers.Taint;
 using Dotnetarium.Config;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Diagnostics;
 using System.Collections;
 using System.Reflection;
 
@@ -9,6 +10,47 @@ namespace Dotnetarium.Analyzers.Tests;
 
 public sealed class ComponentStateTests
 {
+    [Fact]
+    public async Task Component_methods_from_a_compilation_reference_remain_unknown_without_crashing()
+    {
+        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+            .Select(path => MetadataReference.CreateFromFile(path)).ToArray();
+        var library = CSharpCompilation.Create("ComponentLibrary", [CSharpSyntaxTree.ParseText("""
+            using Microsoft.AspNetCore.Components;
+            public class SharedComponent : ComponentBase {
+                public string Value { get; set; } = "fixed";
+                public void Copy(string value) => Value = value;
+            }
+            """)], references, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var consumer = CSharpCompilation.Create("ComponentConsumer", [CSharpSyntaxTree.ParseText("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class Page : ComponentBase {
+                private readonly SharedComponent shared = new();
+                private string output = "fixed";
+                private void Changed(ChangeEventArgs args) { shared.Copy(args.Value.ToString()); output = args.Value.ToString(); }
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(2, output);
+                    builder.AddMarkupContent(3, shared.Value);
+                }
+            }
+            """)], references.Append<MetadataReference>(library.ToMetadataReference()),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        Assert.Empty(consumer.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+        var foreign = (IMethodSymbol)consumer.GetTypeByMetadataName("SharedComponent")!.GetMembers("Copy").Single();
+        Assert.NotEmpty(foreign.DeclaringSyntaxReferences);
+        Assert.Null(FrameworkGraph.ForMethod(foreign, consumer));
+        var dependencies = new ComponentStateDependencies(consumer, method => FrameworkGraph.ForMethod(method, consumer));
+        Assert.True(dependencies.ForMethod(foreign).Unknown);
+        var findings = await consumer.WithAnalyzers([new XssTaintAnalyzer()], LocalSourceTestOptions.Options).GetAnalyzerDiagnosticsAsync();
+        Assert.DoesNotContain(findings, d => d.Id == "AD0001");
+        Assert.Contains(findings, d => d.Id == "DNA0003" &&
+            d.Location.SourceTree!.GetText().ToString(d.Location.SourceSpan).Contains("output"));
+    }
+
     [Fact]
     public async Task Interface_dispatched_state_writes_remain_eligible()
     {

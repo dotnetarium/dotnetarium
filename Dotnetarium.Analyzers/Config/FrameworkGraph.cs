@@ -12,6 +12,10 @@ namespace Dotnetarium.Config
         internal static ControlFlowGraph? ForMethod(IMethodSymbol method, Compilation compilation)
         {
             if (method.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is not { } syntax) return null;
+            // Compilation references can expose source symbols from another
+            // project. Their bodies are unavailable to this compilation; callers
+            // must keep them as unknown dependencies, never as a safety proof.
+            if (!compilation.ContainsSyntaxTree(syntax.SyntaxTree)) return null;
             var model = compilation.GetSemanticModel(syntax.SyntaxTree);
             if (syntax is BaseMethodDeclarationSyntax or AccessorDeclarationSyntax) return ControlFlowGraph.Create(syntax, model);
             var containing = syntax.Ancestors().FirstOrDefault(node => node is BaseMethodDeclarationSyntax or AccessorDeclarationSyntax);

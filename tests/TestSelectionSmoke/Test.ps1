@@ -8,7 +8,7 @@ foreach ($framework in @('net8.0','net10.0')) {
     $directory = Join-Path $scratch $framework
     foreach ($name in @('production','imported-tests','sdk-tests','needed-tests')) { New-Item -ItemType Directory -Path (Join-Path $directory $name) -Force | Out-Null }
     $production = Join-Path $directory 'production/LooksLikeTests.csproj'
-    "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><TargetFramework>$framework</TargetFramework></PropertyGroup><ItemGroup><FrameworkReference Include=`"Microsoft.AspNetCore.App`" /><ProjectReference Include=`"../needed-tests/Needed.csproj`" /></ItemGroup></Project>" | Set-Content $production
+    "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><TargetFramework>$framework</TargetFramework><IsTestProject>false</IsTestProject></PropertyGroup><ItemGroup><PackageReference Include=`"Microsoft.NET.Test.Sdk`" Version=`"17.14.1`" /><FrameworkReference Include=`"Microsoft.AspNetCore.App`" /><ProjectReference Include=`"../needed-tests/Needed.csproj`" /></ItemGroup></Project>" | Set-Content $production
     '[Microsoft.AspNetCore.Mvc.ApiController] public class Entry : Microsoft.AspNetCore.Mvc.ControllerBase { public void Run(string command) { _ = Needed.Value; System.Diagnostics.Process.Start(command); } }' | Set-Content (Join-Path $directory 'production/Entry.cs')
     $needed = Join-Path $directory 'needed-tests/Needed.csproj'
     "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><TargetFramework>$framework</TargetFramework><IsTestProject>true</IsTestProject></PropertyGroup></Project>" | Set-Content $needed
@@ -23,7 +23,9 @@ foreach ($framework in @('net8.0','net10.0')) {
     'public class SdkTest { public void Unsafe() { _ = System.Security.Cryptography.DES.Create(); } }' | Set-Content (Join-Path $directory 'sdk-tests/Sdk.cs')
     $solution = Join-Path $directory 'Scan.slnx'
     '<Solution><Project Path="imported-tests/Marked.csproj" /><Project Path="needed-tests/Needed.csproj" /><Project Path="sdk-tests/Sdk.csproj" /><Project Path="production/LooksLikeTests.csproj" /></Solution>' | Set-Content $solution
-    & dotnet restore $solution --nologo -v quiet
+    # Leave the independent test-SDK root unrestored: its IsTestProject property
+    # is blank until NuGet props exist, but the evaluated SDK reference identifies it.
+    & dotnet restore $production --nologo -v quiet
     if ($LASTEXITCODE -ne 0) { throw 'Test-scope fixture restore failed.' }
     foreach ($mode in @('project','no-build')) {
         $flags = @()
@@ -34,8 +36,14 @@ foreach ($framework in @('net8.0','net10.0')) {
         $run = (Get-Content -Raw $sarif | ConvertFrom-Json).runs[0]
         if (@($run.results).Count -ne 1 -or $run.results[0].ruleId -ne 'DNA0002') { throw 'Test findings leaked or the production RPC/action disappeared.' }
         $properties = $run.invocations[0].properties
+        # The explicit non-test SDK consumer remains selected. NB discloses its
+        # unevaluated package build inputs rather than claiming complete coverage.
+        $expectedCoverage = if ($mode -eq 'no-build') { 'partial' } else { 'complete' }
         if (@($properties.'dotnetarium.analyzedProjects').Count -ne 1 -or @($properties.'dotnetarium.excludedTestProjects').Count -ne 3 -or
-            $properties.'dotnetarium.coverage' -ne 'complete') { throw 'Intentional test exclusion must have explicit scope metadata and preserve complete production coverage.' }
+            $properties.'dotnetarium.coverage' -ne $expectedCoverage) { throw 'Test exclusion or explicit non-test selection has inconsistent scope metadata.' }
+        if (@($run.invocations[0].toolExecutionNotifications | Where-Object { $_.descriptor.id -ne 'package-build-inputs' }).Count -ne 0) {
+            throw 'Unexpected coverage gap in the test-selection fixture.'
+        }
         if (Test-Path $marker) { throw 'The excluded test project ran its target.' }
         $explicit = Join-Path $directory "$mode-explicit.sarif"
         & dotnet $ToolDll $needed @flags --sarif $explicit > ($explicit + '.log') 2>&1

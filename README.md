@@ -133,7 +133,7 @@ Custom JSON models extend built-in sources, sinks, sanitizers and transfers. Mod
 
 | Profile | Default host | Method and lambda/local-function depth | Work units per method/rule |
 | --- | --- | --- | --- |
-| `fast` | NuGet analyzer in builds and IDEs | 3 | 1,000 |
+| `fast` | NuGet analyzer in builds and IDEs | 3 | 2,500 |
 | `full` | Global tool, including no-build scans | 5 | 5,000 |
 | `max` | Explicit opt-in for deeper analysis | 10 | 10,000 |
 

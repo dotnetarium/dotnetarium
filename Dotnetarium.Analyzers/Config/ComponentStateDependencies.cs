@@ -26,6 +26,8 @@ namespace Dotnetarium.Config
         internal Footprint ForValue(IOperation value)
         {
             var result = new Footprint();
+            if (!compilation.ContainsSyntaxTree(value.Syntax.SyntaxTree))
+            { result.Unknown = true; return result; }
             var original = compilation.GetSemanticModel(value.Syntax.SyntaxTree).GetOperation(value.Syntax);
             if (original == null) { result.Unknown = true; return result; }
             foreach (var operation in original.DescendantsAndSelf())

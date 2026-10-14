@@ -88,6 +88,12 @@ becomes a completed summary or proof that a member is safe. Coverage notices may
 still occur in a noisy callback's own analysis without blocking an independent
 render or state relay.
 
+Component methods exposed by a Roslyn compilation reference can belong to
+another project's syntax trees. Their bodies are treated as unknown dependencies
+in the current compilation, preserving callback eligibility without attempting
+to read a foreign semantic model. This does not provide cross-project component
+state propagation; scan the defining project too and check coverage notices.
+
 The CLI uses Roslyn 5.9 for current SDK generator compatibility and reports
 analyzer/generator assembly load failures as incomplete coverage. The analyzer
 package keeps its Roslyn 5.0 minimum. Mapped console/SARIF locations point to

@@ -61,9 +61,9 @@ public sealed class AnalysisProfileTests
     }
 
     [Theory]
-    [InlineData(null, null, "Fast", 3u, 1000u)]
+    [InlineData(null, null, "Fast", 3u, 2500u)]
     [InlineData(null, "full", "Full", 5u, 5000u)]
-    [InlineData("Fast", "full", "Fast", 3u, 1000u)]
+    [InlineData("Fast", "full", "Fast", 3u, 2500u)]
     [InlineData("Full", null, "Full", 5u, 5000u)]
     [InlineData("Max", null, "Max", 10u, 10000u)]
     [InlineData("Max", "full", "Max", 10u, 10000u)]

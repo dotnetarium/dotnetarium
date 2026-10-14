@@ -137,7 +137,14 @@ internal static class Program
                     configOptions = await ProjectAnalysisOptions.WithTestProjectMetadataAsync(configOptions, project.FilePath!, inputs.MSBuildPath,
                         selection.Configuration, ScanSelection.FrameworkOf(project));
                 var analyzerOptions = new AnalyzerOptions(additionalFiles, new AnalysisProfileOptions(configOptions));
-                var effectiveConfig = ConfigurationManager.GetProjectConfiguration(additionalFiles);
+                ConfigData effectiveConfig;
+                try { effectiveConfig = ConfigurationManager.GetProjectConfiguration(additionalFiles); }
+                catch (System.Text.Json.JsonException error)
+                {
+                    report.Fail("configuration-error", $"{project.Name}: invalid dotnetarium.json: {error.Message}");
+                    report.SkippedProjects.Add(project.Name);
+                    return;
+                }
                 var effectiveSettings = new TaintAnalysisSettings(effectiveConfig, analyzerOptions);
                 report.AnalysisSettings.Add(new(project.FilePath ?? project.Name,
                     effectiveSettings.Profile.ToString().ToLowerInvariant(), effectiveSettings.MethodDepth,

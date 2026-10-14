@@ -23,6 +23,8 @@ jobs:
         run: dotnet test Dotnetarium.sln -c Release -p:RunAnalyzers=false
       - name: Test modern sinks
         run: dotnet run --project tests/ModernSinkSmoke/ModernSinkSmoke.csproj -c Release -p:RunAnalyzers=false
+      - name: Build CLI for project and no-build smoke tests
+        run: dotnet build Dotnetarium.Tool/Dotnetarium.Tool.csproj -c Release -p:RunAnalyzers=false
       - name: Test Razor and Blazor flows
         shell: pwsh
         run: ./tests/RazorSmoke/Test.ps1

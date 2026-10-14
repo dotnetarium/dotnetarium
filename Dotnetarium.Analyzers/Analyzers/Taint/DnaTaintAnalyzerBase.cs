@@ -200,8 +200,6 @@ namespace Dotnetarium.Analyzers.Taint
 
                     foreach (var origin in pair.SourceOrigins)
                     {
-                        if (kind == (SinkKind)(int)TaintType.PathEscape &&
-                            BoundaryValidation.IsHostStartupDirectory(pair.Sink.Location, block.Compilation, origin.Symbol)) continue;
                         var locations = settings.TaintFlowVisualizationEnabled
                             ? result.GetFlowLocations(pair, origin).ToArray()
                             : new[] { origin.Location };

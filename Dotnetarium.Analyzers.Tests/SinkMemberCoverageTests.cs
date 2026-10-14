@@ -41,6 +41,14 @@ public sealed partial class SinkCoverageTests
         new("System.IO.File", "Move", "destFileName", "System.IO.File.Move(\"fixed\", input);"),
         new("System.IO.File", "Replace", "destinationFileName", "System.IO.File.Replace(\"fixed\", input, \"backup\");"),
         new("System.IO.File", "Replace", "destinationBackupFileName", "System.IO.File.Replace(\"fixed\", \"destination\", input);"),
+        new("System.IO.Compression.ZipFile", "ExtractToDirectory", "sourceArchiveFileName", "System.IO.Compression.ZipFile.ExtractToDirectory(input, \"fixed\");"),
+        new("System.Formats.Tar.TarFile", "ExtractToDirectory", "sourceFileName", "System.Formats.Tar.TarFile.ExtractToDirectory(input, \"fixed\", true);"),
+        new("System.Formats.Tar.TarFile", "ExtractToDirectoryAsync", "sourceFileName", "_ = System.Formats.Tar.TarFile.ExtractToDirectoryAsync(input, \"fixed\", true);"),
+        new("System.IO.FileInfo", "CopyTo", "destFileName", "_ = new System.IO.FileInfo(\"fixed\").CopyTo(input);"),
+        new("System.IO.FileInfo", "MoveTo", "destFileName", "new System.IO.FileInfo(\"fixed\").MoveTo(input);"),
+        new("System.IO.FileInfo", "Replace", "destinationFileName", "_ = new System.IO.FileInfo(\"fixed\").Replace(input, \"backup\");"),
+        new("System.IO.DirectoryInfo", "MoveTo", "destDirName", "new System.IO.DirectoryInfo(\"fixed\").MoveTo(input);"),
+        new("System.Runtime.Loader.AssemblyLoadContext", "LoadFromNativeImagePath", "assemblyPath", "_ = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromNativeImagePath(\"fixed\", input);"),
         new("System.IO.FileInfo", "Replace", "destinationBackupFileName", "_ = new System.IO.FileInfo(\"fixed\").Replace(\"destination\", input);"),
         new("SharpCompress.Readers.IAsyncReaderExtensions", "WriteEntryToAsync", "destinationFileInfo", "_ = SharpCompress.Readers.IAsyncReaderExtensions.WriteEntryToAsync((SharpCompress.Readers.IAsyncReader)null!, new System.IO.FileInfo(input));"),
         new("Microsoft.AspNetCore.Mvc.ControllerBase", "File", "fileStream", "_ = this.File(new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(input)), \"text/html\");"),
@@ -179,14 +187,31 @@ public sealed partial class SinkCoverageTests
         yield return M("Microsoft.AspNetCore.Http.Results", "DNA0005", "Redirect", "_ = Microsoft.AspNetCore.Http.Results.Redirect(input);");
         yield return M("Microsoft.AspNetCore.Http.TypedResults", "DNA0005", "Redirect", "_ = Microsoft.AspNetCore.Http.TypedResults.Redirect(input);");
 
+        yield return M("System.IO.DirectoryInfo", "DNA0004", "Delete", "new System.IO.DirectoryInfo(input).Delete();");
+        yield return M("System.IO.DirectoryInfo", "DNA0004", "MoveTo", "new System.IO.DirectoryInfo(input).MoveTo(\"fixed\");");
+        yield return M("System.Runtime.Loader.AssemblyLoadContext", "DNA0004", "LoadFromAssemblyPath", "_ = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromAssemblyPath(input);");
+        yield return M("System.Runtime.Loader.AssemblyLoadContext", "DNA0004", "LoadFromNativeImagePath", "_ = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromNativeImagePath(input, \"fixed\");");
+        yield return M("System.Runtime.Loader.AssemblyLoadContext", "DNA0004", "LoadUnmanagedDllFromPath", "_ = new TestLoader().LoadNative(input);");
+        yield return M("System.Runtime.InteropServices.NativeLibrary", "DNA0004", "Load", "_ = System.Runtime.InteropServices.NativeLibrary.Load(input);");
+        yield return M("System.Runtime.InteropServices.NativeLibrary", "DNA0004", "TryLoad", "_ = System.Runtime.InteropServices.NativeLibrary.TryLoad(input, out _);");
+        yield return M("System.IO.Compression.ZipFile", "DNA0004", "Open", "_ = System.IO.Compression.ZipFile.Open(input, System.IO.Compression.ZipArchiveMode.Read);");
+        yield return M("System.IO.Compression.ZipFile", "DNA0004", "OpenRead", "_ = System.IO.Compression.ZipFile.OpenRead(input);");
+        yield return M("System.IO.Compression.ZipFile", "DNA0004", "ExtractToDirectory", "System.IO.Compression.ZipFile.ExtractToDirectory(new System.IO.MemoryStream(), input);");
+        yield return M("System.Formats.Tar.TarEntry", "DNA0004", "ExtractToFile", "((System.Formats.Tar.TarEntry)null!).ExtractToFile(input, true);");
+        yield return M("System.Formats.Tar.TarEntry", "DNA0004", "ExtractToFileAsync", "_ = ((System.Formats.Tar.TarEntry)null!).ExtractToFileAsync(input, true);");
+        yield return M("System.Formats.Tar.TarFile", "DNA0004", "ExtractToDirectory", "System.Formats.Tar.TarFile.ExtractToDirectory(new System.IO.MemoryStream(), input, true);");
+        yield return M("System.Formats.Tar.TarFile", "DNA0004", "ExtractToDirectoryAsync", "_ = System.Formats.Tar.TarFile.ExtractToDirectoryAsync(new System.IO.MemoryStream(), input, true);");
+        yield return M("Microsoft.AspNetCore.Mvc.ControllerBase", "DNA0004", "PhysicalFile", "_ = this.PhysicalFile(input, \"text/plain\");");
+        yield return M("Microsoft.AspNetCore.Http.Results", "DNA0004", "File", "_ = Microsoft.AspNetCore.Http.Results.File(input, \"text/plain\");");
+        yield return M("Microsoft.AspNetCore.Http.TypedResults", "DNA0004", "PhysicalFile", "_ = Microsoft.AspNetCore.Http.TypedResults.PhysicalFile(input, \"text/plain\");");
         var directory = "System.IO.Directory";
-        foreach (var member in new[] { "CreateDirectory", "Delete", "EnumerateDirectories", "EnumerateFiles", "EnumerateFileSystemEntries", "GetDirectories", "GetFiles", "GetFileSystemEntries" })
+        foreach (var member in new[] { "Delete" })
             yield return M(directory, "DNA0004", member, $"{(member == "Delete" ? "" : "_ = ")}{directory}.{member}(input);");
         yield return M(directory, "DNA0004", "CreateSymbolicLink", "_ = System.IO.Directory.CreateSymbolicLink(input, \"fixed\");");
         yield return M(directory, "DNA0004", "Move", "System.IO.Directory.Move(input, \"fixed\");");
 
         var file = "System.IO.File";
-        foreach (var member in new[] { "AppendText", "Create", "CreateText", "Delete", "OpenRead", "OpenText", "OpenWrite", "ReadAllBytes", "ReadAllBytesAsync", "ReadAllLines", "ReadAllLinesAsync", "ReadAllText", "ReadAllTextAsync", "ReadLines" })
+        foreach (var member in new[] { "AppendText", "Create", "CreateText", "Delete", "OpenRead", "OpenText", "OpenWrite", "ReadAllBytes", "ReadAllBytesAsync", "ReadAllLines", "ReadAllLinesAsync", "ReadAllText", "ReadAllTextAsync", "ReadLines", "ReadLinesAsync" })
             yield return M(file, "DNA0004", member, $"{(member == "Delete" ? "" : "_ = ")}{file}.{member}(input);");
         foreach (var member in new[] { "AppendAllLines", "AppendAllLinesAsync", "WriteAllLines", "WriteAllLinesAsync" })
             yield return M(file, "DNA0004", member, $"{(member.EndsWith("Async", StringComparison.Ordinal) ? "_ = " : "")}{file}.{member}(input, new[] {{ \"line\" }});");
@@ -201,10 +226,12 @@ public sealed partial class SinkCoverageTests
         yield return M(file, "DNA0004", "OpenHandle", "_ = System.IO.File.OpenHandle(input);");
         yield return M(file, "DNA0004", "Replace", "System.IO.File.Replace(input, \"fixed\", \"backup\");");
 
-        yield return M("System.IO.FileInfo", "DNA0004", ".ctor", "_ = new System.IO.FileInfo(input);");
+        foreach (var member in new[] { "OpenRead", "OpenWrite", "OpenText", "Create", "CreateText", "AppendText", "Delete" })
+            yield return M("System.IO.FileInfo", "DNA0004", member, $"{(member == "Delete" ? "" : "_ = ")}new System.IO.FileInfo(input).{member}();");
+        yield return M("System.IO.FileInfo", "DNA0004", "Open", "_ = new System.IO.FileInfo(input).Open(System.IO.FileMode.Open);");
         foreach (var member in new[] { "CopyTo", "MoveTo" })
-            yield return M("System.IO.FileInfo", "DNA0004", member, $"{(member == "MoveTo" ? "" : "_ = ")}new System.IO.FileInfo(\"fixed\").{member}(input);");
-        yield return M("System.IO.FileInfo", "DNA0004", "Replace", "_ = new System.IO.FileInfo(\"fixed\").Replace(input, \"backup\");");
+            yield return M("System.IO.FileInfo", "DNA0004", member, $"{(member == "MoveTo" ? "" : "_ = ")}new System.IO.FileInfo(input).{member}(\"fixed\");");
+        yield return M("System.IO.FileInfo", "DNA0004", "Replace", "_ = new System.IO.FileInfo(input).Replace(\"destination\", \"backup\");");
         foreach (var member in new[] { "LoadFile", "LoadFrom", "UnsafeLoadFrom" })
             yield return M("System.Reflection.Assembly", "DNA0004", member, $"_ = System.Reflection.Assembly.{member}(input);");
         yield return M("System.IO.StreamReader", "DNA0004", ".ctor", "_ = new System.IO.StreamReader(input);");

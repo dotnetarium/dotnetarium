@@ -371,7 +371,8 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 }
                 if (AnalysisEntityFactory.TryCreate(operation, out AnalysisEntity? analysisEntity))
                 {
-                    return this.CurrentAnalysisData.TryGetValue(analysisEntity, out TaintedDataAbstractValue? value) ? value : defaultValue;
+                    return FileSystemPathValue(operation,
+                        this.CurrentAnalysisData.TryGetValue(analysisEntity, out TaintedDataAbstractValue? value) ? value : defaultValue);
                 }
 
                 return defaultValue;
@@ -386,6 +387,9 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 {
                     ProcessTaintedDataEnteringInvocationOrCreation(operation.Constructor, operation.Arguments, taintedArguments, operation);
                 }
+
+                if (IsFileSystemPathObject(operation.Type))
+                    SetFileSystemPath(operation, baseValue);
 
                 return baseValue;
             }
@@ -596,6 +600,35 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
 
                 if (destinationState != null)
                     foreach (var pair in destinationState) CurrentAnalysisData.SetAbstractValue(pair.Key, pair.Value);
+                // File-system objects represent a path, not the contents copied
+                // from the source. MoveTo updates that path; CopyTo/Replace return
+                // a new object representing the destination. Apply this after
+                // reporting the source/destination access at the operation.
+                if (method.Name is "MoveTo" or "CopyTo" or "Replace" && IsFileSystemPathObject(method.ContainingType))
+                {
+                    var destinationName = method.Name switch
+                    {
+                        "MoveTo" when method.ContainingType.Name == "DirectoryInfo" => "destDirName",
+                        "MoveTo" or "CopyTo" => "destFileName",
+                        "Replace" => "destinationFileName",
+                        _ => null
+                    };
+                    var destination = visitedArguments.FirstOrDefault(input => input.Parameter?.Name == destinationName);
+                    if (destination != null)
+                    {
+                        var pathValue = GetCachedAbstractValue(destination);
+                        if (method.Name == "MoveTo" && visitedInstance != null)
+                        {
+                            SetTaintedForEntity(visitedInstance, pathValue);
+                            SetFileSystemPath(visitedInstance, pathValue);
+                        }
+                        else if (method.Name is "CopyTo" or "Replace")
+                        {
+                            result = pathValue;
+                            SetFileSystemPath(originalOperation, pathValue);
+                        }
+                    }
+                }
                 return result;
             }
 
@@ -877,7 +910,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 IOperation originalOperation)
             {
                 if (originalOperation is IInvocationOperation { Instance: { } receiver } && targetMethod.ContainingType != null &&
-                    GetCachedAbstractValue(receiver) is { Kind: TaintedDataAbstractValueKind.Tainted } receiverValue)
+                    FileSystemPathValue(receiver, GetCachedAbstractValue(receiver)) is { Kind: TaintedDataAbstractValueKind.Tainted } receiverValue)
                     foreach (var sink in DataFlowAnalysisContext.SinkInfos.GetInfosForType(targetMethod.ContainingType))
                         if (sink.SinkMethodParameters.TryGetValue(targetMethod.Name, out var parameters) && parameters.Contains(TaintedTargetValue.This))
                             TrackTaintedDataEnteringSink(targetMethod, originalOperation.Syntax.GetLocation(), sink.SinkKinds, receiverValue.SourceOrigins);
@@ -1208,11 +1241,42 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
 
             private IEnumerable<IArgumentOperation> GetTaintedArguments(ImmutableArray<IArgumentOperation> arguments)
             {
-                return arguments.Where(
-                    a => this.GetCachedAbstractValue(a).Kind == TaintedDataAbstractValueKind.Tainted
-                         && (a.Parameter.RefKind == RefKind.None
-                             || a.Parameter.RefKind == RefKind.Ref
-                             || a.Parameter.RefKind == RefKind.In));
+                foreach (var argument in arguments)
+                {
+                    var value = FileSystemPathValue(argument.Value, GetCachedAbstractValue(argument));
+                    if (IsFileSystemPathObject(argument.Value.Type)) CacheAbstractValue(argument, value);
+                    if (value.Kind == TaintedDataAbstractValueKind.Tainted &&
+                        argument.Parameter is { RefKind: RefKind.None or RefKind.Ref or RefKind.In })
+                        yield return argument;
+                }
+            }
+
+            private static bool IsFileSystemPathObject(ITypeSymbol? type) =>
+                type is INamedTypeSymbol { Name: "FileInfo" or "DirectoryInfo" } &&
+                type.ContainingNamespace.ToDisplayString() == "System.IO";
+
+            private static AnalysisEntity FileSystemPathEntity(AbstractLocation location) =>
+                AnalysisEntity.Create(location.LocationType, ImmutableArray<AbstractIndex>.Empty, location.LocationType!,
+                    PointsToAbstractValue.Create(location, mayBeNull: false), parent: null, entityForInstanceLocation: null);
+
+            private void SetFileSystemPath(IOperation instance, TaintedDataAbstractValue value)
+            {
+                foreach (var location in GetPointsToAbstractValue(instance).Locations)
+                    if (IsFileSystemPathObject(location.LocationType))
+                        CurrentAnalysisData.SetAbstractValue(FileSystemPathEntity(location), value);
+            }
+
+            private TaintedDataAbstractValue FileSystemPathValue(IOperation instance, TaintedDataAbstractValue fallback)
+            {
+                if (!IsFileSystemPathObject(instance.Type)) return fallback;
+                var locations = GetPointsToAbstractValue(instance).Locations;
+                if (locations.Count == 0) return fallback;
+                var result = TaintedDataAbstractValue.NotTainted;
+                foreach (var location in locations)
+                    result = ValueDomain.Merge(result,
+                        IsFileSystemPathObject(location.LocationType) &&
+                        CurrentAnalysisData.TryGetValue(FileSystemPathEntity(location), out var path) ? path : fallback);
+                return result;
             }
 
             private void SetTaintedForEntity(IOperation operation, TaintedDataAbstractValue value)

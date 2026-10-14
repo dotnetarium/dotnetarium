@@ -11,11 +11,11 @@ public sealed class StartupDirectoryTests
     [InlineData("Directory.CreateDirectory(Path.Combine(builder.Environment.WebRootPath, \"uploads\"));", 0)]
     [InlineData("var root = builder.Environment.WebRootPath; var path = Path.Combine(root, \"logs\"); Directory.CreateDirectory(path);", 0)]
     [InlineData("Directory.CreateDirectory(Path.Combine(builder.Environment.ContentRootPath, \"logs\"));", 0)]
-    [InlineData("Directory.CreateDirectory(args[0]);", 1)]
-    [InlineData("Directory.CreateDirectory(Path.Combine(builder.Environment.WebRootPath, args[0]));", 1)]
+    [InlineData("Directory.CreateDirectory(args[0]);", 0)]
+    [InlineData("Directory.CreateDirectory(Path.Combine(builder.Environment.WebRootPath, args[0]));", 0)]
     [InlineData("File.WriteAllText(Path.Combine(builder.Environment.WebRootPath, \"uploads\"), \"data\");", 1)]
-    [InlineData("builder.Environment.WebRootPath = args[0]; Directory.CreateDirectory(Path.Combine(builder.Environment.WebRootPath, \"uploads\"));", 1)]
-    public async Task Only_fixed_host_root_startup_directories_are_ignored(string body, int expected)
+    [InlineData("builder.Environment.WebRootPath = args[0]; Directory.CreateDirectory(Path.Combine(builder.Environment.WebRootPath, \"uploads\"));", 0)]
+    public async Task Directory_creation_is_not_a_consequential_file_access(string body, int expected)
     {
         var source = """
             using System.IO;
@@ -53,7 +53,7 @@ public sealed class StartupDirectoryTests
     }
 
     [Fact]
-    public async Task Remote_directory_creation_remains_a_sink()
+    public async Task Remote_directory_creation_alone_is_not_reported()
     {
         var diagnostics = await FrameworkProbe.Analyze("""
             public static class Endpoint {
@@ -61,6 +61,6 @@ public sealed class StartupDirectoryTests
                     System.IO.Directory.CreateDirectory(context.Request.Query["path"]);
             }
             """, new PathTraversalTaintAnalyzer());
-        Assert.Single(diagnostics.Where(diagnostic => diagnostic.Id == "DNA0004"));
+        Assert.Empty(diagnostics);
     }
 }

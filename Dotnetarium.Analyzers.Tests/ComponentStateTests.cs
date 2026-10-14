@@ -10,6 +10,51 @@ namespace Dotnetarium.Analyzers.Tests;
 
 public sealed class ComponentStateTests
 {
+    [Theory]
+    [InlineData("args.Value.ToString()")]
+    [InlineData("args.Value?.ToString() ?? \"\"")]
+    [InlineData("args?.Value?.ToString() ?? \"\"")]
+    public async Task Nullable_event_payloads_remain_sources_for_component_state(string expression)
+    {
+        var findings = await FrameworkProbe.Analyze($$"""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class Page : ComponentBase {
+                private string text = "fixed";
+                private void Changed(ChangeEventArgs args) => text = {{expression}};
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(2, text);
+                }
+            }
+            """, new XssTaintAnalyzer());
+        Assert.Contains(findings, finding => finding.Id == "DNA0003");
+    }
+
+    [Theory]
+    [InlineData("args = new ChangeEventArgs { Value = \"fixed\" }; text = args?.Value?.ToString() ?? \"\";")]
+    [InlineData("text = args?.Value?.ToString() ?? \"\"; text = \"fixed\";")]
+    public async Task Nullable_event_receivers_respect_reassignment_and_immediate_reset(string body)
+    {
+        var findings = await FrameworkProbe.Analyze($$"""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class Page : ComponentBase {
+                private string text = "fixed";
+                private void Changed(ChangeEventArgs args) { {{body}} }
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(2, text);
+                }
+            }
+            """, new XssTaintAnalyzer());
+        Assert.DoesNotContain(findings, finding => finding.Id == "DNA0003");
+    }
+
     [Fact]
     public async Task Component_methods_from_a_compilation_reference_remain_unknown_without_crashing()
     {

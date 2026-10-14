@@ -63,3 +63,6 @@ $unitySarif = Join-Path $scratch 'unity.sarif'
 & dotnet $ToolDll $unity -nb --sarif $unitySarif > (Join-Path $scratch 'unity.log') 2>&1
 if ($LASTEXITCODE -ne 2) { throw 'Unsupported Unity loading was silently treated as success.' }
 "Game engine checks passed. Reports: $scratch" | Write-Output
+# The final native command deliberately returns 2. GitHub's PowerShell wrapper
+# propagates LASTEXITCODE, so publish success only after all assertions pass.
+$global:LASTEXITCODE = 0

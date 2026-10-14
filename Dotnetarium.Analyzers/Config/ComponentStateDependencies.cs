@@ -77,6 +77,8 @@ namespace Dotnetarium.Config
 
             void Visit(ControlFlowGraph graph)
             {
+                var captures = graph.DescendantOperations<IFlowCaptureOperation>(OperationKind.FlowCapture)
+                    .GroupBy(capture => capture.Id).ToDictionary(group => group.Key, group => group.Select(capture => capture.Value).ToArray());
                 foreach (var local in graph.LocalFunctions) Visit(graph.GetLocalFunctionControlFlowGraph(local));
                 foreach (var operation in graph.DescendantOperations())
                 {
@@ -116,12 +118,20 @@ namespace Dotnetarium.Config
                             IDynamicObjectCreationOperation or IFunctionPointerInvocationOperation: result.Unknown = true; break;
                     }
                 }
-            }
-            void Write(IOperation operation)
-            {
-                if (Member(operation) is { } member) result.Writes.Add(member);
-                if (operation is ITupleOperation tuple)
-                    foreach (var element in tuple.Elements) Write(element);
+                void Write(IOperation operation, HashSet<CaptureId>? seenCaptures = null)
+                {
+                    if (Member(operation) is { } member) result.Writes.Add(member);
+                    if (operation is ITupleOperation tuple)
+                        foreach (var element in tuple.Elements) Write(element, seenCaptures);
+                    if (operation is IFlowCaptureReferenceOperation capture)
+                    {
+                        seenCaptures ??= new HashSet<CaptureId>();
+                        if (!seenCaptures.Add(capture.Id) || !captures.TryGetValue(capture.Id, out var values))
+                        { result.Unknown = true; return; }
+                        foreach (var value in values) Write(value, seenCaptures);
+                        seenCaptures.Remove(capture.Id);
+                    }
+                }
             }
             void Follow(IMethodSymbol? target)
             {

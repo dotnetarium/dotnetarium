@@ -3,6 +3,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Operations;
+using Microsoft.CodeAnalysis.FlowAnalysis;
 
 namespace Dotnetarium.Config
 {
@@ -97,6 +98,16 @@ namespace Dotnetarium.Config
         internal static IParameterSymbol? StableParameter(IOperation? operation, Compilation compilation, HashSet<ILocalSymbol>? seen = null)
         {
             operation = Unwrap(operation);
+            // CFG lowering captures a receiver before conditional access. Recover
+            // its original lexical operation, then apply the same reassignment
+            // and ref/out checks; a capture alone is not an input-origin proof.
+            if (operation is IFlowCaptureReferenceOperation && compilation.ContainsSyntaxTree(operation.Syntax.SyntaxTree) &&
+                compilation.GetSemanticModel(operation.Syntax.SyntaxTree).GetOperation(operation.Syntax) is { } original &&
+                original is not IFlowCaptureReferenceOperation)
+                return StableParameter(original, compilation, seen);
+            if (operation is IConditionalAccessInstanceOperation)
+                for (var parent = operation.Parent; parent != null; parent = parent.Parent)
+                    if (parent is IConditionalAccessOperation conditional) return StableParameter(conditional.Operation, compilation, seen);
             if (operation is IParameterReferenceOperation parameter)
             {
                 var parameterDeclaration = parameter.Parameter.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();

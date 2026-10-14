@@ -46,6 +46,50 @@ The wide-helper retry limitation remains: budget notices report partial coverage
 an interrupted proof is never reported as a clean scan. Higher explicit budgets
 can help but do not guarantee complete coverage.
 
+## Targeted follow-up: component-state recomputation
+
+Temporary aggregate instrumentation separated group computation, dependency
+closure, graph lookup, source proof, taint execution and completed-result reuse.
+It was removed after measurement; no tracing is shipped. Runs used no-build,
+remote + local and depth 3 / 1,000. These **inclusive aggregate** phase timings
+overlap and cannot be summed or treated as exclusive CPU time:
+
+| Application | Component computation | Dependency closure | Callback source proofs | Callback taint execution |
+| --- | ---: | ---: | ---: | ---: |
+| Vulnerable .NET app | 1,217 ms | 329 ms | 64 ms | 567 ms |
+| Sarifintown | 17 ms | less than 1 ms | no selected callback analysis | no selected callback analysis |
+| LANCommander | 20,699 ms | 1,607 ms | 14,288 ms | 4,081 ms |
+
+LANCommander had 36,286 group queries, of which 33,830 (93%) returned a completed
+group. Of 4,157 callback/render analysis calls, 2,197 (53%) reused completed taint
+or source-free results. There were 266 invalidated summary entries. The main
+remaining cost is unfinished source eligibility, not indiscriminate eviction of
+completed unchanged summaries.
+
+A second trace identified generic `InfiniteLoader<T>.OnInitializedAsync`,
+`MonacoCodeEditor.OnParametersSetAsync`, `SafeImage.OnParametersSet` and
+`TagsInput<TItem>.OnInitialized` among repeated source-proof attempts. For
+example, InfiniteLoader's command-rule proof ran seven times, completed twice,
+then had six completed-result cache hits, with no recorded summary invalidation.
+The source proof follows generic/delegate helper paths; actual UI callbacks must
+remain eligible. These figures describe individual method/rule keys, not unique
+vulnerabilities or proof of false positives.
+
+A small prototype bypassed the source-absence gate for callbacks whose structural
+footprints were already unknown, allowing ordinary taint analysis to run directly.
+It did not suppress any callback or publish a partial negative proof. However,
+LANCommander took 40.75 seconds with 2,609 cutoffs and 12 findings, compared with
+the recent tracer-free baseline's 38.15 seconds, 2,462 cutoffs and the same
+12 findings. The smaller apps also retained the same finding counts. These
+single-run results did not justify the shortcut; it was discarded without a
+2,500-budget follow-up. Production code was restored and rebuilt successfully.
+
+**No further component-state caching change is warranted by this pass.** Preserve
+the existing scoped invalidation and exact-context completed summaries. Any
+future work should isolate one of the named source-proof paths and demonstrate
+recovered coverage or a repeatable speedup before changing its dispatch or
+dataflow behavior. Failed/budget-aborted summaries remain uncertain, never safe.
+
 ## Follow-up: helper and component prerequisite reuse
 
 After correcting missed nullable event-state writes, completed structural facts

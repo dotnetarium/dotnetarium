@@ -21,7 +21,7 @@ namespace Dotnetarium.Analyzers.Taint
     internal sealed class SinkReachability
     {
         private const int ProofMethodBudget = 512;
-        private static readonly ConditionalWeakTable<ControlFlowGraph, Summary> Summaries = new();
+        private static readonly ConditionalWeakTable<ControlFlowGraph, SummaryBuilder> Summaries = new();
         private readonly Compilation compilation;
         private readonly TaintedDataSymbolMap<SinkInfo> sinks;
         private readonly ConcurrentDictionary<ControlFlowGraph, bool> results = new();
@@ -51,7 +51,7 @@ namespace Dotnetarium.Analyzers.Taint
                     if (cached) return true;
                     continue;
                 }
-                var summary = Summaries.GetValue(graph, current => Summarize(current, cancellationToken));
+                var summary = Summaries.GetValue(graph, current => new SummaryBuilder(current)).GetSummary(cancellationToken);
                 if (summary.Unknown || summary.Members.Any(IsSinkMember)) return RememberPossibleSink(graph);
                 foreach (var call in summary.Methods)
                 {
@@ -114,67 +114,96 @@ namespace Dotnetarium.Analyzers.Taint
                 method.MethodKind == MethodKind.Constructor && info.IsAnyStringParameterInConstructorASink &&
                     method.Parameters.Any(parameter => parameter.Type.SpecialType == SpecialType.System_String));
 
-        private static Summary Summarize(ControlFlowGraph root, CancellationToken cancellationToken)
+        private sealed class SummaryBuilder
         {
-            var members = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
-            var methods = new List<Call>();
-            var graphs = new Queue<ControlFlowGraph>();
-            graphs.Enqueue(root);
-            var count = 0;
-            var unknown = false;
-            var currentGraph = root;
-            while (graphs.Count > 0)
+            // Structural facts are shared across rules; taint and sink-match
+            // results are not. Keep an interrupted cursor, but publish a summary
+            // only after all operations have been inspected (or are unknown).
+            private readonly object gate = new();
+            private readonly HashSet<ISymbol> members = new(SymbolEqualityComparer.Default);
+            private readonly List<Call> methods = new();
+            private readonly Queue<ControlFlowGraph> graphs = new();
+            private IEnumerator<IOperation>? enumerator;
+            private IOperation? next;
+            private ControlFlowGraph? currentGraph;
+            private int count;
+            private bool unknown;
+            private Summary? completed;
+            internal SummaryBuilder(ControlFlowGraph root) { graphs.Enqueue(root); }
+            internal Summary GetSummary(CancellationToken cancellationToken)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (++count > 64) { unknown = true; break; }
-                var graph = graphs.Dequeue();
-                currentGraph = graph;
-                foreach (var function in graph.LocalFunctions) graphs.Enqueue(graph.GetLocalFunctionControlFlowGraph(function));
-                foreach (var operation in graph.DescendantOperations())
+                lock (gate)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    AnalysisWorkBudget.VisitOperation();
-                    switch (operation)
+                    if (completed != null) return completed;
+                    while (true)
                     {
-                        case IInvocationOperation call: AddMethod(call.TargetMethod, call.Instance); break;
-                        case IObjectCreationOperation creation:
-                            if (creation.Constructor == null) unknown = true;
-                            else AddMethod(creation.Constructor);
-                            break;
-                        case IPropertyReferenceOperation property:
-                            members.Add(property.Property);
-                            if (property.Property.GetMethod != null) AddMethod(property.Property.GetMethod, property.Instance);
-                            if (property.Property.SetMethod != null) AddMethod(property.Property.SetMethod, property.Instance);
-                            break;
-                        case IFieldReferenceOperation field: members.Add(field.Field); break;
-                        case IEventReferenceOperation @event:
-                            members.Add(@event.Event);
-                            if (@event.Event.AddMethod != null) AddMethod(@event.Event.AddMethod, @event.Instance);
-                            if (@event.Event.RemoveMethod != null) AddMethod(@event.Event.RemoveMethod, @event.Instance);
-                            break;
-                        case IMethodReferenceOperation reference: AddMethod(reference.Method, reference.Instance); break;
-                        case IConversionOperation conversion when conversion.OperatorMethod != null: AddMethod(conversion.OperatorMethod); break;
-                        case IBinaryOperation binary when binary.OperatorMethod != null: AddMethod(binary.OperatorMethod); break;
-                        case IUnaryOperation unary when unary.OperatorMethod != null: AddMethod(unary.OperatorMethod); break;
-                        case ICompoundAssignmentOperation compound when compound.OperatorMethod != null: AddMethod(compound.OperatorMethod); break;
-                        case IIncrementOrDecrementOperation increment when increment.OperatorMethod != null: AddMethod(increment.OperatorMethod); break;
-                        case IFlowAnonymousFunctionOperation lambda: graphs.Enqueue(graph.GetAnonymousFunctionControlFlowGraph(lambda)); break;
-                        case IInvalidOperation:
-                        case IDynamicInvocationOperation:
-                        case IDynamicObjectCreationOperation:
-                        case IDynamicMemberReferenceOperation:
-                        case IDynamicIndexerAccessOperation:
-                        case IFunctionPointerInvocationOperation:
-                            unknown = true;
-                            break;
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (enumerator == null)
+                        {
+                            if (graphs.Count == 0 || ++count > 64)
+                            {
+                                completed = new Summary(members.ToImmutableArray(), methods.ToImmutableArray(), unknown || count > 64);
+                                graphs.Clear();
+                                members.Clear();
+                                methods.Clear();
+                                methods.Capacity = 0;
+                                currentGraph = null;
+                                return completed;
+                            }
+                            currentGraph = graphs.Dequeue();
+                            foreach (var function in currentGraph.LocalFunctions) graphs.Enqueue(currentGraph.GetLocalFunctionControlFlowGraph(function));
+                            enumerator = currentGraph.DescendantOperations().GetEnumerator();
+                        }
+                        if (next == null)
+                        {
+                            if (!enumerator.MoveNext()) { enumerator.Dispose(); enumerator = null; continue; }
+                            next = enumerator.Current;
+                        }
+                        // Charge before consuming the pending operation. Budget
+                        // exhaustion or cancellation must not skip a late sink.
+                        AnalysisWorkBudget.VisitOperation();
+                        switch (next)
+                        {
+                            case IInvocationOperation call: AddMethod(call.TargetMethod, call.Instance); break;
+                            case IObjectCreationOperation creation:
+                                if (creation.Constructor == null) unknown = true;
+                                else AddMethod(creation.Constructor);
+                                break;
+                            case IPropertyReferenceOperation property:
+                                members.Add(property.Property);
+                                if (property.Property.GetMethod != null) AddMethod(property.Property.GetMethod, property.Instance);
+                                if (property.Property.SetMethod != null) AddMethod(property.Property.SetMethod, property.Instance);
+                                break;
+                            case IFieldReferenceOperation field: members.Add(field.Field); break;
+                            case IEventReferenceOperation @event:
+                                members.Add(@event.Event);
+                                if (@event.Event.AddMethod != null) AddMethod(@event.Event.AddMethod, @event.Instance);
+                                if (@event.Event.RemoveMethod != null) AddMethod(@event.Event.RemoveMethod, @event.Instance);
+                                break;
+                            case IMethodReferenceOperation reference: AddMethod(reference.Method, reference.Instance); break;
+                            case IConversionOperation conversion when conversion.OperatorMethod != null: AddMethod(conversion.OperatorMethod); break;
+                            case IBinaryOperation binary when binary.OperatorMethod != null: AddMethod(binary.OperatorMethod); break;
+                            case IUnaryOperation unary when unary.OperatorMethod != null: AddMethod(unary.OperatorMethod); break;
+                            case ICompoundAssignmentOperation compound when compound.OperatorMethod != null: AddMethod(compound.OperatorMethod); break;
+                            case IIncrementOrDecrementOperation increment when increment.OperatorMethod != null: AddMethod(increment.OperatorMethod); break;
+                            case IFlowAnonymousFunctionOperation lambda: graphs.Enqueue(currentGraph!.GetAnonymousFunctionControlFlowGraph(lambda)); break;
+                            case IInvalidOperation:
+                            case IDynamicInvocationOperation:
+                            case IDynamicObjectCreationOperation:
+                            case IDynamicMemberReferenceOperation:
+                            case IDynamicIndexerAccessOperation:
+                            case IFunctionPointerInvocationOperation:
+                                unknown = true;
+                                break;
+                        }
+                        next = null;
                     }
                 }
             }
-            return new Summary(members.ToImmutableArray(), methods.ToImmutableArray(), unknown);
 
-            void AddMethod(IMethodSymbol method, IOperation? receiver = null)
+            private void AddMethod(IMethodSymbol method, IOperation? receiver = null)
             {
-                methods.Add(new Call(method, SourceInterfaceImplementationMap.GetReceiverType(receiver, currentGraph)));
+                methods.Add(new Call(method, SourceInterfaceImplementationMap.GetReceiverType(receiver, currentGraph!)));
                 if (method.MethodKind == MethodKind.DelegateInvoke || method.ContainingType.TypeKind == TypeKind.Error)
                     unknown = true;
             }

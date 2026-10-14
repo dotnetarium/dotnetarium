@@ -95,6 +95,11 @@ requires them, with tests for that behavior and alternate assembly delivery.
 
 ## Analysis profiles
 
+For the repeated sink-summary fix and the remaining per-application families,
+see [taint cutoff families](cutoff-families.md). That investigation keeps fast
+depth/work limits fixed and distinguishes indexing, source/model evaluation,
+actual dataflow and depth stops; it does not establish a speedup.
+
 ### LANCommander regression verification (October 13, 2026)
 
 Remote + local, Release/net10.0, fast policy with depth 3 and 2,500 work units,

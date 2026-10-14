@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using Analyzer.Utilities;
 using Analyzer.Utilities.Extensions;
 using Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis;
 using Dotnetarium.Analyzers.Taint;
@@ -12,6 +13,89 @@ namespace Dotnetarium.Analyzers.Tests;
 
 public sealed class SinkReachabilityTests
 {
+    [Theory]
+    [InlineData("Process.Start(value);", true)]
+    [InlineData("var info = new ProcessStartInfo(); info.FileName = value;", true)]
+    [InlineData("void Late() { Process.Start(value); } Late();", true)]
+    [InlineData("System.Action action = () => Process.Start(value);", true)]
+    [InlineData("_ = value;", false)]
+    public void Interrupted_structural_scan_resumes_without_hiding_a_late_sink(string tail, bool expected)
+    {
+        var noise = string.Concat(Enumerable.Repeat("_ = 42;", 300));
+        var compilation = Compile($$"""
+            using System.Diagnostics;
+            public static class Demo { public static void Run(string value) { {{noise}} {{tail}} } }
+            """);
+        var graph = Graph(compilation, "Demo", "Run");
+        var checker = Checker(compilation);
+        using (var budget = new AnalysisWorkBudget(64, CancellationToken.None))
+            Assert.Throws<AnalysisWorkLimitException>(() => checker.MayReachSink(graph));
+        using (var cancelled = new CancellationTokenSource())
+        {
+            cancelled.Cancel();
+            Assert.Throws<OperationCanceledException>(() => checker.MayReachSink(graph, cancelled.Token));
+        }
+        bool? result = null;
+        for (var attempt = 0; attempt < 64 && result == null; attempt++)
+        {
+            using var budget = new AnalysisWorkBudget(64, CancellationToken.None);
+            try { result = checker.MayReachSink(graph); }
+            catch (AnalysisWorkLimitException error) { Assert.Same(budget, error.Budget); }
+        }
+        Assert.NotNull(result);
+        Assert.Equal(expected, result.Value);
+    }
+
+    [Fact]
+    public async Task Concurrent_rule_checkers_share_only_completed_structural_facts()
+    {
+        var noise = string.Concat(Enumerable.Repeat("_ = 42;", 300));
+        var compilation = Compile($$"""
+            using System.Diagnostics;
+            public static class Demo { public static void Run(string value) { {{noise}} Process.Start(value); } }
+            """);
+        var graph = Graph(compilation, "Demo", "Run");
+        var options = new Microsoft.CodeAnalysis.Diagnostics.AnalyzerOptions([]);
+        var config = new TaintConfiguration(new ConfigurationReader().GetBuiltinConfiguration(), compilation, options);
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(index => Task.Run(() =>
+        {
+            var command = index % 2 == 0;
+            var kind = (SinkKind)(int)(command ? TaintType.CommandInjection : TaintType.CrossSiteScripting);
+            var checker = new SinkReachability(compilation, config.GetSinkSymbolMap(kind));
+            for (var attempt = 0; attempt < 64; attempt++)
+            {
+                using var budget = new AnalysisWorkBudget(64, CancellationToken.None);
+                try { return checker.MayReachSink(graph) == command; }
+                catch (AnalysisWorkLimitException error) { Assert.Same(budget, error.Budget); }
+            }
+            return false;
+        })));
+        Assert.All(results, Assert.True);
+    }
+
+    [Fact]
+    public void A_sink_after_large_catalogue_array_initialization_is_not_cached_as_absent()
+    {
+        var catalogue = string.Join(",", Enumerable.Repeat("\"fixed\"", 400));
+        var compilation = Compile($$"""
+            using System.Diagnostics;
+            public static class Demo {
+                public static void Run(string value) { var entries = new[] { {{catalogue}} }; Process.Start(value); }
+            }
+            """);
+        var graph = Graph(compilation, "Demo", "Run");
+        var checker = Checker(compilation);
+        using (var budget = new AnalysisWorkBudget(64, CancellationToken.None))
+            Assert.Throws<AnalysisWorkLimitException>(() => checker.MayReachSink(graph));
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            using var budget = new AnalysisWorkBudget(64, CancellationToken.None);
+            try { Assert.True(checker.MayReachSink(graph)); return; }
+            catch (AnalysisWorkLimitException error) { Assert.Same(budget, error.Budget); }
+        }
+        Assert.Fail("The interrupted array catalogue never completed its structural scan.");
+    }
+
     [Fact]
     public void Proves_a_recursive_sink_free_closure_without_poisoning_a_sink_bearing_cycle()
     {

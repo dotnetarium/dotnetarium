@@ -12,6 +12,14 @@ internal sealed class ProjectAnalysisOptions(AnalyzerConfigOptionsProvider origi
     internal static async Task<AnalyzerConfigOptionsProvider> WithTestProjectMetadataAsync(
         AnalyzerConfigOptionsProvider original, string projectPath, string msbuildPath, string? configuration = null, string? framework = null)
     {
+        var values = await ReadMetadataAsync(projectPath, msbuildPath, configuration, framework);
+        return new ProjectAnalysisOptions(original, values.GetValueOrDefault("IsTestProject", "false"),
+            values.GetValueOrDefault("UsingMicrosoftNETSdkBlazorWebAssembly", "false"));
+    }
+
+    internal static async Task<Dictionary<string, string>> ReadMetadataAsync(
+        string projectPath, string msbuildPath, string? configuration = null, string? framework = null)
+    {
         var start = new ProcessStartInfo("dotnet")
         {
             WorkingDirectory = Path.GetDirectoryName(projectPath)!,
@@ -21,7 +29,7 @@ internal sealed class ProjectAnalysisOptions(AnalyzerConfigOptionsProvider origi
             CreateNoWindow = true
         };
         foreach (var argument in new[] { "exec", Path.Combine(msbuildPath, "MSBuild.dll"), projectPath,
-                     "-getProperty:IsTestProject,UsingMicrosoftNETSdkBlazorWebAssembly", "-nologo", "-verbosity:quiet" }) start.ArgumentList.Add(argument);
+                     "-getProperty:IsTestProject,UsingMicrosoftNETSdkBlazorWebAssembly,TargetFramework,TargetFrameworks", "-nologo", "-verbosity:quiet" }) start.ArgumentList.Add(argument);
         if (configuration != null) start.ArgumentList.Add("-property:Configuration=" + configuration);
         if (framework != null) start.ArgumentList.Add("-property:TargetFramework=" + framework);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not read project metadata.");
@@ -38,8 +46,7 @@ internal sealed class ProjectAnalysisOptions(AnalyzerConfigOptionsProvider origi
             throw new InvalidOperationException($"Could not read test-project metadata for {projectPath}: {await error}");
         using var properties = System.Text.Json.JsonDocument.Parse(await output);
         var values = properties.RootElement.GetProperty("Properties");
-        return new ProjectAnalysisOptions(original, values.GetProperty("IsTestProject").GetString() ?? "false",
-            values.GetProperty("UsingMicrosoftNETSdkBlazorWebAssembly").GetString() ?? "false");
+        return values.EnumerateObject().ToDictionary(value => value.Name, value => value.Value.GetString() ?? "", StringComparer.OrdinalIgnoreCase);
     }
 
     public override AnalyzerConfigOptions GlobalOptions { get; } = new GlobalProjectOptions(original.GlobalOptions, isTestProject, blazorWebAssembly);

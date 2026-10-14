@@ -10,6 +10,7 @@ internal sealed class ScanReport(bool allowTaintCutoffs = false)
     internal ConcurrentQueue<ScanNotice> Notices { get; } = new();
     internal ConcurrentBag<string> AnalyzedProjects { get; } = [];
     internal ConcurrentBag<string> SkippedProjects { get; } = [];
+    internal ConcurrentBag<string> ExcludedTestProjects { get; } = [];
     // Parallel project stages are accumulated elapsed time, not scan wall time.
     internal ConcurrentDictionary<string, double> StageSeconds { get; } = new(StringComparer.Ordinal);
     internal void RecordElapsed(string stage, long started)

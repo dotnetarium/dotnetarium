@@ -71,6 +71,7 @@ fixture checks query inputs, a three-component stored-message flow, unsafe
 `DisableHtml()` output, encoded negative controls and generator load failure on
 .NET 8 and .NET 10. See `tests/MarkupArchiveSmoke/Test.ps1`.
 
-The tool's experimental `-nb` / `--no-build` mode reports partial coverage when
-generated C# has not been supplied. It does not run SDK generators. See
+The tool's experimental `-nb` / `--no-build` mode runs the selected SDK's official
+Razor generator in memory, without targets, restore or application emission.
+It reports partial coverage when generation or other required inputs are missing. See
 [scan modes](scan-modes.md) for requirements and exit codes.

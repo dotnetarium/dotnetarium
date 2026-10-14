@@ -1,4 +1,5 @@
-# Bind against real framework assemblies, without running restore or generators.
+# Bind against real framework assemblies without targets/restore. The official
+# SDK Razor generator is the only generator permitted in no-build mode.
 foreach ($framework in @('net8.0', 'net10.0')) {
     $app = Join-Path $scratch "blazor-usings-$framework"
     New-Item -ItemType Directory -Path $app -Force | Out-Null
@@ -34,8 +35,11 @@ public static class Services {
         if ((HasNotice $run 'compiler-error') -ne $expectError) {
             throw "Incorrect Blazor implicit using binding: $framework/$case. Reports: $scratch"
         }
-        if ($case -ne 'plain-sdk' -and -not (HasNotice $run 'generation')) {
-            throw 'Blazor implicit usings must not hide skipped Razor generation.'
+        if ($case -eq 'plain-sdk' -and -not (HasNotice $run 'generation')) {
+            throw 'Razor inputs outside a Razor-enabled SDK must disclose unavailable generation.'
+        }
+        if ($case -ne 'plain-sdk' -and (HasNotice $run 'razor-generation')) {
+            throw 'The official Razor generator failed for the conventional Blazor fixture.'
         }
         if (@($run.results | Where-Object { $_.ruleId -in @('AD0001', 'DNA9000') }).Count) {
             throw "Analyzer failure in Blazor using fixture: $framework/$case."

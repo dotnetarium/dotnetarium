@@ -71,7 +71,9 @@ storage; use explicit property-source contracts for persisted untrusted data.
 Default work limits still apply. Large component methods can exhaust the budget
 before reaching a sink, even when the API and browser source are modeled. Inspect
 coverage notices before interpreting an absent finding as safe. No-build mode
-does not supply missing Razor generator output; use project mode for that coverage.
+runs the official SDK Razor generator in memory for conventional Web/Razor/Blazor
+projects. Missing or failed generation is disclosed while ordinary C# scanning
+continues; custom build inputs can still require project mode.
 
 The CLI uses Roslyn 5.9 for current SDK generator compatibility and reports
 analyzer/generator assembly load failures as incomplete coverage. The analyzer

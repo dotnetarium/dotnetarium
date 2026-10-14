@@ -61,7 +61,7 @@ The tool accepts `.csproj`, `.sln` and `.slnx` files. Default loading uses SDK/M
 | `--verify-secrets` | Opt into credential checks against supported providers (no separate login) |
 | `--config-include <glob>` | Limit credential scanning to matching config paths; repeatable |
 | `--config-exclude <glob>` | Exclude matching config paths from credential scanning; repeatable |
-| `-nb`, `--no-build` | Use experimental loading without build targets, restore or generators |
+| `-nb`, `--no-build` | Experimental: no targets/restore; official SDK Razor generation only |
 | `--configuration <name>` | Select the configuration; default is `Debug` |
 | `--framework <net8.0\|net10.0>` | Select the root projects' target framework |
 | `-h`, `--help` | Show usage |
@@ -96,7 +96,9 @@ dotnetarium MyApp.sln -nb --sarif exploratory.sarif
 
 Use `-nb` when unusual build steps or compiler errors prevent a normal scan. It reconstructs conventional SDK project inputs and runs the same Roslyn analysis on resolvable code. It remains opt-in.
 
-No-build mode never restores packages or runs source generators. It needs framework reference packs and validated existing package assets for accurate API binding. Missing references, unsupported build logic and unavailable generated code reduce coverage. Prefer default loading for Razor/Blazor and other generated-code-heavy projects. See [scan modes](docs/scan-modes.md) for supported inputs and requirements.
+No-build mode never restores packages or runs build targets. It runs only the official SDK Razor generator in memory for Razor/Blazor C#, without emitting the application. It needs framework reference packs and validated existing package assets for accurate API binding. Missing references, unsupported build logic and failed generation reduce coverage. See [scan modes](docs/scan-modes.md) for supported inputs and requirements.
+
+Solution scans exclude projects marked as tests by default. Referenced test projects can supply symbols without being analyzed. Scan a test `.csproj` explicitly when needed.
 
 The NuGet analyzer uses the compilation supplied by its compiler or IDE. It has no `-nb` setting and cannot make a failing build continue; use the tool for that workflow.
 

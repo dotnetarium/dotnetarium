@@ -43,7 +43,7 @@ internal static class Program
             var report = new ScanReport(allowTaintCutoffs: options.NoBuild);
             var selection = new ScanSelection(options.Configuration, options.Framework);
             Console.WriteLine(options.NoBuild
-                ? "Scan mode: no-build (experimental). Targets, restore and source generators are not run."
+                ? "Scan mode: no-build (experimental). Targets and restore are not run; only official SDK Razor generation is enabled."
                 : "Scan mode: project (default).");
             var configRoot = ConfigurationFileScanner.FindRoot(target);
             var outputRoot = configRoot;
@@ -109,7 +109,9 @@ internal static class Program
                 if (compilation == null || !compilation.SyntaxTrees.Any() ||
                     compilation.GetSpecialType(SpecialType.System_Object).TypeKind == TypeKind.Error)
                 {
-                    report.Fail("compilation-load", $"Unable to compile {project.Name}.");
+                    if (options.NoBuild && inputs!.RazorProjects.Contains(project.Id) && compilation != null && !compilation.SyntaxTrees.Any())
+                        report.Warn("razor-generation", $"{project.Name}: no C# remains after unavailable Razor generation; other projects continue.");
+                    else report.Fail("compilation-load", $"Unable to compile {project.Name}.");
                     report.SkippedProjects.Add(project.Name);
                     return;
                 }
@@ -201,6 +203,8 @@ internal static class Program
             foreach (var notice in report.Notices.Distinct().OrderBy(notice => notice.Id, StringComparer.Ordinal).ThenBy(notice => notice.Message, StringComparer.Ordinal))
                 Console.Error.WriteLine($"{(notice.IsFailure ? "Error" : "Coverage")}: {notice.Message}");
             Console.WriteLine($"{findings.Length} security finding(s){(report.IsPartial ? " (partial scan)" : string.Empty)}; {report.AnalyzedProjects.Count} project compilation(s) analyzed.");
+            if (!report.ExcludedTestProjects.IsEmpty)
+                Console.WriteLine($"{report.ExcludedTestProjects.Distinct().Count()} test project(s) excluded from analysis.");
             if (options.SarifPath != null)
                 await SarifWriter.WriteAsync(options.SarifPath, target, findings, report, options.NoBuild ? "no-build" : "project", outputRoot);
             if (report.HasExecutionFailures)
@@ -231,7 +235,7 @@ internal static class Program
         "  --verify-secrets           Check supported credentials online (opt-in)\n" +
         "  --config-include <glob>    Include matching config files (repeatable)\n" +
         "  --config-exclude <glob>    Exclude matching config files (repeatable)\n" +
-        "  -nb, --no-build            Experimental: scan without targets, restore or generators\n" +
+        "  -nb, --no-build            Experimental: no targets/restore; SDK Razor generation only\n" +
         "  --configuration <name>     Select configuration (default: Debug)\n" +
         "  --framework <net8.0|net10.0> Select root target framework\n" +
         "  -h, --help                 Show this help");

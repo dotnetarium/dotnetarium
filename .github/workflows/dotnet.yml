@@ -29,6 +29,11 @@ jobs:
       - name: Check Godot RPC and crypto coverage in both loading modes
         shell: pwsh
         run: ./tests/GameEngineSmoke/Test.ps1
+      - name: Check no-build Razor generation and default test exclusion
+        shell: pwsh
+        run: |
+          ./tests/NoBuildRazorSmoke/Test.ps1
+          ./tests/TestSelectionSmoke/Test.ps1
       - name: Pack analyzer and global tool
         run: |
           dotnet pack Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj -c Release -p:RunAnalyzers=false -o artifacts
@@ -73,6 +78,11 @@ jobs:
       - name: Scan with lowercase project config
         shell: pwsh
         run: ./tests/CliSmoke/Test.ps1
+      - name: Check no-build Razor generation and default test exclusion
+        shell: pwsh
+        run: |
+          ./tests/NoBuildRazorSmoke/Test.ps1
+          ./tests/TestSelectionSmoke/Test.ps1
       - name: Check Godot RPC and crypto coverage in both loading modes
         shell: pwsh
         run: ./tests/GameEngineSmoke/Test.ps1

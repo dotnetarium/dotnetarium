@@ -497,3 +497,23 @@ the BinaryFormatter path at the default budget; final builds cut off that method
 API coverage and a clean compiler therefore do not guarantee complete bounded
 interprocedural analysis. Project loading also retained the fixture's two NuGet
 vulnerability advisory workspace notices.
+
+## No-build Razor generation
+
+Running the official SDK Razor generator in memory recovered the missing Razor
+coverage on the same fixture. A sequential pair reported the same **25 finding
+locations** in both modes: project mode took **10.55 seconds / 382 MiB** and
+no-build took **7.64 seconds / 338 MiB**. Razor generation accounted for **2.31
+seconds** of no-build loading. Both retained **53 budget notices**; these results
+do not establish complete vulnerability coverage. No-build emitted no application
+assemblies and reported no compiler errors or Razor generation failures.
+
+A final repeat took **11.46 seconds / 382 MiB** in project mode and **7.44 seconds
+/ 319 MiB** in no-build mode. No-build retained all 25 project finding locations
+and also reported the previously budget-sensitive BinaryFormatter path (26
+records, 52 budget notices). Bounded analysis can still vary at that boundary.
+
+Solution scans now exclude marked test projects before loading independent roots.
+Required test dependencies remain available for binding, but are not analyzed.
+An explicitly selected test project remains eligible. This intentional scope
+selection is reported separately from incomplete coverage.

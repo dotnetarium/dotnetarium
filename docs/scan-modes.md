@@ -22,6 +22,33 @@ dotnetarium MyApp.csproj --no-build --configuration Release --framework net10.0
 | Taint cutoffs | Return exit 2; retain findings | Warn and mark coverage partial; retain findings |
 | Analyzer failures | Return exit 2 | Return exit 2 |
 
+## CLI options
+
+| Option | Purpose |
+| --- | --- |
+| `--sarif <path>` | Write SARIF 2.1.0 with relative paths and available data flows |
+| `--config <path>` | Override discovered `dotnetarium.json` |
+| `--fail` | Return 1 for findings when there is no fatal scan failure |
+| `-nb`, `--no-build` | Select experimental no-build loading |
+| `--configuration <name>` | Select configuration; default is `Debug` |
+| `--framework <net8.0\|net10.0>` | Select root target framework and compatible dependencies |
+| `--respect-editorconfig` | Apply configured rule severity/suppression; off by default in the CLI |
+| `--verify-secrets` | Verify supported configuration credentials online; off by default |
+| `--config-include <glob>` | Limit credential files to matching paths; repeatable |
+| `--config-exclude <glob>` | Exclude matching credential files; repeatable |
+| `-h`, `--help` | Print usage |
+
+For example, limit credential scanning while retaining the C# scan:
+
+```sh
+dotnetarium src/MyApp.sln --config-include '**/*.json' --config-include '.github/**/*.yml' --config-exclude '**/fixtures/' --sarif results.sarif --fail
+```
+
+Quote globs to prevent shell expansion. They are relative to each printed config
+scan root; includes are combined and exclusions take precedence. They also apply
+to explicit configuration `AdditionalFiles`, without changing C# project selection
+or loading of `dotnetarium.json`. See [credential scope](rules/DNA0022.md).
+
 ## Requirements and limits
 
 The tool needs the .NET 10 runtime. Default loading also needs a compatible SDK

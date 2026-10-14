@@ -1,180 +1,122 @@
 # Dotnetarium
 
-Dotnetarium finds security problems in modern C# code. It follows untrusted data through methods and checks unsafe API settings. Findings use `DNA` rule IDs with CWE metadata.
+Dotnetarium finds security problems in modern C# applications. It follows untrusted data to sensitive APIs and checks unsafe settings, reporting `DNA` rule IDs with CWE metadata.
 
-Use the **NuGet analyzer** for build and IDE warnings, or the **global tool** to scan projects and export SARIF for CI. Both use the same rules and taint engine.
+Use the **NuGet analyzer** for build and IDE warnings, or the **global tool** for independent scans and SARIF reports. Both share the same rules and taint engine.
 
-## What it checks
-
-| Area | Rules |
-| --- | --- |
-| Injection and unsafe output | SQL (`DNA0001`), OS commands (`DNA0002`), HTML/XSS (`DNA0003`), LDAP filters and distinguished names (`DNA0006`), XPath (`DNA0007`), dynamic code (`DNA0012`) |
-| Files and network destinations | Untrusted file paths and archive extraction (`DNA0004`), open redirects (`DNA0005`), SSRF (`DNA0011`) |
-| Deserialization and XML | Risky Json.NET type-name handling (`DNA0008`), explicitly unsafe XML external-entity resolution (`DNA0021`), restored BinaryFormatter deserialization of untrusted data (`DNA0023`) |
-| Credentials and cookies | Hard-coded passwords or keys used by C# APIs (`DNA0009`), unsafe Secure/HttpOnly/SameSite settings (`DNA0010`) |
-| Cryptography | Legacy ciphers (`DNA0013`), ECB (`DNA0014`), fixed IVs/nonces (`DNA0015`), low PBKDF2 work factors (`DNA0016`), literal post-quantum private keys (`DNA0017`) |
-| Transport configuration | Detailed gRPC errors (`DNA0018`), gRPC call credentials over plaintext (`DNA0019`), accept-all TLS certificate callbacks (`DNA0020`) |
-
-**Hard-coded network credentials (`DNA0022`)** checks configuration files for recognizable provider tokens and authentication keys, even when no code uses them. **Hard-coded secrets in code (`DNA0009`)** checks literal passwords or keys passed to security-sensitive C# APIs. Supported configuration providers include GitHub, AWS, Azure, Google Cloud, DigitalOcean, Vault, Terraform Cloud and GitLab. The CLI scans the containing Git repository, including root workflows when the solution is in `src/`; outside Git it scans the solution/project directory. The NuGet analyzer checks project configuration through automatically included `AdditionalFiles`. Detection is offline by default; the CLI can optionally verify supported credentials without a separate account or login. Secret values are omitted from output. See [configuration credential scanning](docs/rules/DNA0022.md) for scope and supported formats.
-
-Models cover framework APIs and selected provider APIs, including ADO.NET, EF Core, Dapper, Npgsql/PostgreSQL, SharpCompress, Markdig, RazorLight, Bouncy Castle, NSec and Sodium.Core. Coverage is specific to modeled APIs; using a library does not make every call unsafe. See the [rule notes](docs/rules) for supported sinks, safe alternatives and limitations.
-
-Input coverage includes MVC and Razor Pages, Minimal APIs and endpoint filters, Razor/Blazor events and component state, gRPC requests and streams, SignalR, accepted WebSockets, HTTP pipelines, message consumers and Azure Functions isolated-worker triggers. Server/Auto component execution can carry browser input to server-side sinks; WebAssembly browser callbacks are excluded from those contexts. Direct rules also check user code mapped from generated Razor.
-
-Razor/Blazor checks distinguish encoded text from raw HTML and account for explicit render modes. Markdown rendering preserves untrusted data; it does not sanitize HTML. Stored content can be modeled through an explicit property source; database writes and later reads are not automatically correlated. See [Razor/Blazor](docs/razor-blazor-taint.md) and [stored HTML and Markdown](docs/stored-html.md).
-
-Game engine C# models include Godot `AnyPeer` RPCs, Unity Netcode server RPCs and native Godot process/AES APIs. Godot .NET 8/10 projects have CLI checks in both modes; full Unity project loading remains a separate integration gap. See [game engine coverage and limitations](docs/game-engines.md).
-
-## Install
-
-Add the analyzer to each C# project you want checked:
+## Get started
 
 ```sh
 dotnet add MyApp.csproj package Dotnetarium.Analyzers
-```
-
-Install or update the scanner:
-
-```sh
 dotnet tool install --global dotnetarium
-dotnet tool update --global dotnetarium
-```
-
-The tool needs the **.NET 10 runtime** and scans C# projects targeting **.NET 8 or .NET 10**. Default project loading also needs a compatible installed SDK. The analyzer requires a **Roslyn 5.0 or newer host**, such as Visual Studio 2026; Visual Studio 2022 cannot load this analyzer version. Version 2.x does not support VB.NET or .NET Framework.
-
-## Scan a project or solution
-
-```sh
-dotnetarium MyApp.sln
 dotnetarium MyApp.sln --sarif results.sarif --fail
-dotnetarium MyApp.csproj --configuration Release --framework net10.0
 ```
 
-The tool accepts `.csproj`, `.sln` and `.slnx` files. Default loading uses SDK/MSBuild design-time evaluation and Roslyn, including available source generators. It does not emit the application's assembly. The SDK is selected from the target directory, respecting `global.json`; multiple installed SDKs are supported.
+Update the tool with `dotnet tool update --global dotnetarium`.
 
-| Option | Purpose |
+| Component | Requirements |
 | --- | --- |
-| `--sarif <path>` | Write SARIF 2.1.0 |
-| `--config <path>` | Use a specific JSON rules configuration |
-| `--fail` | Return exit code 1 when security findings are present |
-| `--respect-editorconfig` | Opt into configured rule severity and suppression |
-| `--verify-secrets` | Opt into credential checks against supported providers (no separate login) |
-| `--config-include <glob>` | Limit credential scanning to matching config paths; repeatable |
-| `--config-exclude <glob>` | Exclude matching config paths from credential scanning; repeatable |
-| `-nb`, `--no-build` | Experimental: no targets/restore; official SDK Razor generation only |
-| `--configuration <name>` | Select the configuration; default is `Debug` |
-| `--framework <net8.0\|net10.0>` | Select the root projects' target framework |
-| `-h`, `--help` | Show usage |
+| Projects | C# targeting .NET 8 or .NET 10 |
+| NuGet analyzer | Roslyn 5.0+ host, such as the .NET 10 SDK or Visual Studio 2026 |
+| Global tool | .NET 10 runtime; a compatible SDK for project loading or Razor generation |
 
-The CLI reports all enabled rules by default, independently of `.editorconfig` rule suppression. Use `--respect-editorconfig` to apply project policy to code findings and ancestor policy to independently scanned configuration files. The NuGet analyzer always honors its compiler/IDE configuration. JSON models and analysis profiles apply in both CLI policies.
+Version 2.x does not support VB.NET, .NET Framework or Visual Studio 2022.
 
-Provider credentials in configuration files are scanned from the nearest Git root, so `.github/` is included even when the solution is under `src/`. Without Git, scanning starts at the project/solution directory. The CLI checks classic GitHub token checksums offline. Cloud credentials require a distinctive secret prefix or provider-specific context; public identifiers such as AWS access-key IDs and Azure client IDs are excluded. See [credential detection and file scope](docs/rules/DNA0022.md).
+## What it checks
 
-To scan selected config paths, quote globs and repeat the options as needed:
+| Area | Checks |
+| --- | --- |
+| Injection | SQL, OS commands, LDAP, XPath and dynamic code execution |
+| Web and networking | Raw HTML/XSS, open redirects, SSRF, cookie settings, TLS certificate validation and gRPC configuration |
+| Files and serialization | File paths, archive extraction, unsafe XML resolution, Json.NET type handling and explicitly restored BinaryFormatter |
+| Cryptography | Legacy ciphers, ECB, fixed IVs/nonces, low PBKDF2 work factors and literal post-quantum private keys |
+| Credentials | Literal secrets used by C# APIs (`DNA0009`) and recognizable provider credentials in configuration files (`DNA0022`) |
 
-```sh
-dotnetarium src/MyApp.sln --config-include '**/*.json' --config-include '.github/**/*.yml' --config-exclude '**/fixtures/' --fail
-```
+Input models include ASP.NET Core, Razor/Blazor, gRPC, SignalR, WebSockets, messaging, Azure Functions and selected game-engine RPCs. Library models include Dapper, Npgsql, SharpCompress, Markdig and selected cryptography APIs. Coverage depends on the modeled APIs and available references; see the [rule notes](docs/rules) and [framework guides](#guides).
 
-Globs are relative to each printed config scan root. Includes are combined; exclusions take precedence. These options affect credential files, including explicit `AdditionalFiles`, without changing C# project selection or loading `dotnetarium.json`.
+## Scan
 
-Add `--verify-secrets` to check whether detected configuration-file credentials still work. No separate provider login is needed; the CLI contacts the provider using the detected credential. The NuGet analyzer remains offline.
+The tool accepts `.csproj`, `.sln` and `.slnx` files:
 
 ```sh
-dotnetarium src/MyApp.sln --verify-secrets --sarif findings.sarif --fail
-```
-
-Results say **credential accepted**, **credential rejected**, or **not verified**. All findings remain reported and count for `--fail`.
-
-Checks cover GitHub, GitLab.com, DigitalOcean, Terraform Cloud, AWS credential pairs, and Azure Storage/Cosmos account keys. AWS and Azure need matching context in the scanned file. See [supported credentials and how to read results](docs/rules/DNA0022.md#verification-and-reduction).
-
-### Experimental no-build mode (2.4+)
-
-```sh
+dotnetarium MyApp.csproj --configuration Release --framework net10.0
 dotnetarium MyApp.sln -nb --sarif exploratory.sarif
 ```
 
-Use `-nb` when unusual build steps or compiler errors prevent a normal scan. It reconstructs conventional SDK project inputs and runs the same Roslyn analysis on resolvable code. It remains opt-in.
-
-No-build mode never restores packages or runs build targets. It runs only the official SDK Razor generator in memory for Razor/Blazor C#, without emitting the application. It needs framework reference packs and validated existing package assets for accurate API binding. Missing references, unsupported build logic and failed generation reduce coverage. See [scan modes](docs/scan-modes.md) for supported inputs and requirements.
-
-Solution scans exclude projects marked as tests by default. Referenced test projects can supply symbols without being analyzed. Scan a test `.csproj` explicitly when needed.
-
-The NuGet analyzer uses the compilation supplied by its compiler or IDE. It has no `-nb` setting and cannot make a failing build continue; use the tool for that workflow.
-
-### Results and exit codes
-
-Findings are printed with source locations, rule IDs and CWE groups. SARIF uses relative source paths, maps generated Razor findings back to their original files, includes available engine data-flow paths, and defines rule descriptions once per run.
-
-| Code | Meaning |
+| Mode | How it loads code |
 | --- | --- |
-| `0` | Analysis finished; findings do not fail the command unless `--fail` is set |
-| `1` | Security findings are present and `--fail` is set |
-| `2` | Invalid input/configuration, unusable inputs or an analyzer failure; default mode also fails on compiler/workspace errors and taint cutoffs |
+| Project mode, default | SDK/MSBuild design-time evaluation and available generators; SDK selection respects `global.json` |
+| `-nb` / `--no-build`, experimental | Reconstructs SDK inputs without targets or restore; runs only the official SDK Razor generator in memory |
 
-**No-build compiler errors and taint cutoffs are nonfatal:** the scan can return 0, or 1 with `--fail`, while coverage is partial. Notices remain visible in the console and SARIF. Check `dotnetarium.loadingMode` and `dotnetarium.coverage` in SARIF invocation properties when CI requires complete coverage. Zero findings in a partial scan do not establish that skipped paths are safe.
+Solution scans exclude test projects in both modes. Pass a test `.csproj` explicitly to scan it. No-build mode needs installed reference packs and existing validated package assets; unresolved code or missing generators reduce coverage. See [scan modes and requirements](docs/scan-modes.md).
 
-## Configure rules
+| Common option | Purpose |
+| --- | --- |
+| `--sarif <path>` | Export SARIF 2.1.0 with relative paths and available data flows |
+| `--fail` | Fail the command when security findings are present |
+| `--config <path>` | Select a JSON rules configuration |
+| `--configuration <name>` | Select configuration; default is `Debug` |
+| `--framework <net8.0\|net10.0>` | Select root target framework |
+| `--respect-editorconfig` | Honor project rule severity and suppression; CLI reports all rules by default |
+| `--verify-secrets` | Check supported configuration credentials with their providers; detection is otherwise offline |
+| `--help` | Show all options, including configuration-file include/exclude globs |
 
-Place lowercase `dotnetarium.json` beside a project. The analyzer package includes it automatically, and the tool discovers it during a scan. For solution scans, a file beside the solution applies to projects without their own configuration. `--config path/to/rules.json` overrides discovery for the tool.
+Credential scanning starts at the nearest Git root, including root workflows when the solution is under `src/`. Outside Git it starts at the project/solution directory. The analyzer checks configuration supplied through `AdditionalFiles`. Secret values are omitted from output. See [credential detection, scope and verification](docs/rules/DNA0022.md).
 
-Remote input sources are enabled by default. To also check console input, process arguments and environment values:
+| Exit code | Meaning |
+| --- | --- |
+| `0` | No fatal scan failure; findings are allowed without `--fail` |
+| `1` | Findings are present and `--fail` is set |
+| `2` | Invalid/unusable inputs or analyzer failure; project mode also fails on compiler/workspace errors and taint cutoffs |
+
+In no-build mode, compiler errors and taint cutoffs are nonfatal but mark coverage **partial**. Check SARIF's `dotnetarium.coverage` when CI requires complete inputs. A partial scan with zero findings does not establish safety.
+
+## Configure
+
+Place lowercase `dotnetarium.json` beside a project or solution. The analyzer package includes project configuration automatically; the tool discovers it or uses `--config`. JSON models extend built-in sources, sinks and sanitizers.
 
 ```json
 {
   "Version": "2.0",
+  "AnalysisProfile": "full",
   "ThreatModels": ["remote", "local"]
 }
 ```
 
-Custom JSON models extend built-in sources, sinks, sanitizers and transfers. Model the actual trust boundary rather than marking every DTO or database string as untrusted. See the [configuration guide](docs/RuleConfiguration.md) for examples, input scope and work-budget settings.
+Remote inputs are enabled by default. Add `local` to check console input, process arguments and environment values.
 
-### Analysis profiles
+| Profile | Default use | Method/lambda depth | Work units per root/rule |
+| --- | --- | ---: | ---: |
+| `fast` | NuGet analyzer: build and IDE | 3 | 2,500 |
+| `full` | CLI: both loading modes | 5 | 5,000 |
+| `max` | Explicit opt-in | 10 | 10,000 |
 
-| Profile | Default host | Method and lambda/local-function depth | Work units per method/rule |
-| --- | --- | --- | --- |
-| `fast` | NuGet analyzer in builds and IDEs | 3 | 2,500 |
-| `full` | Global tool, including no-build scans | 5 | 5,000 |
-| `max` | Explicit opt-in for deeper analysis | 10 | 10,000 |
+Profiles change analysis effort, not rules. Cutoffs retain other findings and report partial coverage through `DNA9000`. See [configuration, numeric overrides and scope](docs/RuleConfiguration.md) and [performance comparisons](docs/performance-budget-matrix.md).
 
-All profiles use the same rules and input models. Fast analysis favors feedback during development; full and max explore deeper flows. To select a profile for the NuGet analyzer or tool, add `"AnalysisProfile": "full"` or `"AnalysisProfile": "max"` to `dotnetarium.json`. Individual numeric limits override profile defaults. See [profile configuration](docs/RuleConfiguration.md#analysis-profiles-and-call-depth).
-
-Fast analysis stops a method when it reaches its work or call-depth limit and summarizes partial coverage once per rule with `DNA9000`. It does not infer a finding through an unvisited helper. Use full analysis for deeper checks before release.
-
-Rules report warnings by default. Change severity or suppress a rule using `.editorconfig`:
-
-```ini
-[*.cs]
-dotnet_diagnostic.DNA0010.severity = error
-```
-
-Taint analysis has a per-method work budget to bound recursive expansion. Cutoffs retain other findings and produce coverage notices. EF migrations and model snapshots skip taint analysis; direct literal-secret checks remain enabled. See [analysis scope and limits](docs/RuleConfiguration.md#ef-migration-scope). For intentional TLS exceptions in development, DEBUG-only code or test projects, see [DNA0020](docs/rules/DNA0020.md).
+Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `dotnet_diagnostic.DNAxxxx.severity` to change a rule's severity. The CLI requires `--respect-editorconfig` to apply that policy.
 
 ## Guides
 
-- [Minimal APIs and custom binding](docs/minimal-api-taint.md)
-- [Razor and Blazor](docs/razor-blazor-taint.md) and [stored HTML/Markdown](docs/stored-html.md)
-- [gRPC](docs/grpc-taint.md) and [SignalR](docs/signalr-taint.md)
-- [MassTransit, RabbitMQ and Kafka](docs/messaging-taint.md)
-- [Azure Functions isolated worker](docs/azure-functions-taint.md)
-- [Scan modes](docs/scan-modes.md), [performance and limits](docs/scan-performance.md), and [configuration](docs/RuleConfiguration.md)
+| Topic | Documentation |
+| --- | --- |
+| Web input and rendering | [Minimal APIs](docs/minimal-api-taint.md), [Razor/Blazor](docs/razor-blazor-taint.md), [stored HTML/Markdown](docs/stored-html.md) |
+| RPC and messaging | [gRPC](docs/grpc-taint.md), [SignalR](docs/signalr-taint.md), [message consumers](docs/messaging-taint.md), [Azure Functions](docs/azure-functions-taint.md) |
+| Game engines | [Godot and Unity coverage](docs/game-engines.md) |
+| Coverage and performance | [Scan modes](docs/scan-modes.md), [engine limits](docs/scan-performance.md) |
+| Development | [Architecture](docs/Architecture.md), [releasing](docs/Releasing.md) |
 
-## Run from source
-
-With a .NET 10 SDK installed, clone this repository and run from its root:
+Run from source with a .NET 10 SDK:
 
 ```sh
-dotnet run --project Dotnetarium.Tool/Dotnetarium.Tool.csproj -- MyApp.sln --sarif results.sarif --fail
+dotnet run --project Dotnetarium.Tool -- MyApp.sln --sarif results.sarif --fail
 ```
-
-The repository contains the analyzer, tool, xUnit tests and selected Roslyn flow utilities. See the [architecture](docs/Architecture.md) and [release instructions](docs/Releasing.md).
 
 ## Moving from 1.x
 
-New features go to 2.x. Version [1.3.0](https://github.com/dotnetarium/dotnetarium/releases/tag/v1.3.0) remains available for VB.NET and .NET Framework 4.8 projects on [`release/1.x`](https://github.com/dotnetarium/dotnetarium/tree/release/1.x).
+New features go to 2.x. [1.3.0](https://github.com/dotnetarium/dotnetarium/releases/tag/v1.3.0) remains available for VB.NET and .NET Framework 4.8 on [release/1.x](https://github.com/dotnetarium/dotnetarium/tree/release/1.x).
 
-Replace `Dotnetarium.Analyzers.SCS` with `Dotnetarium.Analyzers` and the `dotnetarium-scs` command with `dotnetarium`. Rules have new sequential `DNA` IDs; update `.editorconfig` settings and SARIF filters. Replace YAML extensions with `dotnetarium.json`. Local input sources now require the explicit opt-in shown above.
+Replace `Dotnetarium.Analyzers.SCS` with `Dotnetarium.Analyzers`, `dotnetarium-scs` with `dotnetarium`, and YAML configuration with `dotnetarium.json`. Update suppressions and SARIF filters for the sequential `DNA` IDs. Local sources require explicit opt-in.
 
 ## License
 
-Dotnetarium 2.x is licensed under [Apache License 2.0](LICENSE). Bundled Roslyn sources retain their original licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).
+Dotnetarium 2.x uses [Apache License 2.0](LICENSE). Bundled Roslyn sources retain their original licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).

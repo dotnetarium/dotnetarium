@@ -56,6 +56,7 @@ public sealed partial class SinkCoverageTests
         new("Microsoft.AspNetCore.Mvc.RedirectResult", "DNA0005", "_ = new Microsoft.AspNetCore.Mvc.RedirectResult(input);"),
         new("Microsoft.AspNetCore.Http.Results", "DNA0005", "_ = Microsoft.AspNetCore.Http.Results.Redirect(input);"),
         new("Microsoft.AspNetCore.Http.TypedResults", "DNA0005", "_ = Microsoft.AspNetCore.Http.TypedResults.Redirect(input);"),
+        new("System.IO.FileSystemInfo", "DNA0004", "((System.IO.FileSystemInfo)new System.IO.FileInfo(input)).Delete();"),
         new("System.IO.DirectoryInfo", "DNA0004", "new System.IO.DirectoryInfo(input).Delete();"),
         new("System.Runtime.Loader.AssemblyLoadContext", "DNA0004", "_ = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromAssemblyPath(input);"),
         new("System.Runtime.InteropServices.NativeLibrary", "DNA0004", "_ = System.Runtime.InteropServices.NativeLibrary.Load(input);"),

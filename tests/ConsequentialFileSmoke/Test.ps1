@@ -39,6 +39,8 @@ using Microsoft.AspNetCore.Http;
 public class FileController : ControllerBase {
     public void Read(string path) { new FileInfo(path).OpenRead(); } // FIND
     public void Delete(string path) { new DirectoryInfo(path).Delete(true); } // FIND
+    public void AbstractDelete(string path) { FileSystemInfo file = new FileInfo(path); file.Delete(); } // FIND
+    public void Link(string path) { new FileInfo("fixed").CreateAsSymbolicLink(path); } // FIND
     public void Move(string path) { var file = new FileInfo(path); var alias = file; file.MoveTo("fixed"); alias.Delete(); } // FIND
     public void Load(string path) { AssemblyLoadContext.Default.LoadFromAssemblyPath(path); } // FIND
     public void Native(string path) { NativeLibrary.Load(path); } // FIND

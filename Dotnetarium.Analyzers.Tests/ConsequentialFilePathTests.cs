@@ -39,6 +39,11 @@ public sealed class ConsequentialFilePathTests
     [InlineData("var file = new System.IO.FileInfo(input); if (context.Request.Query.ContainsKey(\"move\")) file.MoveTo(\"fixed\"); file.Delete();", 2)]
     [InlineData("System.IO.FileInfo file = null; file?.Delete();", 0)]
     [InlineData("System.IO.FileInfo file = context.Request.Query.ContainsKey(\"delete\") ? new System.IO.FileInfo(input) : null; file?.Delete();", 1)]
+    [InlineData("System.IO.FileSystemInfo file = new System.IO.FileInfo(input); file.Delete();", 1)]
+    [InlineData("var file = new System.IO.FileInfo(input); System.IO.FileSystemInfo alias = file; file.MoveTo(\"fixed\"); alias.Delete();", 1)]
+    [InlineData("var file = new System.IO.FileInfo(\"fixed\"); System.IO.FileSystemInfo alias = file; file.MoveTo(input); alias.Delete();", 2)]
+    [InlineData("foreach (var file in new System.IO.DirectoryInfo(input).GetFileSystemInfos()) file.Delete();", 1)]
+    [InlineData("new System.IO.FileInfo(\"fixed\").CreateAsSymbolicLink(\"target\");", 0)]
     public async Task Paths_are_reported_at_consequential_operations(string body, int expected)
     {
         var findings = await FrameworkProbe.Analyze($$"""

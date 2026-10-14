@@ -44,6 +44,7 @@ public sealed partial class SinkCoverageTests
         new("System.IO.Compression.ZipFile", "ExtractToDirectory", "sourceArchiveFileName", "System.IO.Compression.ZipFile.ExtractToDirectory(input, \"fixed\");"),
         new("System.Formats.Tar.TarFile", "ExtractToDirectory", "sourceFileName", "System.Formats.Tar.TarFile.ExtractToDirectory(input, \"fixed\", true);"),
         new("System.Formats.Tar.TarFile", "ExtractToDirectoryAsync", "sourceFileName", "_ = System.Formats.Tar.TarFile.ExtractToDirectoryAsync(input, \"fixed\", true);"),
+        new("System.IO.FileSystemInfo", "CreateAsSymbolicLink", "pathToTarget", "new System.IO.FileInfo(\"fixed\").CreateAsSymbolicLink(input);"),
         new("System.IO.FileInfo", "CopyTo", "destFileName", "_ = new System.IO.FileInfo(\"fixed\").CopyTo(input);"),
         new("System.IO.FileInfo", "MoveTo", "destFileName", "new System.IO.FileInfo(\"fixed\").MoveTo(input);"),
         new("System.IO.FileInfo", "Replace", "destinationFileName", "_ = new System.IO.FileInfo(\"fixed\").Replace(input, \"backup\");"),
@@ -187,6 +188,8 @@ public sealed partial class SinkCoverageTests
         yield return M("Microsoft.AspNetCore.Http.Results", "DNA0005", "Redirect", "_ = Microsoft.AspNetCore.Http.Results.Redirect(input);");
         yield return M("Microsoft.AspNetCore.Http.TypedResults", "DNA0005", "Redirect", "_ = Microsoft.AspNetCore.Http.TypedResults.Redirect(input);");
 
+        yield return M("System.IO.FileSystemInfo", "DNA0004", "Delete", "((System.IO.FileSystemInfo)new System.IO.FileInfo(input)).Delete();");
+        yield return M("System.IO.FileSystemInfo", "DNA0004", "CreateAsSymbolicLink", "new System.IO.FileInfo(input).CreateAsSymbolicLink(\"fixed\");");
         yield return M("System.IO.DirectoryInfo", "DNA0004", "Delete", "new System.IO.DirectoryInfo(input).Delete();");
         yield return M("System.IO.DirectoryInfo", "DNA0004", "MoveTo", "new System.IO.DirectoryInfo(input).MoveTo(\"fixed\");");
         yield return M("System.Runtime.Loader.AssemblyLoadContext", "DNA0004", "LoadFromAssemblyPath", "_ = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromAssemblyPath(input);");

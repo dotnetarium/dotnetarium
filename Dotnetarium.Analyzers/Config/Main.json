@@ -1143,6 +1143,13 @@
   ],
   "Sinks": [
     {
+      "Type": "System.IO.FileSystemInfo", "TaintTypes": [ "PathEscape" ],
+      "Methods": [
+        { "Name": "Delete", "Arguments": [ ".This" ] },
+        { "Name": "CreateAsSymbolicLink", "Arguments": [ ".This", "pathToTarget" ] }
+      ]
+    },
+    {
       "Type": "System.IO.DirectoryInfo",
       "TaintTypes": [
         "PathEscape"

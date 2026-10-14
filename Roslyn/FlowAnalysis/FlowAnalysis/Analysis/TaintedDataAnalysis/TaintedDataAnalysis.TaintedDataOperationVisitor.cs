@@ -1252,7 +1252,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
             }
 
             private static bool IsFileSystemPathObject(ITypeSymbol? type) =>
-                type is INamedTypeSymbol { Name: "FileInfo" or "DirectoryInfo" } &&
+                type is INamedTypeSymbol { Name: "FileInfo" or "DirectoryInfo" or "FileSystemInfo" } &&
                 type.ContainingNamespace.ToDisplayString() == "System.IO";
 
             private static AnalysisEntity FileSystemPathEntity(AbstractLocation location) =>

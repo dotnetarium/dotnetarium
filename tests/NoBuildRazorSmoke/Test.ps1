@@ -15,6 +15,8 @@ function Findings($Run, $Count) {
         @($Run.results | Where-Object ruleId -eq 'DNA0002').Count -ne 1 -or
         @($Run.results | Where-Object { $_.ruleId -in @('AD0001','DNA9000') }).Count) {
         $Run.results | ConvertTo-Json -Depth 8 | Write-Output
+        $Run.invocations[0].toolExecutionNotifications | ConvertTo-Json -Depth 8 | Write-Output
+        $Run.invocations[0].properties.'dotnetarium.analysisSettings' | ConvertTo-Json -Depth 8 | Write-Output
         throw 'Razor/ordinary findings or safe controls differ.'
     }
     if (@($Run.results | Where-Object { -not $_.codeFlows }).Count) { throw 'Razor source flows were lost.' }

@@ -17,7 +17,7 @@ namespace Dotnetarium.Analyzers.Cookies
         public override void Initialize(AnalysisContext context)
         {
             context.EnableConcurrentExecution();
-            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
+            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.Analyze | GeneratedCodeAnalysisFlags.ReportDiagnostics);
             context.RegisterOperationBlockAction(AnalyzeBlock);
         }
 
@@ -28,6 +28,7 @@ namespace Dotnetarium.Analyzers.Cookies
             {
                 foreach (var operation in root.DescendantsAndSelf())
                 {
+                    if (context.IsGeneratedCode && !RazorCodeAnalysis.IsUserCode(operation.Syntax)) continue;
                     if (operation is ISimpleAssignmentOperation assignment &&
                         assignment.Target is IPropertyReferenceOperation property &&
                         TryGetSensitiveCookie(property, out var key, out var name))

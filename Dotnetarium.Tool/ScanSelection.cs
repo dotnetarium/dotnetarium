@@ -22,7 +22,8 @@ internal sealed record ScanSelection(string? Configuration = null, string? Frame
     internal void Apply(ScanInputs inputs, string target, ScanReport report)
     {
         if (Framework == null) return;
-        var roots = ProjectLoader.FindProjects(target).ToHashSet(ProjectLoader.PathComparer);
+        var roots = ProjectLoader.FindProjects(target).Where(path => !report.ExcludedTestProjects.Any(excluded =>
+            ProjectLoader.PathComparer.Equals(path, excluded))).ToHashSet(ProjectLoader.PathComparer);
         var all = inputs.Workspace.CurrentSolution.Projects.Where(project => project.Language == LanguageNames.CSharp).ToArray();
         var selected = all.Where(project => roots.Contains(project.FilePath ?? "") && FrameworkOf(project) == Framework).ToArray();
         foreach (var root in roots.Where(path => !selected.Any(project => ProjectLoader.PathComparer.Equals(project.FilePath, path))))
@@ -35,6 +36,7 @@ internal sealed record ScanSelection(string? Configuration = null, string? Frame
             foreach (var reference in project.ProjectReferences)
                 if (inputs.Workspace.CurrentSolution.GetProject(reference.ProjectId) is { } dependency) pending.Enqueue(dependency);
         }
+        if (inputs.SelectedProjects != null) ids.IntersectWith(inputs.SelectedProjects);
         inputs.SelectedProjects = ids;
     }
 }

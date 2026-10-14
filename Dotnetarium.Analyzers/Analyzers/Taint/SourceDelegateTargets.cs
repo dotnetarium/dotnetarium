@@ -21,7 +21,7 @@ namespace Dotnetarium.Analyzers.Taint
         private static readonly ConditionalWeakTable<Compilation, SourceDelegateTargets> Cache = new();
         private readonly Compilation compilation;
         private readonly Lazy<ImmutableArray<IMethodSymbol>> methods;
-        private readonly ConcurrentDictionary<IMethodSymbol, ImmutableArray<IMethodSymbol>> targets = new(SymbolEqualityComparer.Default);
+        private readonly ConcurrentDictionary<IMethodSymbol, TargetScan> targets = new(SymbolEqualityComparer.Default);
 
         private SourceDelegateTargets(Compilation compilation)
         {
@@ -31,7 +31,40 @@ namespace Dotnetarium.Analyzers.Taint
 
         internal static SourceDelegateTargets GetOrCreate(Compilation compilation) => Cache.GetValue(compilation, current => new(current));
         internal ImmutableArray<IMethodSymbol> GetTargets(IMethodSymbol invoke) =>
-            targets.GetOrAdd(invoke, signature => methods.Value.Where(candidate => Compatible(candidate, signature)).ToImmutableArray());
+            targets.GetOrAdd(invoke, _ => new TargetScan()).GetTargets(this, invoke);
+
+        private sealed class TargetScan
+        {
+            private readonly object gate = new();
+            private readonly ImmutableArray<IMethodSymbol>.Builder matches = ImmutableArray.CreateBuilder<IMethodSymbol>();
+            private int nextCandidate;
+            private ImmutableArray<IMethodSymbol> completed;
+
+            internal ImmutableArray<IMethodSymbol> GetTargets(SourceDelegateTargets owner, IMethodSymbol invoke)
+            {
+                lock (gate)
+                {
+                    if (!completed.IsDefault) return completed;
+                    var candidates = owner.methods.Value;
+                    while (nextCandidate < candidates.Length)
+                    {
+                        // Compatible charges before evaluating the candidate.
+                        // Keep its cursor uncommitted on a budget/cancellation
+                        // exception; a partial target set is never returned.
+                        var candidate = candidates[nextCandidate];
+                        if (owner.Compatible(candidate, invoke)) matches.Add(candidate);
+                        nextCandidate++;
+                    }
+                    // Signature compatibility is immutable and rule-independent.
+                    // Publish once all candidates are checked, including an empty
+                    // result; do not share taint or runtime dispatch decisions.
+                    completed = matches.ToImmutable();
+                    matches.Clear();
+                    matches.Capacity = 0;
+                    return completed;
+                }
+            }
+        }
 
         private ImmutableArray<IMethodSymbol> Collect()
         {

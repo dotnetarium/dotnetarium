@@ -18,8 +18,26 @@ namespace Dotnetarium.Analyzers.Taint
     /// <summary>Proves absence of an origin, rather than confusing transfer/entry-point containers with source methods.</summary>
     internal sealed class SourceReachability
     {
+        // Component state only gains origins across events. Positive proofs stay
+        // valid; discard affected negatives and resumable scans before retrying.
+        internal void InvalidateStateProofs(System.Func<IMethodSymbol, bool> affected)
+        {
+            foreach (var method in sourceFreeMethods.Keys)
+                if (affected(method)) sourceFreeMethods.TryRemove(method, out _);
+            foreach (var graph in results.Keys.Concat(scans.Keys).Distinct().ToArray())
+            {
+                var syntax = graph.OriginalOperation.Syntax;
+                var model = compilation.GetSemanticModel(syntax.SyntaxTree);
+                var owner = graph.OriginalOperation is IAnonymousFunctionOperation lambda ? lambda.Symbol :
+                    model.GetDeclaredSymbol(syntax) as IMethodSymbol ?? model.GetEnclosingSymbol(syntax.SpanStart) as IMethodSymbol;
+                if (owner != null && !affected(owner)) continue;
+                if (!results.TryGetValue(graph, out var positive) || !positive)
+                { results.TryRemove(graph, out _); scans.TryRemove(graph, out _); }
+            }
+        }
         internal const int MethodBudget = 2048;
         private static readonly ConditionalWeakTable<ControlFlowGraph, SummaryBuilder> Summaries = new();
+        private static readonly ConditionalWeakTable<Compilation, ConcurrentDictionary<IMethodSymbol, MethodGraphLookup>> MethodGraphs = new();
         private readonly Compilation compilation;
         private readonly WellKnownTypeProvider types;
         private readonly TaintedDataSymbolMap<SourceInfo> sources;
@@ -57,7 +75,9 @@ namespace Dotnetarium.Analyzers.Taint
                     if (cached) return true;
                     continue;
                 }
-                var summary = Summaries.GetValue(graph, root => new SummaryBuilder(root)).GetSummary(cancellationToken);
+                var summary = Summaries.GetValue(graph, root => new SummaryBuilder(root)).GetSummary(cancellationToken,
+                    operation => operation is IParameterReferenceOperation parameter && IsSourceParameter(parameter.Parameter) ||
+                        operation is IFlowAnonymousFunctionOperation lambda && lambda.Symbol.Parameters.Any(IsSourceParameter));
                 var scan = scans.GetOrAdd(graph, _ => new SourceScan());
                 lock (scan)
                 {
@@ -133,8 +153,17 @@ namespace Dotnetarium.Analyzers.Taint
                         // existing body boundary like metadata; explicit source models
                         // and entry parameters have already been checked above.
                         if (!SymbolEqualityComparer.Default.Equals(target.ContainingAssembly, compilation.Assembly)) continue;
-                        var body = definition.GetTopmostOperationBlock(compilation, cancellationToken);
-                        if (body == null)
+                        // Body/CFG lookup is a structural fact. Reuse successful
+                        // lookups across roots/rules; never cache partial source
+                        // closure, dataflow values or a budget exception.
+                        var lookup = MethodGraphs.GetValue(compilation, _ => new(SymbolEqualityComparer.Default))
+                            .GetOrAdd(definition, method =>
+                            {
+                                var body = method.GetTopmostOperationBlock(compilation, cancellationToken);
+                                if (body == null) return new MethodGraphLookup(false, null);
+                                return new MethodGraphLookup(true, body.TryGetEnclosingControlFlowGraph(out var found) ? found : null);
+                            });
+                        if (!lookup.HasBody)
                         {
                             if (definition.MethodKind is MethodKind.AnonymousFunction or MethodKind.LocalFunction &&
                                 TryGetContainingGraph(definition, cancellationToken, out var containingGraph))
@@ -149,9 +178,9 @@ namespace Dotnetarium.Analyzers.Taint
                             // become an invented taint origin.
                             continue;
                         }
-                        if (!body.TryGetEnclosingControlFlowGraph(out var calledGraph) &&
-                            !TryGetContainingGraph(definition, cancellationToken, out calledGraph)) return true;
-                        pending.Enqueue(calledGraph);
+                        if (lookup.Graph is { } calledGraph) pending.Enqueue(calledGraph);
+                        else if (TryGetContainingGraph(definition, cancellationToken, out calledGraph)) pending.Enqueue(calledGraph);
+                        else return true;
                     }
                 }
             }
@@ -250,7 +279,7 @@ namespace Dotnetarium.Analyzers.Taint
 
             internal SummaryBuilder(ControlFlowGraph root) => pending.Enqueue(root);
 
-            internal Summary GetSummary(CancellationToken cancellationToken)
+            internal Summary GetSummary(CancellationToken cancellationToken, Func<IOperation, bool> hasParameterSource)
             {
                 lock (this)
                 {
@@ -286,6 +315,14 @@ namespace Dotnetarium.Analyzers.Taint
                         if (operation is IFlowAnonymousFunctionOperation lambda)
                             pending.Enqueue(currentGraph!.GetAnonymousFunctionControlFlowGraph(lambda));
                         nextOperation = null;
+                        // Positive evidence needs no complete absence proof. A
+                        // browser binder can appear near the start of a large
+                        // render fragment; do not index every sibling callback
+                        // before allowing its ordinary taint analysis to run.
+                        if (hasParameterSource(operation))
+                        {
+                            return new Summary(ImmutableArray<(IOperation, ControlFlowGraph)>.Empty, Unknown: true);
+                        }
                         if (operation is IInvalidOperation or IDynamicInvocationOperation or IDynamicObjectCreationOperation or
                             IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation or IFunctionPointerInvocationOperation ||
                             operation is IObjectCreationOperation { Constructor: null }) return Complete(true);
@@ -317,5 +354,6 @@ namespace Dotnetarium.Analyzers.Taint
 
         private sealed record Summary(ImmutableArray<(IOperation Operation, ControlFlowGraph Graph)> Operations, bool Unknown);
         private sealed record GraphLookup(ControlFlowGraph? Graph);
+        private sealed record MethodGraphLookup(bool HasBody, ControlFlowGraph? Graph);
     }
 }

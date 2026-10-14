@@ -42,7 +42,7 @@ namespace Dotnetarium.Analyzers.Taint
             TaintedDataSymbolMap<SinkInfo> sinks)
         {
             var isMigration = MigrationAnalysisExclusion.IsExcluded(block.OwningSymbol);
-            if (block.IsGeneratedCode && !isMigration) return;
+            if (block.IsGeneratedCode && !isMigration && block.OperationBlocks.All(root => !RazorCodeAnalysis.IsRazorTree(root.Syntax.SyntaxTree))) return;
             if (block.Options.IsConfiguredToSkipAnalysis(
                     DnaRuleCatalog.HardcodedSecret,
                     block.OwningSymbol,
@@ -109,6 +109,7 @@ namespace Dotnetarium.Analyzers.Taint
             foreach (var root in block.OperationBlocks)
             foreach (var operation in root.DescendantsAndSelf())
             {
+                if (block.IsGeneratedCode && !isMigration && !RazorCodeAnalysis.IsUserCode(operation.Syntax)) continue;
                 switch (operation)
                 {
                     case ISimpleAssignmentOperation assignment

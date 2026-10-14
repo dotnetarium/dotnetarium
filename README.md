@@ -10,18 +10,20 @@ Use the **NuGet analyzer** for build and IDE warnings, or the **global tool** to
 | --- | --- |
 | Injection and unsafe output | SQL (`DNA0001`), OS commands (`DNA0002`), HTML/XSS (`DNA0003`), LDAP filters and distinguished names (`DNA0006`), XPath (`DNA0007`), dynamic code (`DNA0012`) |
 | Files and network destinations | Untrusted file paths and archive extraction (`DNA0004`), open redirects (`DNA0005`), SSRF (`DNA0011`) |
-| Deserialization and XML | Risky Json.NET type-name handling (`DNA0008`), explicitly unsafe XML external-entity resolution (`DNA0021`) |
+| Deserialization and XML | Risky Json.NET type-name handling (`DNA0008`), explicitly unsafe XML external-entity resolution (`DNA0021`), restored BinaryFormatter deserialization of untrusted data (`DNA0023`) |
 | Credentials and cookies | Hard-coded passwords or keys used by C# APIs (`DNA0009`), unsafe Secure/HttpOnly/SameSite settings (`DNA0010`) |
 | Cryptography | Legacy ciphers (`DNA0013`), ECB (`DNA0014`), fixed IVs/nonces (`DNA0015`), low PBKDF2 work factors (`DNA0016`), literal post-quantum private keys (`DNA0017`) |
 | Transport configuration | Detailed gRPC errors (`DNA0018`), gRPC call credentials over plaintext (`DNA0019`), accept-all TLS certificate callbacks (`DNA0020`) |
 
 **Hard-coded network credentials (`DNA0022`)** checks configuration files for recognizable provider tokens and authentication keys, even when no code uses them. **Hard-coded secrets in code (`DNA0009`)** checks literal passwords or keys passed to security-sensitive C# APIs. Supported configuration providers include GitHub, AWS, Azure, Google Cloud, DigitalOcean, Vault, Terraform Cloud and GitLab. The CLI scans the containing Git repository, including root workflows when the solution is in `src/`; outside Git it scans the solution/project directory. The NuGet analyzer checks project configuration through automatically included `AdditionalFiles`. Detection is offline by default; the CLI can optionally verify supported credentials without a separate account or login. Secret values are omitted from output. See [configuration credential scanning](docs/rules/DNA0022.md) for scope and supported formats.
 
-Models cover framework APIs and selected provider APIs, including ADO.NET, EF Core, Dapper, Npgsql/PostgreSQL, SharpCompress, Markdig, Bouncy Castle, NSec and Sodium.Core. Coverage is specific to modeled APIs; using a library does not make every call unsafe. See the [rule notes](docs/rules) for supported sinks, safe alternatives and limitations.
+Models cover framework APIs and selected provider APIs, including ADO.NET, EF Core, Dapper, Npgsql/PostgreSQL, SharpCompress, Markdig, RazorLight, Bouncy Castle, NSec and Sodium.Core. Coverage is specific to modeled APIs; using a library does not make every call unsafe. See the [rule notes](docs/rules) for supported sinks, safe alternatives and limitations.
 
-Input coverage includes MVC and Razor Pages, Minimal APIs and endpoint filters, Razor/Blazor events and component state, gRPC requests and streams, SignalR, accepted WebSockets, HTTP pipelines, message consumers and Azure Functions isolated-worker triggers.
+Input coverage includes MVC and Razor Pages, Minimal APIs and endpoint filters, Razor/Blazor events and component state, gRPC requests and streams, SignalR, accepted WebSockets, HTTP pipelines, message consumers and Azure Functions isolated-worker triggers. Server/Auto component execution can carry browser input to server-side sinks; WebAssembly browser callbacks are excluded from those contexts. Direct rules also check user code mapped from generated Razor.
 
 Razor/Blazor checks distinguish encoded text from raw HTML and account for explicit render modes. Markdown rendering preserves untrusted data; it does not sanitize HTML. Stored content can be modeled through an explicit property source; database writes and later reads are not automatically correlated. See [Razor/Blazor](docs/razor-blazor-taint.md) and [stored HTML and Markdown](docs/stored-html.md).
+
+Game engine C# models include Godot `AnyPeer` RPCs, Unity Netcode server RPCs and native Godot process/AES APIs. Godot .NET 8/10 projects have CLI checks in both modes; full Unity project loading remains a separate integration gap. See [game engine coverage and limitations](docs/game-engines.md).
 
 ## Install
 
@@ -59,7 +61,7 @@ The tool accepts `.csproj`, `.sln` and `.slnx` files. Default loading uses SDK/M
 | `--verify-secrets` | Opt into credential checks against supported providers (no separate login) |
 | `--config-include <glob>` | Limit credential scanning to matching config paths; repeatable |
 | `--config-exclude <glob>` | Exclude matching config paths from credential scanning; repeatable |
-| `-nb`, `--no-build` | Use experimental loading without build targets, restore or generators |
+| `-nb`, `--no-build` | Experimental: no targets/restore; official SDK Razor generation only |
 | `--configuration <name>` | Select the configuration; default is `Debug` |
 | `--framework <net8.0\|net10.0>` | Select the root projects' target framework |
 | `-h`, `--help` | Show usage |
@@ -94,7 +96,9 @@ dotnetarium MyApp.sln -nb --sarif exploratory.sarif
 
 Use `-nb` when unusual build steps or compiler errors prevent a normal scan. It reconstructs conventional SDK project inputs and runs the same Roslyn analysis on resolvable code. It remains opt-in.
 
-No-build mode never restores packages or runs source generators. It needs framework reference packs and validated existing package assets for accurate API binding. Missing references, unsupported build logic and unavailable generated code reduce coverage. Prefer default loading for Razor/Blazor and other generated-code-heavy projects. See [scan modes](docs/scan-modes.md) for supported inputs and requirements.
+No-build mode never restores packages or runs build targets. It runs only the official SDK Razor generator in memory for Razor/Blazor C#, without emitting the application. It needs framework reference packs and validated existing package assets for accurate API binding. Missing references, unsupported build logic and failed generation reduce coverage. See [scan modes](docs/scan-modes.md) for supported inputs and requirements.
+
+Solution scans exclude projects marked as tests by default. Referenced test projects can supply symbols without being analyzed. Scan a test `.csproj` explicitly when needed.
 
 The NuGet analyzer uses the compilation supplied by its compiler or IDE. It has no `-nb` setting and cannot make a failing build continue; use the tool for that workflow.
 
@@ -129,7 +133,7 @@ Custom JSON models extend built-in sources, sinks, sanitizers and transfers. Mod
 
 | Profile | Default host | Method and lambda/local-function depth | Work units per method/rule |
 | --- | --- | --- | --- |
-| `fast` | NuGet analyzer in builds and IDEs | 3 | 1,000 |
+| `fast` | NuGet analyzer in builds and IDEs | 3 | 2,500 |
 | `full` | Global tool, including no-build scans | 5 | 5,000 |
 | `max` | Explicit opt-in for deeper analysis | 10 | 10,000 |
 

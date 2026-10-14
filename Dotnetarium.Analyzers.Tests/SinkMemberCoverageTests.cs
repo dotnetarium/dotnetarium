@@ -92,6 +92,19 @@ public sealed partial class SinkCoverageTests
 
     private static IEnumerable<MemberProbe> CreateMemberProbes()
     {
+        yield return M("Godot.AesContext", "DNA0009", "Start", "_ = new Godot.AesContext().Start(Godot.AesContext.Mode.CbcEncrypt, new byte[32], new byte[16]);");
+        foreach (var member in new[] { "Execute", "ExecuteWithPipe", "CreateProcess" })
+            yield return M("Godot.OS", "DNA0002", member, $"_ = Godot.OS.{member}(input, new string[0]);");
+        foreach (var identifier in new[] { "eval", "window.eval", "globalThis.eval" })
+            yield return M("Microsoft.JSInterop.IJSRuntime", "DNA0003", "InvokeAsync", $"_ = ((Microsoft.JSInterop.IJSRuntime)null!).InvokeAsync<object>(\"{identifier}\", new object[] {{ input }});");
+        foreach (var identifier in new[] { "eval", "window.eval", "globalThis.eval" })
+            yield return M("Microsoft.JSInterop.JSRuntimeExtensions", "DNA0003", "InvokeVoidAsync", $"_ = Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync((Microsoft.JSInterop.IJSRuntime)null!, \"{identifier}\", input);");
+        foreach (var identifier in new[] { "eval", "window.eval", "globalThis.eval" })
+            yield return M("Microsoft.JSInterop.IJSInProcessRuntime", "DNA0003", "Invoke", $"_ = ((Microsoft.JSInterop.IJSInProcessRuntime)null!).Invoke<object>(\"{identifier}\", input);");
+        yield return M("RazorLight.RazorLightEngine", "DNA0012", "CompileRenderStringAsync", "_ = new RazorLight.RazorLightEngineBuilder().UseMemoryCachingProvider().Build().CompileRenderStringAsync(\"key\", input, new object());");
+        yield return M("RazorLight.IRazorLightEngine", "DNA0012", "CompileRenderStringAsync", "_ = ((RazorLight.IRazorLightEngine)null!).CompileRenderStringAsync(\"key\", input, new object());");
+        yield return M("System.Runtime.Serialization.Formatters.Binary.BinaryFormatter", "DNA0023", "Deserialize", "_ = new System.Runtime.Serialization.Formatters.Binary.BinaryFormatter().Deserialize(new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(input)));");
+
         foreach (var member in new[] { "WriteToFile", "WriteToFileAsync" })
             yield return M("SharpCompress.Archives.IArchiveEntryExtensions", "DNA0004", member,
                 $"{(member.EndsWith("Async", StringComparison.Ordinal) ? "_ = " : "")}SharpCompress.Archives.IArchiveEntryExtensions.{member}((SharpCompress.Archives.IArchiveEntry)null!, input);");

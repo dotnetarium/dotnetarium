@@ -54,7 +54,9 @@ namespace Dotnetarium.Config
         private readonly Lazy<MessageInputModel> messageInputs;
         private readonly BinderInputModel binderInputs;
         private readonly Lazy<EndpointFilterInputModel> endpointFilters;
-        private readonly Lazy<ComponentStateInputModel> componentInputs;
+        private readonly ConcurrentDictionary<SinkKind, Lazy<ComponentStateInputModel>> componentInputs = new();
+        private readonly ComponentExecutionModel componentExecution;
+        private readonly AnalyzerOptions options;
         private readonly WellKnownTypeProvider types;
         private readonly ConcurrentDictionary<SinkKind, TaintedDataSymbolMap<SourceInfo>> sourceMaps = new();
         private readonly ConcurrentDictionary<SinkKind, TaintedDataSymbolMap<SanitizerInfo>> sanitizerMaps = new();
@@ -75,7 +77,8 @@ namespace Dotnetarium.Config
             messageInputs = new Lazy<MessageInputModel>(() => new MessageInputModel(compilation));
             binderInputs = new BinderInputModel(compilation, options, this);
             endpointFilters = new Lazy<EndpointFilterInputModel>(() => new EndpointFilterInputModel(compilation));
-            componentInputs = new Lazy<ComponentStateInputModel>(() => new ComponentStateInputModel(compilation, options, this));
+            this.options = options;
+            componentExecution = new ComponentExecutionModel(compilation, options);
             types = WellKnownTypeProvider.GetOrCreate(compilation);
         }
 
@@ -184,8 +187,7 @@ namespace Dotnetarium.Config
                 var parameters = entries.Count == 0
                     ? ImmutableHashSet<ParameterMatcher>.Empty
                     : ImmutableHashSet.Create<ParameterMatcher>((parameter, provider) =>
-                        entries.Any(entry => (entry.Parameter?.Binding != "Blazor" || kind == (SinkKind)(int)TaintType.CrossSiteScripting) &&
-                            IsInputParameter(parameter, provider, entry)));
+                        entries.Any(entry => IsInputParameter(parameter, provider, entry, kind)));
 
                 compiled.Add(new SourceInfo(
                     type,
@@ -215,18 +217,37 @@ namespace Dotnetarium.Config
                         messageInputs.Value.IsPropertyInput(property)),
                     fieldReferenceMatcher: field => remoteEnabled && messageInputs.Value.IsFieldInput(field),
                     propertyValueProvider: property => remoteEnabled ? GetBinderPropertyValue(property, kind) ??
-                        (kind == (SinkKind)(int)TaintType.CrossSiteScripting ? componentInputs.Value.GetPropertyInput(property) : null) : null,
+                        GetComponentPropertyValue(property, kind) : null,
                     fieldValueProvider: field => remoteEnabled ? GetBinderMemberValue(field.Field, field.Instance, kind) ??
-                        (kind == (SinkKind)(int)TaintType.CrossSiteScripting ? componentInputs.Value.GetFieldInput(field) : null) : null));
+                        (ComponentExecutionModel.IsComponent(field.Field.ContainingType) ? ComponentInputs(kind).GetFieldInput(field) : null) : null));
             }
 
             return compiled.ToImmutable();
         }
 
+        private ComponentStateInputModel ComponentInputs(SinkKind kind) => componentInputs.GetOrAdd(kind,
+            current => new Lazy<ComponentStateInputModel>(() => new ComponentStateInputModel(compilation, options, this, current, componentExecution))).Value;
+
+        private TaintedDataAbstractValue? GetComponentPropertyValue(IPropertyReferenceOperation property, SinkKind kind)
+        {
+            if (property.Property.ContainingType.ToDisplayString() == "Microsoft.AspNetCore.Components.ChangeEventArgs")
+                return ComponentInputs(kind).GetPropertyInput(property);
+            if (!ComponentExecutionModel.IsComponent(property.Property.ContainingType))
+            {
+                var owner = compilation.GetSemanticModel(property.Syntax.SyntaxTree).GetEnclosingSymbol(property.Syntax.SpanStart)?.ContainingType;
+                return owner != null && ComponentExecutionModel.IsComponent(owner)
+                    ? ComponentInputs(kind).GetCollectionPropertyInput(property) : null;
+            }
+            if (kind != (SinkKind)(int)TaintType.CrossSiteScripting && componentExecution.IsServerProperty(property))
+                return TaintedDataAbstractValue.CreateTainted(property.Property, property.Syntax,
+                    compilation.GetSemanticModel(property.Syntax.SyntaxTree).GetEnclosingSymbol(property.Syntax.SpanStart)!);
+            return ComponentInputs(kind).GetPropertyInput(property);
+        }
+
         private bool IsInputParameter(
             IParameterSymbol parameter,
             WellKnownTypeProvider provider,
-            TaintEntryPointData entry)
+            TaintEntryPointData entry, SinkKind kind)
         {
             if (entry.Dependency != null && entry.Dependency.Any(dependency =>
                 !provider.TryGetOrCreateTypeByMetadataName(dependency, out _)))
@@ -321,10 +342,12 @@ namespace Dotnetarium.Config
                 return false;
             return entry.Parameter?.Binding switch
             {
+                "GodotRpc" => GameRpcInputModel.IsGodotInput(parameter),
+                "UnityServerRpc" => GameRpcInputModel.IsUnityServerInput(parameter),
                 "SignalR" => signalRInputs.Value.IsInput(parameter),
                 "AzureFunctions" => IsAzureFunctionInput(parameter, method),
                 "Messaging" => messageInputs.Value.IsParameterInput(parameter),
-                "Blazor" => componentInputs.Value.IsParameterInput(parameter),
+                "Blazor" => ComponentExecutionModel.IsComponent(method.ContainingType) && ComponentInputs(kind).IsParameterInput(parameter),
                 "CommandLine" => SymbolEqualityComparer.Default.Equals(method, compilation.GetEntryPoint(default)) &&
                     parameter.Type is IArrayTypeSymbol { ElementType.SpecialType: SpecialType.System_String },
                 _ => true

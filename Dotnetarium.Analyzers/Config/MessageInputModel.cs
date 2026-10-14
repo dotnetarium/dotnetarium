@@ -1,14 +1,20 @@
 using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Operations;
+using Microsoft.CodeAnalysis.FlowAnalysis;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Dotnetarium.Config
 {
     /// <summary>Incoming transport boundaries, not blanket sources on message DTO types.</summary>
     internal sealed class MessageInputModel
     {
+        private static readonly ConditionalWeakTable<Compilation, ConcurrentDictionary<(SyntaxTree Tree, TextSpan Span), ImmutableHashSet<IParameterSymbol>>> ParameterWrites = new();
         private readonly Compilation compilation;
         private readonly HashSet<INamedTypeSymbol> consumers = new(SymbolEqualityComparer.Default);
         private readonly HashSet<IMethodSymbol> deliveries = new(SymbolEqualityComparer.Default);
@@ -97,18 +103,40 @@ namespace Dotnetarium.Config
         internal static IParameterSymbol? StableParameter(IOperation? operation, Compilation compilation, HashSet<ILocalSymbol>? seen = null)
         {
             operation = Unwrap(operation);
+            // CFG lowering captures a receiver before conditional access. Recover
+            // its original lexical operation, then apply the same reassignment
+            // and ref/out checks; a capture alone is not an input-origin proof.
+            if (operation is IFlowCaptureReferenceOperation && compilation.ContainsSyntaxTree(operation.Syntax.SyntaxTree) &&
+                compilation.GetSemanticModel(operation.Syntax.SyntaxTree).GetOperation(operation.Syntax) is { } original &&
+                original is not IFlowCaptureReferenceOperation)
+                return StableParameter(original, compilation, seen);
+            if (operation is IConditionalAccessInstanceOperation)
+                for (var parent = operation.Parent; parent != null; parent = parent.Parent)
+                    if (parent is IConditionalAccessOperation conditional) return StableParameter(conditional.Operation, compilation, seen);
             if (operation is IParameterReferenceOperation parameter)
             {
                 var parameterDeclaration = parameter.Parameter.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
                 var owner = parameterDeclaration?.Ancestors().FirstOrDefault(node => node is BaseMethodDeclarationSyntax or LambdaExpressionSyntax or LocalFunctionStatementSyntax);
                 if (owner != null)
                 {
-                    var model = compilation.GetSemanticModel(owner.SyntaxTree);
-                    if (owner.DescendantNodes().Select(node => model.GetOperation(node)).Any(candidate =>
-                        candidate is IAssignmentOperation assignment && Unwrap(assignment.Target) is IParameterReferenceOperation written &&
-                            SymbolEqualityComparer.Default.Equals(written.Parameter, parameter.Parameter) ||
-                        candidate is IArgumentOperation argument && argument.Parameter?.RefKind is RefKind.Ref or RefKind.Out &&
-                            Unwrap(argument.Value) is IParameterReferenceOperation escaped && SymbolEqualityComparer.Default.Equals(escaped.Parameter, parameter.Parameter))) return null;
+                    if (!compilation.ContainsSyntaxTree(owner.SyntaxTree)) return null;
+                    var cache = ParameterWrites.GetValue(compilation, _ => new());
+                    var writes = cache.GetOrAdd((owner.SyntaxTree, owner.Span), _ =>
+                    {
+                        var model = compilation.GetSemanticModel(owner.SyntaxTree);
+                        var modified = ImmutableHashSet.CreateBuilder<IParameterSymbol>(SymbolEqualityComparer.Default);
+                        foreach (var node in owner.DescendantNodes())
+                            switch (model.GetOperation(node))
+                            {
+                                case IAssignmentOperation assignment when Unwrap(assignment.Target) is IParameterReferenceOperation written:
+                                    modified.Add(written.Parameter); break;
+                                case IArgumentOperation argument when argument.Parameter?.RefKind is RefKind.Ref or RefKind.Out &&
+                                    Unwrap(argument.Value) is IParameterReferenceOperation escaped:
+                                    modified.Add(escaped.Parameter); break;
+                            }
+                        return modified.ToImmutable();
+                    });
+                    if (writes.Contains(parameter.Parameter)) return null;
                 }
                 return parameter.Parameter;
             }

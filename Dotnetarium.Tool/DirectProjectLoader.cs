@@ -11,7 +11,8 @@ using Microsoft.CodeAnalysis.Text;
 namespace Dotnetarium.Tool;
 
 // Experimental input reconstruction. This deliberately does not evaluate
-// MSBuild tasks, execute targets, restore packages, or run source generators.
+// MSBuild tasks, execute targets or restore packages. Only the selected SDK's
+// official Razor generator runs, in memory; project/package generators do not.
 internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? selection = null)
 {
     private readonly Dictionary<string, List<ProjectSpec>> specs = new(ProjectLoader.PathComparer);
@@ -22,6 +23,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     private readonly Dictionary<string, string[]> sourceInventories = new(ProjectLoader.PathComparer);
     private readonly Dictionary<string, string[]> explicitInventories = new(ProjectLoader.PathComparer);
     private readonly Dictionary<string, SourceText> texts = new(ProjectLoader.PathComparer);
+    private bool solutionTarget;
+    private HashSet<string> rootProjects = new(ProjectLoader.PathComparer);
 
     private async Task<SourceText> ReadTextAsync(string path)
     {
@@ -37,8 +40,11 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         try
         {
             var roots = ProjectLoader.FindProjects(target);
+            solutionTarget = Path.GetExtension(target).ToLowerInvariant() is ".sln" or ".slnx";
+            rootProjects = roots.ToHashSet(ProjectLoader.PathComparer);
             foreach (var path in roots) ReadProject(path);
             var activeSpecs = SelectSpecs(roots);
+            var razorRequests = new Dictionary<ProjectId, RazorRequest>();
             var solution = workspace.CurrentSolution;
             foreach (var spec in activeSpecs)
             {
@@ -127,9 +133,21 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         solution = solution.AddAdditionalDocument(DocumentId.CreateNewId(spec.Id), Path.GetFileName(file),
                             await ReadTextAsync(file), filePath: file);
                 inputs.TestProjectMetadata[spec.Id] = spec.Properties.GetValueOrDefault("IsTestProject", "false");
+                if (spec.Sdk is "Microsoft.NET.Sdk.Web" or "Microsoft.NET.Sdk.Razor" or "Microsoft.NET.Sdk.BlazorWebAssembly")
+                {
+                    var razor = ReadRazorInputs(spec);
+                    if (razor.Length > 0)
+                    {
+                        razorRequests[spec.Id] = new(spec.Properties, razor);
+                        inputs.RazorProjects.Add(spec.Id);
+                    }
+                    if (IsFalse(spec.Properties.GetValueOrDefault("UseRazorSourceGenerator")))
+                        Warn(spec.Path, "razor-settings", "UseRazorSourceGenerator=false selects a different build pipeline; no-build uses the official modern generator as a best-effort substitute.");
+                }
                 inputs.InputProperties[spec.Id] = new(StringComparer.OrdinalIgnoreCase)
                 {
                     ["TargetFramework"] = spec.Framework,
+                    ["UsingMicrosoftNETSdkBlazorWebAssembly"] = (spec.Sdk == "Microsoft.NET.Sdk.BlazorWebAssembly").ToString(),
                     ["Configuration"] = spec.Properties.GetValueOrDefault("Configuration", "Debug"),
                     ["Platform"] = spec.Properties.GetValueOrDefault("Platform", "AnyCPU")
                 };
@@ -189,12 +207,17 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         }
             }
             if (!workspace.TryApplyChanges(solution)) throw new InvalidOperationException("Could not create the direct analysis workspace.");
+            await new NoBuildRazorGeneration(report).GenerateAsync(workspace, razorRequests);
+            inputs.SelectedProjects = activeSpecs.Where(spec => !IsTrue(spec.Properties.GetValueOrDefault("IsTestProject")) ||
+                !solutionTarget && rootProjects.Contains(spec.Path)).Select(spec => spec.Id).ToHashSet();
+            foreach (var spec in activeSpecs.Where(spec => !inputs.SelectedProjects.Contains(spec.Id)))
+                report.ExcludedTestProjects.Add(spec.Path);
             return inputs;
         }
         catch { inputs.Dispose(); throw; }
     }
 
-    private void ReadProject(string path)
+    private void ReadProject(string path, bool dependency = false)
     {
         if (!visited.Add(path)) return;
         try
@@ -202,7 +225,10 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var root = Path.GetDirectoryName(path)!;
             var project = XDocument.Load(path);
             var sdk = (string?)project.Root?.Attribute("Sdk") ?? "";
-            if (sdk is not ("Microsoft.NET.Sdk" or "Microsoft.NET.Sdk.Web" or "Microsoft.NET.Sdk.Razor" or "Microsoft.NET.Sdk.BlazorWebAssembly"))
+            var godotVersion = sdk.StartsWith("Godot.NET.Sdk/", StringComparison.Ordinal) ? sdk["Godot.NET.Sdk/".Length..] : null;
+            if (godotVersion != null && (!Version.TryParse(godotVersion, out var version) || version.Major != 4 || version.Minor > 100 || version.Build > 100))
+                throw new NotSupportedException($"Unsupported Godot SDK version '{godotVersion}'.");
+            if (godotVersion == null && sdk is not ("Microsoft.NET.Sdk" or "Microsoft.NET.Sdk.Web" or "Microsoft.NET.Sdk.Razor" or "Microsoft.NET.Sdk.BlazorWebAssembly"))
                 throw new NotSupportedException($"Unsupported SDK '{sdk}'. Direct loading supports conventional .NET SDK projects.");
             var documents = new List<(string Path, XDocument Document)>();
             var props = FindNearest(root, "Directory.Build.props");
@@ -214,6 +240,16 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             properties["MSBuildProjectName"] = Path.GetFileNameWithoutExtension(path);
             properties["MSBuildProjectFullPath"] = path;
             ReadProperties(documents, properties, path);
+            if (!properties.ContainsKey("IsTestProject") && documents.SelectMany(document => document.Document.Descendants())
+                .Any(item => item.Name.LocalName == "PackageReference" &&
+                    string.Equals(Expand((string?)item.Attribute("Include") ?? "", properties), "Microsoft.NET.Test.Sdk", StringComparison.OrdinalIgnoreCase) &&
+                    Condition(item, properties, path))) properties["IsTestProject"] = "true";
+            if (!dependency && solutionTarget && rootProjects.Contains(path) && IsTrue(properties.GetValueOrDefault("IsTestProject")))
+            {
+                visited.Remove(path); // A production dependency may still need its symbols.
+                report.ExcludedTestProjects.Add(path);
+                return;
+            }
             var frameworks = properties.GetValueOrDefault("TargetFramework", "");
             if (frameworks.Length == 0) frameworks = properties.GetValueOrDefault("TargetFrameworks", "");
             if (frameworks.Length == 0) throw new NotSupportedException("No statically readable TargetFramework/TargetFrameworks.");
@@ -234,12 +270,71 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 evaluated["MSBuildProjectName"] = Path.GetFileNameWithoutExtension(path);
                 evaluated["MSBuildProjectFullPath"] = path;
                 ReadProperties(documents, evaluated, path, preserveFramework: true);
+                if (properties.TryGetValue("IsTestProject", out var testProject)) evaluated.TryAdd("IsTestProject", testProject);
+                if (godotVersion != null)
+                {
+                    var godotRoot = Resolve(root, evaluated.GetValueOrDefault("GodotProjectDir", root));
+                    evaluated.TryAdd("BaseIntermediateOutputPath", Path.Combine(godotRoot, ".godot", "mono", "temp", "obj"));
+                    evaluated.TryAdd("IntermediateOutputPath", Path.Combine(evaluated["BaseIntermediateOutputPath"], evaluated.GetValueOrDefault("Configuration", "Debug")));
+                    var parsed = Version.Parse(godotVersion);
+                    var constants = new List<string> { "GODOT", "GODOT4", "GODOT4_OR_GREATER", $"GODOT4_{parsed.Minor}" };
+                    for (var minor = 0; minor <= parsed.Minor; minor++) constants.Add($"GODOT4_{minor}_OR_GREATER");
+                    if (parsed.Build >= 0)
+                    {
+                        constants.Add($"GODOT4_{parsed.Minor}_{parsed.Build}");
+                        for (var patch = 0; patch <= parsed.Build; patch++) constants.Add($"GODOT4_{parsed.Minor}_{patch}_OR_GREATER");
+                    }
+                    if (evaluated.GetValueOrDefault("Configuration", "Debug") == "Debug") constants.Add("TOOLS");
+                    if (evaluated.GetValueOrDefault("Configuration") == "ExportDebug") constants.Add("DEBUG");
+                    if (evaluated.GetValueOrDefault("Configuration") == "ExportRelease") evaluated.TryAdd("Optimize", "true");
+                    if (IsTrue(evaluated.GetValueOrDefault("GodotFloat64"))) constants.Add("GODOT_REAL_T_IS_DOUBLE");
+                    var godotPlatform = evaluated.GetValueOrDefault("GodotTargetPlatform", "");
+                    if (godotPlatform.Length == 0)
+                    {
+                        var rid = evaluated.GetValueOrDefault("RuntimeIdentifier", "");
+                        godotPlatform = rid.StartsWith("ios", StringComparison.Ordinal) ? "ios" :
+                            rid.StartsWith("android", StringComparison.Ordinal) ? "android" :
+                            rid.StartsWith("browser", StringComparison.Ordinal) ? "web" :
+                            rid.StartsWith("linux", StringComparison.Ordinal) ? "linuxbsd" :
+                            rid.StartsWith("freebsd", StringComparison.Ordinal) ? "linuxbsd" :
+                            rid.StartsWith("osx", StringComparison.Ordinal) ? "macos" :
+                            rid.StartsWith("win", StringComparison.Ordinal) ? "windows" :
+                            OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linuxbsd";
+                    }
+                    constants.AddRange(godotPlatform switch
+                    {
+                        "windows" => new[] { "GODOT_WINDOWS", "GODOT_PC" },
+                        "linuxbsd" => new[] { "GODOT_LINUXBSD", "GODOT_PC" },
+                        "macos" => new[] { "GODOT_OSX", "GODOT_MACOS", "GODOT_PC" },
+                        "android" => new[] { "GODOT_ANDROID", "GODOT_MOBILE" },
+                        "ios" => new[] { "GODOT_IPHONE", "GODOT_IOS", "GODOT_MOBILE" },
+                        "web" => new[] { "GODOT_JAVASCRIPT", "GODOT_HTML5", "GODOT_WASM", "GODOT_WEB" },
+                        _ => Array.Empty<string>()
+                    });
+                    evaluated["DefineConstants"] = evaluated.GetValueOrDefault("DefineConstants", "") + ";" + string.Join(';', constants);
+                    Warn(path, "godot-sdk", "Godot SDK inputs were reconstructed without executing its targets. Platform-specific constants, custom SDK options and generated members may be incomplete.");
+                }
                 evaluated.TryAdd("BaseIntermediateOutputPath", "obj" + Path.DirectorySeparatorChar);
                 evaluated.TryAdd("IntermediateOutputPath", Path.Combine(evaluated["BaseIntermediateOutputPath"],
                     evaluated.GetValueOrDefault("Configuration", "Debug"), framework) + Path.DirectorySeparatorChar);
                 var items = documents.SelectMany(document => document.Document.Root!.Elements())
                     .Where(group => group.Name.LocalName == "ItemGroup" && Condition(group, evaluated, path))
                     .SelectMany(group => group.Elements()).Where(item => Condition(item, evaluated, path)).ToArray();
+                if (godotVersion != null && !IsTrue(evaluated.GetValueOrDefault("EnableGodotDotNetPreview")))
+                {
+                    var implicitItems = new List<XElement>();
+                    if (!IsTrue(evaluated.GetValueOrDefault("DisableImplicitGodotSharpReferences")))
+                    {
+                        implicitItems.Add(new XElement("PackageReference", new XAttribute("Include", "GodotSharp"), new XAttribute("Version", evaluated.GetValueOrDefault("PackageVersion_GodotSharp", godotVersion))));
+                        if (evaluated.GetValueOrDefault("Configuration", "Debug") == "Debug")
+                            implicitItems.Add(new XElement("PackageReference", new XAttribute("Include", "GodotSharpEditor"), new XAttribute("Version", evaluated.GetValueOrDefault("PackageVersion_GodotSharp", godotVersion))));
+                    }
+                    if (!IsTrue(evaluated.GetValueOrDefault("DisableImplicitGodotGeneratorReferences")))
+                        implicitItems.Add(new XElement("PackageReference", new XAttribute("Include", "Godot.SourceGenerators"), new XAttribute("Version", evaluated.GetValueOrDefault("PackageVersion_Godot_SourceGenerators", godotVersion)), new XAttribute("PrivateAssets", "all")));
+                    items = items.Concat(implicitItems.Where(item => !items.Any(existing =>
+                        string.Equals((string?)existing.Attribute("Include"), (string?)item.Attribute("Include"), StringComparison.OrdinalIgnoreCase)))).ToArray();
+                    Warn(path, "generation", "Godot source generators were not executed. RPC declarations and ordinary C# bodies can be analyzed; generated signal/property/method helpers may be absent.");
+                }
                 foreach (var document in documents)
                 {
                     foreach (var import in document.Document.Descendants().Where(element => element.Name.LocalName == "Import"))
@@ -255,7 +350,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 specs[path].Add(new(ProjectId.CreateNewId(), path, root, framework, sdk, evaluated, items, references));
             }
             if (selection.Framework == null)
-                foreach (var reference in specs[path].SelectMany(spec => spec.References).Distinct()) ReadProject(reference);
+                foreach (var reference in specs[path].SelectMany(spec => spec.References).Distinct()) ReadProject(reference, dependency: true);
         }
         catch (Exception error) when (error is IOException or System.Xml.XmlException or NotSupportedException or UnauthorizedAccessException)
         {
@@ -291,7 +386,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             if (!selected.TryAdd(spec.Id, spec)) continue;
             foreach (var reference in spec.References)
             {
-                ReadProject(reference);
+                ReadProject(reference, dependency: true);
                 if (specs.TryGetValue(reference, out var candidates) &&
                     (candidates.FirstOrDefault(candidate => candidate.Framework == spec.Framework) ??
                      (spec.Framework == "net10.0" ? candidates.FirstOrDefault(candidate => candidate.Framework == "net8.0") : null)) is { } dependency)
@@ -686,9 +781,47 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         if (suppliedGenerated.Length > 0)
             Warn(spec.Path, "generated-reuse", $"Using {suppliedGenerated.Length} explicitly selected generated/output C# file(s). Their freshness and framework/configuration provenance were not verified; generation was not run.");
         if (SourceInventory(spec.Root).Any(file => !IsProjectOutputFile(spec, file) &&
-            Path.GetExtension(file).ToLowerInvariant() is ".razor" or ".cshtml" or ".proto"))
-            Warn(spec.Path, "generation", "Razor/Blazor/protobuf inputs require generated C#; generation was not run.");
+            (Path.GetExtension(file).ToLowerInvariant() == ".proto" ||
+             spec.Sdk is not ("Microsoft.NET.Sdk.Web" or "Microsoft.NET.Sdk.Razor" or "Microsoft.NET.Sdk.BlazorWebAssembly") &&
+             Path.GetExtension(file).ToLowerInvariant() is ".razor" or ".cshtml")))
+            Warn(spec.Path, "generation", "Non-Razor SDK or protobuf inputs require generated C# that was not produced.");
         return sources.OrderBy(path => path, StringComparer.Ordinal);
+    }
+
+    private RazorInput[] ReadRazorInputs(ProjectSpec spec)
+    {
+        var files = new Dictionary<string, RazorInput>(ProjectLoader.PathComparer);
+        bool Eligible(string file) => Path.GetExtension(file).ToLowerInvariant() switch
+        {
+            ".razor" => true,
+            ".cshtml" => !IsFalse(spec.Properties.GetValueOrDefault("RazorCompileOnBuild")),
+            _ => false
+        };
+        if (!IsFalse(spec.Properties.GetValueOrDefault("EnableDefaultItems")) &&
+            !IsFalse(spec.Properties.GetValueOrDefault("EnableDefaultContentItems")))
+            foreach (var file in SourceInventory(spec.Root).Where(file => !IsProjectOutputFile(spec, file) && Eligible(file)))
+                if (!IsFalse(spec.Properties.GetValueOrDefault(Path.GetExtension(file).Equals(".razor", StringComparison.OrdinalIgnoreCase)
+                        ? "EnableDefaultRazorComponentItems" : "EnableDefaultRazorGenerateItems")))
+                    files[file] = new(file, Path.GetRelativePath(spec.Root, file));
+        foreach (var item in spec.Items.Where(item => item.Name.LocalName is "Content" or "RazorGenerate" or "RazorComponent" or "AdditionalFiles"))
+        {
+            if (item.Attribute("Remove") is { } remove)
+                foreach (var pattern in Expand(remove.Value, spec.Properties).Split(';', StringSplitOptions.RemoveEmptyEntries))
+                    foreach (var file in files.Keys.Where(file => GlobMatches(Path.GetRelativePath(spec.Root, file), pattern)).ToArray()) files.Remove(file);
+            var include = item.Attribute("Include") ?? item.Attribute("Update");
+            if (include == null) continue;
+            var excludes = Expand((string?)item.Attribute("Exclude") ?? "", spec.Properties).Split(';', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var file in ExpandItem(spec.Root, Expand(include.Value, spec.Properties)).Where(Eligible))
+            {
+                if (item.Attribute("Update") != null && !files.ContainsKey(file) ||
+                    excludes.Any(pattern => GlobMatches(Path.GetRelativePath(spec.Root, file), pattern))) continue;
+                var target = ItemMetadata(item, "TargetPath") ?? ItemMetadata(item, "Link");
+                files[file] = new(file, target != null ? Expand(target, spec.Properties) :
+                    files.TryGetValue(file, out var previous) ? previous.TargetPath : Path.GetRelativePath(spec.Root, file),
+                    ItemMetadata(item, "CssScope") is { } scope ? Expand(scope, spec.Properties) : null);
+            }
+        }
+        return files.Values.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray();
     }
 
     private string ReadUsings(ProjectSpec spec)
@@ -755,13 +888,13 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             {
                 var name = Path.GetFileName(child);
                 if (!name.Equals("bin", StringComparison.OrdinalIgnoreCase) &&
-                    !name.Equals("obj", StringComparison.OrdinalIgnoreCase) && name != ".git") pending.Push(child);
+                    !name.Equals("obj", StringComparison.OrdinalIgnoreCase) && name is not (".git" or ".godot")) pending.Push(child);
             }
         }
         return sourceInventories[root] = files.ToArray();
     }
     private static bool IsOutputFile(string root, string file) => Path.GetRelativePath(root, file).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-        .Any(part => part.Equals("bin", StringComparison.OrdinalIgnoreCase) || part.Equals("obj", StringComparison.OrdinalIgnoreCase) || part == ".git");
+        .Any(part => part.Equals("bin", StringComparison.OrdinalIgnoreCase) || part.Equals("obj", StringComparison.OrdinalIgnoreCase) || part is ".git" or ".godot");
     private static bool IsProjectOutputFile(ProjectSpec spec, string file) => IsOutputFile(spec.Root, file) ||
         new[] { "BaseIntermediateOutputPath", "IntermediateOutputPath", "BaseOutputPath", "OutputPath" }
             .Select(property => spec.Properties.GetValueOrDefault(property)).OfType<string>().Where(value => !string.IsNullOrWhiteSpace(value))

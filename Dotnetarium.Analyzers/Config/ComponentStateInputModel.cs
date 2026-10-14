@@ -13,19 +13,24 @@ using Dotnetarium.Analyzers.Taint;
 
 namespace Dotnetarium.Config
 {
-    /// <summary>Cross-callback component state summaries for XSS; no server-only sink inference.</summary>
+    /// <summary>Context-specific component state summaries with explicit execution evidence.</summary>
     internal sealed class ComponentStateInputModel
     {
         private readonly Compilation compilation;
         private readonly AnalyzerOptions options;
         private readonly TaintConfiguration configuration;
+        private readonly SinkKind kind;
+        private readonly ComponentExecutionModel execution;
         private readonly HashSet<IMethodSymbol> callbacks = new(SymbolEqualityComparer.Default);
         private readonly HashSet<IMethodSymbol> renders = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<ISymbol, TaintedDataAbstractValue> values = new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<ISymbol, Dictionary<ISymbol, TaintedDataAbstractValue>> collectionValues = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<IMethodSymbol, ControlFlowGraph?> graphs = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<IMethodSymbol, TaintedDataAnalysisResult> summaries = new(SymbolEqualityComparer.Default);
         private readonly HashSet<IMethodSymbol> sourceFreeSummaries = new(SymbolEqualityComparer.Default);
+        private readonly HashSet<ISymbol> pendingChanges = new(SymbolEqualityComparer.Default);
         private SourceReachability? summarySources;
+        private readonly ComponentStateDependencies dependencies;
         private readonly object gate = new();
         private bool computing;
         private readonly Dictionary<INamedTypeSymbol, ComponentGroup> groups = new(SymbolEqualityComparer.Default);
@@ -38,13 +43,18 @@ namespace Dotnetarium.Config
             internal IMethodSymbol[] Callbacks { get; }
             internal IMethodSymbol[] Renders { get; }
             internal bool Completed { get; set; }
+            internal readonly HashSet<ISymbol> Required = new(SymbolEqualityComparer.Default);
+            internal readonly HashSet<IMethodSymbol> Selected = new(SymbolEqualityComparer.Default);
             internal ComponentGroup(IMethodSymbol[] callbacks, IMethodSymbol[] renders)
             { Callbacks = callbacks; Renders = renders; }
         }
 
-        internal ComponentStateInputModel(Compilation compilation, AnalyzerOptions options, TaintConfiguration configuration)
+        internal ComponentStateInputModel(Compilation compilation, AnalyzerOptions options, TaintConfiguration configuration,
+            SinkKind kind = (SinkKind)(int)TaintType.CrossSiteScripting, ComponentExecutionModel? execution = null)
         {
             this.compilation = compilation; this.options = options; this.configuration = configuration;
+            this.kind = kind; this.execution = execution ?? new ComponentExecutionModel(compilation, options);
+            dependencies = new ComponentStateDependencies(compilation, GetGraph);
             foreach (var tree in compilation.SyntaxTrees)
             {
                 var model = compilation.GetSemanticModel(tree);
@@ -79,13 +89,17 @@ namespace Dotnetarium.Config
                             operation.TargetMethod.Name is not ("Create" or "CreateBinder" or "CreateInferredEventCallback")) continue;
                         foreach (var argument in operation.Arguments)
                             foreach (var candidate in argument.Value.DescendantsAndSelf())
-                                if (candidate is IAnonymousFunctionOperation lambda) callbacks.Add(lambda.Symbol);
-                                else if (candidate is IMethodReferenceOperation method) callbacks.Add(method.Method);
+                                if (candidate is IAnonymousFunctionOperation lambda && HasBrowserSources(lambda.Symbol.ContainingType)) callbacks.Add(lambda.Symbol);
+                                else if (candidate is IMethodReferenceOperation method && HasBrowserSources(method.Method.ContainingType)) callbacks.Add(method.Method);
                     }
                 }
                 foreach (var syntax in tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>())
-                    if (syntax.Identifier.ValueText == "BuildRenderTree" && model.GetDeclaredSymbol(syntax) is IMethodSymbol method &&
-                        method.IsOverride && IsComponent(method.ContainingType)) renders.Add(method);
+                    if (model.GetDeclaredSymbol(syntax) is IMethodSymbol method && method.IsOverride && IsComponent(method.ContainingType))
+                    {
+                        if (method.Name == "BuildRenderTree") renders.Add(method);
+                        else if (kind != (SinkKind)(int)TaintType.CrossSiteScripting && execution.HasServerLifecycle(method.ContainingType) &&
+                            method.Name is "OnInitialized" or "OnInitializedAsync" or "OnParametersSet" or "OnParametersSetAsync") callbacks.Add(method);
+                    }
             }
             foreach (var callback in callbacks)
                 for (var type = callback.ContainingType; type != null && IsComponent(type); type = type.BaseType)
@@ -113,6 +127,9 @@ namespace Dotnetarium.Config
             }
             BuildGroups();
         }
+
+        private bool HasBrowserSources(INamedTypeSymbol type) =>
+            kind == (SinkKind)(int)TaintType.CrossSiteScripting || execution.HasServerCallbacks(type);
 
         private static IEnumerable<(INamedTypeSymbol Component, IPropertySymbol Property, IOperation Value)> ParameterWrites(ControlFlowGraph graph)
         {
@@ -144,8 +161,10 @@ namespace Dotnetarium.Config
 
         private void BuildGroups()
         {
-            // State flows between source components through parameters and
-            // inherited members. Unrelated render trees must not share a budget.
+            // A child depends on parents that supply its parameters. The parent
+            // does not depend on its children or the other parents of a shared
+            // layout: those are separate component instances at runtime.
+            // Inherited state still needs callbacks from both declaring types.
             var neighbors = new Dictionary<INamedTypeSymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
             void Register(INamedTypeSymbol component)
             {
@@ -167,7 +186,6 @@ namespace Dotnetarium.Config
                 if (neighbors.TryGetValue(parent, out var parentNeighbors) && neighbors.TryGetValue(child, out var childNeighbors))
                 {
                     forwardingTypes.Add(parent);
-                    parentNeighbors.Add(child);
                     childNeighbors.Add(parent);
                 }
             foreach (var start in neighbors.Keys)
@@ -188,8 +206,11 @@ namespace Dotnetarium.Config
                     // another tracked component. Rendering text or markup alone
                     // is handled by the ordinary XSS root, not this state model.
                     renders.Where(method => members.Contains(method.ContainingType.OriginalDefinition) &&
-                        forwardingTypes.Contains(method.ContainingType.OriginalDefinition)).ToArray());
-                foreach (var member in members) groups[member] = group;
+                        forwardingTypes.Contains(method.ContainingType.OriginalDefinition) &&
+                        (!SymbolEqualityComparer.Default.Equals(method.ContainingType.OriginalDefinition, start) ||
+                         links.Any(link => SymbolEqualityComparer.Default.Equals(link.Parent, start) &&
+                             SymbolEqualityComparer.Default.Equals(link.Child, start)))).ToArray());
+                groups[start] = group;
             }
         }
 
@@ -235,6 +256,23 @@ namespace Dotnetarium.Config
         internal TaintedDataAbstractValue? GetFieldInput(IFieldReferenceOperation field) =>
             IsComponent(field.Field.ContainingType) ? GetMemberInput(field.Field, field.Instance) : null;
 
+        internal TaintedDataAbstractValue? GetCollectionPropertyInput(IPropertyReferenceOperation property)
+        {
+            var model = compilation.GetSemanticModel(property.Syntax.SyntaxTree);
+            var local = property.Instance is ILocalReferenceOperation reference ? reference.Local :
+                property.Instance != null ? model.GetSymbolInfo(property.Instance.Syntax).Symbol as ILocalSymbol : null;
+            if (local == null) return null;
+            var loop = property.Syntax.Ancestors().OfType<ForEachStatementSyntax>().FirstOrDefault(candidate =>
+                SymbolEqualityComparer.Default.Equals(model.GetDeclaredSymbol(candidate), local));
+            if (loop == null || CollectionField(model.GetOperation(loop.Expression)) is not { } field ||
+                !groups.TryGetValue(field.ContainingType.OriginalDefinition, out var group)) return null;
+            lock (gate)
+            {
+                if (!computing) Compute(group, field);
+                return collectionValues.TryGetValue(field, out var members) && members.TryGetValue(property.Property, out var value) ? value : null;
+            }
+        }
+
         private TaintedDataAbstractValue? GetMemberInput(ISymbol member, IOperation? instance)
         {
             // A component without an indexed browser callback cannot write its
@@ -247,13 +285,53 @@ namespace Dotnetarium.Config
                 !groups.TryGetValue(member.ContainingType.OriginalDefinition, out var group)) return null;
             lock (gate)
             {
-                if (!computing && !group.Completed) Compute(group);
+                if (!computing) Compute(group, member);
                 return values.TryGetValue(member, out var value) ? value : null;
             }
         }
 
-        private void Compute(ComponentGroup group)
+        private void Compute(ComponentGroup group, ISymbol requested)
         {
+            if (group.Required.Add(requested.OriginalDefinition)) group.Completed = false;
+            if (group.Completed) return;
+            // Backward closure: writers of requested state, then writers of their
+            // inputs. Read-only callbacks do not connect unrelated state members.
+            bool expanded;
+            do
+            {
+                expanded = false;
+                foreach (var method in group.Callbacks.Concat(group.Renders))
+                {
+                    ComponentStateDependencies.Footprint footprint;
+                    IEnumerable<ISymbol> writes;
+                    if (group.Renders.Contains(method) && GetGraph(method) is { } render)
+                    {
+                        // Only expressions supplying demanded child parameters
+                        // contribute parent dependencies, not the entire render.
+                        var parameters = ParameterWrites(render).Where(write => group.Required.Contains(write.Property.OriginalDefinition)).ToArray();
+                        if (parameters.Length == 0) continue;
+                        footprint = new ComponentStateDependencies.Footprint();
+                        foreach (var parameter in parameters)
+                        {
+                            var input = dependencies.ForValue(parameter.Value);
+                            footprint.Reads.UnionWith(input.Reads);
+                            footprint.Unknown |= input.Unknown;
+                        }
+                        writes = parameters.Select(write => (ISymbol)write.Property.OriginalDefinition);
+                    }
+                    else { footprint = dependencies.ForMethod(method); writes = footprint.Writes; }
+                    if (!footprint.Unknown && !writes.Any(group.Required.Contains)) continue;
+                    expanded |= group.Selected.Add(method);
+                    foreach (var read in footprint.Reads) expanded |= group.Required.Add(read);
+                    if (footprint.Unknown)
+                        foreach (var candidate in group.Callbacks)
+                        {
+                            expanded |= group.Selected.Add(candidate);
+                            foreach (var input in dependencies.ForMethod(candidate).Reads.Concat(dependencies.ForMethod(candidate).Writes))
+                                expanded |= group.Required.Add(input);
+                        }
+                }
+            } while (expanded);
             computing = true;
             try
             {
@@ -263,17 +341,18 @@ namespace Dotnetarium.Config
                 do
                 {
                     changed = false;
-                    foreach (var method in group.Callbacks)
+                    foreach (var method in group.Callbacks.Where(group.Selected.Contains))
                     {
                         var graph = GetGraph(method);
                         if (graph == null || Analyze(graph, method) is not { } result) continue;
+                        changed |= AddCollectionWrites(graph, result);
                         foreach (var entry in result.ExitBlockOutput.Data)
                             if (entry.Key.Symbol is IFieldSymbol or IPropertySymbol && IsComponent(entry.Key.Symbol.ContainingType) &&
                                 entry.Value.Kind == TaintedDataAbstractValueKind.Tainted &&
                                 entry.Key.InstanceLocation.Locations.Any(location => SymbolEqualityComparer.Default.Equals(location.Symbol, method.ContainingType)))
                                 changed |= Add(entry.Key.Symbol, entry.Value);
                     }
-                    foreach (var method in group.Renders)
+                    foreach (var method in group.Renders.Where(group.Selected.Contains))
                     {
                         var graph = GetGraph(method);
                         if (graph == null || Analyze(graph, method) is not { } result) continue;
@@ -289,6 +368,72 @@ namespace Dotnetarium.Config
             finally { computing = false; }
         }
 
+        private bool AddCollectionWrites(ControlFlowGraph graph, TaintedDataAnalysisResult result)
+        {
+            bool changed = false;
+            foreach (var call in graph.DescendantOperations().OfType<IInvocationOperation>())
+            {
+                if (call.TargetMethod.Name != "Add" || CollectionField(call.Instance) is not { } field) continue;
+                var block = graph.Blocks.FirstOrDefault(candidate => candidate.Operations.Any(operation => operation.DescendantsAndSelf().Any(child => ReferenceEquals(child, call))));
+                if (block != null && ClearedAfter(block, call, field)) continue;
+                var argument = call.Arguments.LastOrDefault();
+                if (argument == null) continue;
+                var item = compilation.GetSemanticModel(argument.Syntax.SyntaxTree).GetOperation(argument.Value.Syntax) ?? argument.Value;
+                while (item is IConversionOperation { OperatorMethod: null } conversion) item = conversion.Operand;
+                if (item.Type?.SpecialType == SpecialType.System_String && result[item].Kind == TaintedDataAbstractValueKind.Tainted)
+                    changed |= Add(field, result[item]);
+                if (item is not IObjectCreationOperation { Initializer: { } initializer }) continue;
+                foreach (var assignment in initializer.Initializers.OfType<ISimpleAssignmentOperation>())
+                {
+                    var member = assignment.Target is IPropertyReferenceOperation property ? (ISymbol)property.Property :
+                        assignment.Target is IFieldReferenceOperation target ? target.Field : null;
+                    var lowered = graph.DescendantOperations().OfType<ISimpleAssignmentOperation>()
+                        .FirstOrDefault(operation => operation.Syntax.Span == assignment.Syntax.Span);
+                    var value = result[lowered?.Value ?? assignment.Value];
+                    if (member == null || value.Kind != TaintedDataAbstractValueKind.Tainted) continue;
+                    if (!collectionValues.TryGetValue(field, out var members))
+                        collectionValues[field] = members = new Dictionary<ISymbol, TaintedDataAbstractValue>(SymbolEqualityComparer.Default);
+                    if (members.TryGetValue(member, out var old)) value = TaintedDataAbstractValue.MergeTainted(new[] { old, value });
+                    if (old != null && old.Equals(value)) continue;
+                    members[member] = value;
+                    InvalidateSummaries(field);
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
+        private bool ClearedAfter(BasicBlock first, IInvocationOperation add, IFieldSymbol field)
+        {
+            var seen = new HashSet<BasicBlock>();
+            for (BasicBlock? block = first; block != null && seen.Add(block) && seen.Count <= 64;
+                block = block.ConditionKind == ControlFlowConditionKind.None ? block.FallThroughSuccessor?.Destination : null)
+            {
+                foreach (var operation in block.Operations.SelectMany(value => value.DescendantsAndSelf()))
+                {
+                    if (operation.Syntax.SpanStart <= add.Syntax.SpanStart) continue;
+                    if (operation is IInvocationOperation clear && clear.TargetMethod.Name == "Clear" &&
+                        SymbolEqualityComparer.Default.Equals(CollectionField(clear.Instance), field)) return true;
+                    if (operation is ISimpleAssignmentOperation reset && reset.Target is IFieldReferenceOperation target &&
+                        SymbolEqualityComparer.Default.Equals(target.Field, field) && reset.Value is IObjectCreationOperation { Initializer: null }) return true;
+                    if (operation is IInvocationOperation) return false;
+                }
+            }
+            return false;
+        }
+
+        private IFieldSymbol? CollectionField(IOperation? operation)
+        {
+            if (operation is IFlowCaptureReferenceOperation)
+                operation = compilation.GetSemanticModel(operation.Syntax.SyntaxTree).GetOperation(operation.Syntax);
+            while (operation is IConversionOperation { OperatorMethod: null } conversion) operation = conversion.Operand;
+            if (operation is not IFieldReferenceOperation field || !IsComponent(field.Field.ContainingType) ||
+                field.Field.Type is not INamedTypeSymbol type) return null;
+            var definition = type.OriginalDefinition;
+            return definition.ContainingNamespace.ToDisplayString() == "System.Collections.Generic" &&
+                definition.MetadataName is "List`1" or "Dictionary`2" ? field.Field : null;
+        }
+
         private bool Add(ISymbol member, TaintedDataAbstractValue value)
         {
             if (values.TryGetValue(member, out var old))
@@ -298,14 +443,38 @@ namespace Dotnetarium.Config
                 values[member] = merged;
             }
             else values.Add(member, value);
+            InvalidateSummaries(member);
+            return true;
+        }
+
+        private void InvalidateSummaries(ISymbol changed)
+        {
+            pendingChanges.Add(changed.OriginalDefinition);
+        }
+
+        private void FlushInvalidation()
+        {
             // Changing modeled inputs invalidates completed taint summaries.
             // Refresh CFG identity too, so nested interprocedural caches cannot
             // reuse results obtained against an earlier component state.
-            summaries.Clear();
-            graphs.Clear();
-            sourceFreeSummaries.Clear();
-            summarySources = null;
-            return true;
+            if (pendingChanges.Count == 0) return;
+            var changed = new HashSet<ISymbol>(pendingChanges, SymbolEqualityComparer.Default);
+            pendingChanges.Clear();
+            bool Affected(IMethodSymbol method)
+            {
+                var footprint = dependencies.ForMethod(method);
+                return footprint.Unknown || footprint.Reads.Overlaps(changed);
+            }
+            foreach (var method in summaries.Keys.Concat(sourceFreeSummaries).Distinct(SymbolEqualityComparer.Default).OfType<IMethodSymbol>().ToArray())
+            {
+                if (!Affected(method)) continue;
+                summaries.Remove(method);
+                graphs.Remove(method);
+                sourceFreeSummaries.Remove(method);
+            }
+            summarySources?.InvalidateStateProofs(Affected);
+            foreach (var group in groups.Values)
+                if (group.Required.Overlaps(changed)) group.Completed = false;
         }
 
         private TaintedDataAnalysisResult? Analyze(ControlFlowGraph graph, IMethodSymbol method)
@@ -315,7 +484,6 @@ namespace Dotnetarium.Config
             // later roots can continue past already completed callbacks.
             if (summaries.TryGetValue(method, out var summary)) return summary;
             if (sourceFreeSummaries.Contains(method)) return null;
-            var kind = (SinkKind)(int)TaintType.CrossSiteScripting;
             var sources = configuration.GetSourceSymbolMap(kind);
             // Ordinary XSS roots already prove source absence before running
             // taint/points-to analysis. Apply that gate to component summaries
@@ -327,16 +495,36 @@ namespace Dotnetarium.Config
                 sourceFreeSummaries.Add(method);
                 return null;
             }
-            var result = TaintedDataAnalysis.TryGetOrComputeResult(graph, compilation, method, options, DnaRuleCatalog.CrossSiteScripting,
+            var rule = (TaintType)(int)kind switch
+            {
+                TaintType.SqlInjection => DnaRuleCatalog.SqlInjection,
+                TaintType.CommandInjection => DnaRuleCatalog.CommandInjection,
+                TaintType.XPathInjection => DnaRuleCatalog.XPathInjection,
+                TaintType.PathEscape => DnaRuleCatalog.PathEscape,
+                TaintType.OpenRedirect => DnaRuleCatalog.OpenRedirect,
+                TaintType.LdapDnInjection or TaintType.LdapFilterInjection => DnaRuleCatalog.LdapInjection,
+                TaintType.ServerSideRequestForgery => DnaRuleCatalog.ServerSideRequestForgery,
+                TaintType.DynamicCodeExecution => DnaRuleCatalog.DynamicCodeExecution,
+                TaintType.XmlExternalEntity => DnaRuleCatalog.XmlExternalEntity,
+                TaintType.UnsafeDeserialization => DnaRuleCatalog.UnsafeBinaryFormatter,
+                _ => DnaRuleCatalog.CrossSiteScripting
+            };
+            var result = TaintedDataAnalysis.TryGetOrComputeResult(graph, compilation, method, options, rule,
                 sources, configuration.GetSanitizerSymbolMap(kind), configuration.GetSinkSymbolMap(kind),
                 CancellationToken.None, configuration.AnalysisSettings.MethodDepth,
                 configuration.AnalysisSettings.LambdaDepth, cacheResult: false);
-            if (result != null) summaries[method] = result;
+            if (result != null)
+            {
+                summaries[method] = result;
+            }
             return result;
         }
 
         private ControlFlowGraph? GetGraph(IMethodSymbol method)
         {
+            // All writes from one completed callback are invalidated together,
+            // before another graph/summary can observe the new modeled state.
+            FlushInvalidation();
             // The compilation is immutable. Reuse CFGs across summary passes
             // and budget retries, while recalculating taint against current state.
             // Access is serialized by gate; an aborted taint result is never cached.

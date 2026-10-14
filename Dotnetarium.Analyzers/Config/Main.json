@@ -2,6 +2,16 @@
   "ThreatModels": [ "remote" ],
   "TaintFlowVisualizationEnabled": true,
   "TaintEntryPoints": {
+    "GodotRpc": {
+      "SourceType": "Godot.Node", "Scope": "remote",
+      "Class": { "Parent": "Godot.Node" },
+      "Parameter": { "Binding": "GodotRpc" }
+    },
+    "UnityServerRpc": {
+      "SourceType": "Unity.Netcode.NetworkBehaviour", "Scope": "remote",
+      "Class": { "Parent": "Unity.Netcode.NetworkBehaviour" },
+      "Parameter": { "Binding": "UnityServerRpc" }
+    },
     "CommandLine": {
       "SourceType": "System.Object",
       "Scope": "local",
@@ -197,6 +207,11 @@
       "ServerPropertyAttributes": [
         "Microsoft.AspNetCore.Components.SupplyParameterFromFormAttribute"
       ]
+    },
+    {
+      "Type": "Microsoft.AspNetCore.Components.ComponentBase", "Scope": "remote",
+      "TaintTypes": [ "SqlInjection", "CommandInjection", "XPathInjection", "PathEscape", "OpenRedirect", "LdapFilterInjection", "LdapDnInjection", "ServerSideRequestForgery", "DynamicCodeExecution", "XmlExternalEntity", "UnsafeDeserialization" ],
+      "Properties": []
     },
     {
       "Type": "Microsoft.AspNetCore.Components.MarkupString",
@@ -1122,6 +1137,18 @@
     }
   ],
   "Sinks": [
+    {
+      "Type": "Godot.AesContext", "TaintTypes": [ "HardcodedSecret" ],
+      "Methods": [ { "Name": "Start", "Arguments": [ "key" ] } ]
+    },
+    {
+      "Type": "Godot.OS", "TaintTypes": [ "CommandInjection" ],
+      "Methods": [
+        { "Name": "Execute", "Arguments": [ "path" ] },
+        { "Name": "ExecuteWithPipe", "Arguments": [ "path" ] },
+        { "Name": "CreateProcess", "Arguments": [ "path" ] }
+      ]
+    },
     {
       "Type": "System.Xml.XmlReader", "TaintTypes": [ "XmlExternalEntity" ],
       "Methods": [ { "Name": "Create", "Arguments": [ "input" ] } ]
@@ -2391,6 +2418,42 @@
             "code"
           ]
         }
+      ]
+    },
+    {
+      "Type": "RazorLight.RazorLightEngine", "TaintTypes": [ "DynamicCodeExecution" ],
+      "Methods": [ { "Name": "CompileRenderStringAsync", "Arguments": [ "content" ] } ]
+    },
+    {
+      "Type": "System.Runtime.Serialization.Formatters.Binary.BinaryFormatter", "TaintTypes": [ "UnsafeDeserialization" ],
+      "Methods": [ { "Name": "Deserialize", "Arguments": [ "serializationStream" ] } ]
+    },
+    {
+      "Type": "RazorLight.IRazorLightEngine", "IsInterface": true, "TaintTypes": [ "DynamicCodeExecution" ],
+      "Methods": [ { "Name": "CompileRenderStringAsync", "Arguments": [ "content" ] } ]
+    },
+    {
+      "Type": "Microsoft.JSInterop.IJSRuntime", "IsInterface": true, "TaintTypes": [ "CrossSiteScripting" ],
+      "Methods": [
+        { "Name": "InvokeAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "eval" } ] },
+        { "Name": "InvokeAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "window.eval" } ] },
+        { "Name": "InvokeAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "globalThis.eval" } ] }
+      ]
+    },
+    {
+      "Type": "Microsoft.JSInterop.JSRuntimeExtensions", "TaintTypes": [ "CrossSiteScripting" ],
+      "Methods": [
+        { "Name": "InvokeVoidAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "eval" } ] },
+        { "Name": "InvokeVoidAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "window.eval" } ] },
+        { "Name": "InvokeVoidAsync", "Arguments": [ "args" ], "Condition": [ { "identifier": "globalThis.eval" } ] }
+      ]
+    },
+    {
+      "Type": "Microsoft.JSInterop.IJSInProcessRuntime", "IsInterface": true, "TaintTypes": [ "CrossSiteScripting" ],
+      "Methods": [
+        { "Name": "Invoke", "Arguments": [ "args" ], "Condition": [ { "identifier": "eval" } ] },
+        { "Name": "Invoke", "Arguments": [ "args" ], "Condition": [ { "identifier": "window.eval" } ] },
+        { "Name": "Invoke", "Arguments": [ "args" ], "Condition": [ { "identifier": "globalThis.eval" } ] }
       ]
     }
   ]

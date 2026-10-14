@@ -20,7 +20,7 @@ namespace Dotnetarium.Analyzers.Taint
         protected abstract SinkKind SinkKind { get; }
         protected abstract DiagnosticDescriptor TaintedDataEnteringSinkDescriptor { get; }
         protected virtual IEnumerable<SinkKind> SinkKinds => new[] { SinkKind };
-        protected virtual bool AnalyzeRazorGeneratedCode => false;
+        protected virtual bool AnalyzeRazorGeneratedCode => true;
         protected virtual bool IsSinkRelevant(Location location, Compilation compilation) => true;
 
         public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
@@ -75,6 +75,7 @@ namespace Dotnetarium.Analyzers.Taint
         {
             if (MigrationAnalysisExclusion.IsExcluded(block.OwningSymbol))
                 return;
+            if (block.IsGeneratedCode && block.OperationBlocks.All(root => !RazorCodeAnalysis.IsRazorTree(root.Syntax.SyntaxTree))) return;
             if (AnalyzeRazorGeneratedCode && block.OperationBlocks.All(root =>
                 IsUnrelatedGeneratedFile(root.Syntax.SyntaxTree.FilePath)))
                 return;
@@ -161,7 +162,7 @@ namespace Dotnetarium.Analyzers.Taint
                     if (kind == (SinkKind)(int)TaintType.PathEscape && BoundaryValidation.HasCanonicalPathRoot(pair.Sink.Location, block.Compilation)) continue;
                     if (kind == (SinkKind)(int)TaintType.PathEscape && BoundaryValidation.HasValidatedFileName(pair.Sink.Location, block.Compilation)) continue;
                     if (kind == (SinkKind)(int)TaintType.PathEscape && BoundaryValidation.HasContainedBaseName(pair.Sink.Location, block.Compilation, IsTainted)) continue;
-                    if (kind == (SinkKind)(int)TaintType.ServerSideRequestForgery && BoundaryValidation.HasFixedRequestAuthority(pair.Sink.Location, block.Compilation)) continue;
+                    if (kind == (SinkKind)(int)TaintType.ServerSideRequestForgery && BoundaryValidation.HasFixedRequestAuthority(pair.Sink.Location, block.Compilation, IsTainted)) continue;
 
                     if (kind == (SinkKind)(int)TaintType.OpenRedirect &&
                         (LocalRedirectGuard.Protects(pair.Sink.Location, block.Compilation) ||
@@ -171,6 +172,8 @@ namespace Dotnetarium.Analyzers.Taint
 
                     foreach (var origin in pair.SourceOrigins)
                     {
+                        if (kind == (SinkKind)(int)TaintType.PathEscape &&
+                            BoundaryValidation.IsHostStartupDirectory(pair.Sink.Location, block.Compilation, origin.Symbol)) continue;
                         var locations = settings.TaintFlowVisualizationEnabled
                             ? result.GetFlowLocations(pair, origin).ToArray()
                             : new[] { origin.Location };

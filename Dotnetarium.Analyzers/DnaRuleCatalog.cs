@@ -29,11 +29,12 @@ namespace Dotnetarium.Analyzers
         public static readonly DiagnosticDescriptor XmlExternalEntity = Taint("DNA0021", "XML external entity resolution", 611);
 
         public static readonly DiagnosticDescriptor EmbeddedProviderCredential = Create("DNA0022", "Hard-coded network credentials", "A {0} {1} is hard-coded in a configuration file. Remove it and use a secret store; rotate it if exposed.", 798);
+        public static readonly DiagnosticDescriptor UnsafeBinaryFormatter = Taint("DNA0023", "Unsafe BinaryFormatter deserialization", 502);
 
         private static readonly IReadOnlyDictionary<string, int> CweById = new Dictionary<string, int>
         {
             ["DNA0001"] = 89, ["DNA0002"] = 78, ["DNA0003"] = 79, ["DNA0004"] = 22,
-            ["DNA0005"] = 601, ["DNA0006"] = 90, ["DNA0007"] = 643, ["DNA0008"] = 502,
+            ["DNA0005"] = 601, ["DNA0006"] = 90, ["DNA0007"] = 643, ["DNA0008"] = 502, ["DNA0023"] = 502,
             ["DNA0009"] = 798, ["DNA0010"] = 614, ["DNA0011"] = 918, ["DNA0012"] = 94,
             ["DNA0013"] = 327, ["DNA0014"] = 327, ["DNA0015"] = 329, ["DNA0016"] = 916,
             ["DNA0017"] = 321, ["DNA0018"] = 209, ["DNA0019"] = 319, ["DNA0020"] = 295, ["DNA0021"] = 611, ["DNA0022"] = 798
@@ -66,6 +67,7 @@ namespace Dotnetarium.Analyzers
                     "DNA0020" => "CWE-295. A TLS certificate validation callback is configured to accept every certificate. Retain platform validation or validate the remote certificate explicitly.",
                     "DNA0021" => "CWE-611. Untrusted XML reaches a parser explicitly configured for DTD parsing and unrestricted external resolution. Modern safe defaults and restricted/preloaded resolvers are not reported.",
                     "DNA0022" => "CWE-798. A configuration file contains a recognizable provider token or authentication key, even if no code uses it. Public identifiers are excluded. Detection is offline by default; the CLI offers optional checks with supported providers. DNA0009 checks literal secrets used by C# APIs.",
+                    "DNA0023" => "CWE-502. Untrusted bytes reach BinaryFormatter.Deserialize with an explicit compatibility-package reference that restores the unsafe implementation. Migrate to System.Text.Json with a fixed DTO schema.",
                     _ => $"CWE-{cwe}. Review the reported data flow and use a context-appropriate mitigation."
                 },
                 helpLinkUri: $"https://github.com/dotnetarium/dotnetarium/blob/main/docs/rules/{id}.md",

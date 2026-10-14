@@ -83,6 +83,14 @@ for the covered APIs, trust boundaries and implementation plan. The default
 changed: stdin-based flows require opting into local sources. Local scope does
 not automatically treat all files or database reads as sources.
 
+Path findings exclude ordinary startup directory creation from process arguments
+when the destination is a framework host's web/content root plus fixed directory
+names. This narrow exception applies only in the entry point, only to
+`Directory.CreateDirectory`, and only while the host root and path aliases are
+not reassigned. Request-controlled paths, dynamic suffixes, file reads/writes and
+archive extraction retain their normal checks. Passing a path directly as a CLI
+argument also remains eligible; local privilege boundaries require review.
+
 ## EF migration scope
 
 Entity Framework migrations and model snapshots are excluded from taint analysis.
@@ -105,7 +113,7 @@ effort, not enabled rules, threat models or provider models.
 
 | Profile | Source-method call depth | Lambda/local-function depth | Work units per root method/rule |
 | --- | --- | --- | --- |
-| `fast` | 3 | 3 | 1,000 |
+| `fast` | 3 | 3 | 2,500 |
 | `full` | 5 | 5 | 5,000 |
 | `max` | 10 | 10 | 10,000 |
 
@@ -156,7 +164,7 @@ explored. Profile limits are not a wall-clock or process-memory guarantee.
 
 ## Taint analysis work limit
 
-Each root method and taint rule has a budget of **1,000 work units** in fast,
+Each root method and taint rule has a budget of **2,500 work units** in fast,
 **5,000** in full or **10,000** in max, shared by source/sink eligibility checks and nested
 points-to, value-content and taint analyses. Entering a dataflow graph, visiting a
 basic block, visiting an operation or comparing a delegate target spends one unit.

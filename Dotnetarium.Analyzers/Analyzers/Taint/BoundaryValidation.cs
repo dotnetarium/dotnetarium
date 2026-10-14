@@ -9,6 +9,59 @@ namespace Dotnetarium.Analyzers.Taint
     /// <summary>Only consuming branches and stable values establish validation, never ignored calls.</summary>
     internal static class BoundaryValidation
     {
+        internal static bool IsHostStartupDirectory(Location sink, Compilation compilation, ISymbol origin)
+        {
+            if (origin is not IParameterSymbol { Type: IArrayTypeSymbol { ElementType.SpecialType: SpecialType.System_String } } parameter ||
+                parameter.ContainingSymbol is not IMethodSymbol entry || sink.SourceTree == null ||
+                !SymbolEqualityComparer.Default.Equals(compilation.GetEntryPoint(default), entry)) return false;
+            var model = compilation.GetSemanticModel(sink.SourceTree);
+            var syntax = sink.SourceTree.GetRoot().FindNode(sink.SourceSpan);
+            var callSyntax = syntax.AncestorsAndSelf().OfType<InvocationExpressionSyntax>().FirstOrDefault();
+            if (callSyntax == null || model.GetOperation(callSyntax) is not IInvocationOperation call ||
+                call.TargetMethod.ContainingType.ToDisplayString() != "System.IO.Directory" || call.TargetMethod.Name != "CreateDirectory" ||
+                !SymbolEqualityComparer.Default.Equals(model.GetEnclosingSymbol(callSyntax.SpanStart), entry) || call.Arguments.Length != 1) return false;
+            return HostPath(call.Arguments[0].Value, 0);
+
+            bool HostPath(IOperation? value, int depth)
+            {
+                if (depth > 12) return false;
+                value = Unwrap(value);
+                if (value is ILocalReferenceOperation local) return HostPath(StartupInitializer(local.Local), depth + 1);
+                if (value is IInvocationOperation combine && combine.TargetMethod.ContainingType.ToDisplayString() == "System.IO.Path" &&
+                    combine.TargetMethod.Name == "Combine" && combine.Arguments.Length >= 2)
+                    return HostPath(combine.Arguments[0].Value, depth + 1) && combine.Arguments.Skip(1).All(argument =>
+                        argument.Value.ConstantValue is { HasValue: true, Value: string segment } && segment.Length > 0 &&
+                        segment is not ("." or "..") && segment.IndexOfAny(new[] { '/', '\\', ':' }) < 0);
+                if (value is not IPropertyReferenceOperation root ||
+                    !(root.Property.Name == "WebRootPath" && root.Property.ContainingType.ToDisplayString() == "Microsoft.AspNetCore.Hosting.IWebHostEnvironment" ||
+                      root.Property.Name == "ContentRootPath" && root.Property.ContainingType.ToDisplayString() == "Microsoft.Extensions.Hosting.IHostEnvironment") ||
+                    !FrameworkEnvironment(root.Instance, 0)) return false;
+                // Explicit reassignment of the host root is not ordinary configuration.
+                var scope = callSyntax.Ancestors().FirstOrDefault(node => node is BaseMethodDeclarationSyntax) ?? callSyntax.SyntaxTree.GetRoot();
+                return !scope.DescendantNodes().OfType<AssignmentExpressionSyntax>().Any(assignment =>
+                    model.GetOperation(assignment.Left) is IPropertyReferenceOperation target &&
+                    SymbolEqualityComparer.Default.Equals(target.Property, root.Property));
+            }
+            bool FrameworkEnvironment(IOperation? value, int depth)
+            {
+                if (depth > 12) return false;
+                value = Unwrap(value);
+                if (value is ILocalReferenceOperation local) return FrameworkEnvironment(StartupInitializer(local.Local), depth + 1);
+                return value is IPropertyReferenceOperation environment && environment.Property.Name == "Environment" &&
+                    environment.Property.ContainingType.ToDisplayString() is "Microsoft.AspNetCore.Builder.WebApplicationBuilder" or
+                        "Microsoft.AspNetCore.Builder.WebApplication" or "Microsoft.Extensions.Hosting.HostApplicationBuilder";
+            }
+            IOperation? StartupInitializer(ILocalSymbol local)
+            {
+                if (StableInitializer(local, compilation) is { } initializer) return initializer;
+                if (local.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is not VariableDeclaratorSyntax { Initializer: { } value } declaration ||
+                    !declaration.Ancestors().Any(node => node is GlobalStatementSyntax)) return null;
+                var root = declaration.SyntaxTree.GetRoot();
+                var localModel = compilation.GetSemanticModel(declaration.SyntaxTree);
+                return IsWrittenInScope(local, root, localModel) ? null : localModel.GetOperation(value.Value);
+            }
+        }
+
         internal static IOperation? SinkValue(Location sink, Compilation compilation)
         {
             if (sink.SourceTree == null) return null;
@@ -106,12 +159,28 @@ namespace Dotnetarium.Analyzers.Taint
                 root.Length > 3 && char.IsLetter(root[0]) && root[1] == ':' && root[2] is '/' or '\\';
         });
 
-        internal static bool HasFixedRequestAuthority(Location sink, Compilation compilation)
+        internal static bool HasFixedRequestAuthority(Location sink, Compilation compilation, Func<IOperation, bool>? isTainted = null)
         {
             var operation = Unwrap(SinkValue(sink, compilation));
             if (operation is IObjectCreationOperation creation && creation.Type?.ToDisplayString() == "System.Uri" && creation.Arguments.Length == 1)
                 operation = Unwrap(creation.Arguments[0].Value);
-            return HasFixedHttpAuthority(ConstantStringPrefix(operation, compilation));
+            if (HasFixedHttpAuthority(ConstantStringPrefix(operation, compilation))) return true;
+            if (isTainted == null) return false;
+            if (operation is ILocalReferenceOperation local) operation = Unwrap(StableInitializer(local.Local, compilation));
+            if (operation is not IInterpolatedStringOperation template) return false;
+            bool query = false, encodedInput = false;
+            foreach (var part in template.Parts)
+            {
+                if (part is IInterpolatedStringTextOperation text)
+                { query |= (text.Text.ConstantValue.Value as string)?.Contains('?') == true; continue; }
+                if (part is not IInterpolationOperation interpolation || !isTainted(interpolation.Expression)) continue;
+                if (!query || Unwrap(interpolation.Expression) is not IInvocationOperation encoder ||
+                    encoder.TargetMethod.ContainingType.ToDisplayString() != "System.Uri" || encoder.TargetMethod.Name != "EscapeDataString") return false;
+                encodedInput = true;
+            }
+            // This source can only change query data; an untainted dynamic base
+            // is not made attacker-selected by an encoded query interpolation.
+            return encodedInput;
         }
 
         internal static bool HasFixedRedirectDestination(Location sink, Compilation compilation)

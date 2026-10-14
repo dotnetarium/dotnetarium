@@ -1,0 +1,14 @@
+@page "/collection-probe"
+@rendermode InteractiveServer
+<input @bind="text" />
+<button @onclick="Add">Add</button>
+@foreach (var item in comments) {
+    @((MarkupString)item.Text)
+    @((MarkupString)item.Safe)
+}
+@code {
+    private string text = "fixed";
+    private readonly List<Comment> comments = new();
+    private sealed class Comment { public string Text { get; set; } = ""; public string Safe { get; set; } = "safe"; }
+    private void Add() => comments.Add(new Comment { Text = text });
+}

@@ -95,8 +95,33 @@ requires them, with tests for that behavior and alternate assembly delivery.
 
 ## Analysis profiles
 
+For the repeated sink-summary fix and the remaining per-application families,
+see [taint cutoff families](cutoff-families.md). That investigation keeps fast
+depth/work limits fixed and distinguishes indexing, source/model evaluation,
+actual dataflow and depth stops; it does not establish a speedup.
+
+### LANCommander regression verification (October 13, 2026)
+
+Remote + local, Release/net10.0, fast policy with depth 3 and 2,500 work units,
+on LANCommander `4a2eef7`. Single sequential Windows runs; application setup was
+unchanged. Missing restored references, Razor generation gaps and project-mode
+npm/Aspire errors remain disclosed, so these are partial scans.
+
+| Mode | Before / after seconds | Before / after cutoffs | Before / after analyzer exceptions | Findings |
+| --- | --- | --- | --- | --- |
+| Project | 82.23 / 90.52 | 2,247 / 3,491 | 840 / 0 | 16 / 16 |
+| No-build | 44.28 / 47.51 | 1,743 / 1,769 | 17 / 0 | 16 / 16 |
+
+Both modes now exclude all six test projects (project mode previously excluded
+four). Findings retain the same locations. More work cutoffs are expected where
+the analyzer previously threw before completing a method: old counts understated
+incomplete analysis. The foreign-compilation graph fix preserves unknown
+dependency eligibility rather than treating unavailable bodies as safe.
+
+### Defaults and earlier measurements
+
 The package defaults to `fast`: source-method and lambda/local-function depth
-**3**, with **1,000 work units** per root/rule. The tool defaults to `full`:
+**3**, with **2,500 work units** per root/rule. The tool defaults to `full`:
 depth **5**, with **5,000 units**. The opt-in `max` profile uses depth **10** and
 **10,000 units**. Explicit JSON profiles and numeric limits
 override these defaults. Binder and component-state summaries use the same
@@ -464,3 +489,89 @@ introduced inside a user-defined string-to-object conversion and then forwarded
 through a child parameter was not reported by either baseline or candidate.
 Keeping that dependency eligible is necessary but does not repair the underlying
 flow model. This performance change does not claim support for that case.
+# Shared Razor layouts and early source proofs
+
+Component state dependencies now point from a child to the parents supplying its
+parameters. A parent does not join sibling pages merely because they use the same
+layout. Its own render runs as an ordinary root; only upstream renders contribute
+parameter summaries. Source eligibility can also stop indexing as soon as a known
+entry parameter or browser binder proves that an origin is possible. Incomplete
+indexing is never used as a source-absence proof.
+
+On `AlexGoOn/the-most-vulnerable-dotnet-app` at `60d060f`, with the default full
+profile and Release configuration, these changes recovered four mapped HTML
+findings that 2.5.0 missed. Total finding records increased from 9 to 13 and cutoff
+notices fell from 56 to 40. Aggregate analysis time fell from 4.58 to 3.57 seconds;
+whole-process time varied from 9.84 to 11.45 seconds, so this single comparison
+does not establish an end-to-end speedup. Two attribute findings still exhausted
+the budget. No work or call-depth limits were raised.
+
+After the mapped direct rules, server execution models, collection provenance and
+execution sinks were added, two final default-budget project scans reported the
+same **25 finding records** in **12.06 and 11.25 seconds**, using **385–388 MiB**.
+The upload dictionary-selector path false positive was removed. No-build reported
+**8 records in 2.62 seconds**, using **218 MiB**; missing Razor generation still
+prevents equivalent coverage. Both modes remain partial on this fixture.
+
+Default project scans retained **53 budget notices**. A diagnostic retry at 50,000
+work units reported **30 records** and **2 budget notices**, recovering two
+attribute XSS paths, SQL, XPath and compatibility-package BinaryFormatter paths.
+It took **11.25 seconds** in this small fixture. That does not justify increasing
+the product default for larger applications. Earlier intermediate builds reported
+the BinaryFormatter path at the default budget; final builds cut off that method.
+API coverage and a clean compiler therefore do not guarantee complete bounded
+interprocedural analysis. Project loading also retained the fixture's two NuGet
+vulnerability advisory workspace notices.
+
+## No-build Razor generation
+
+Running the official SDK Razor generator in memory recovered the missing Razor
+coverage on the same fixture. A sequential pair reported the same **25 finding
+locations** in both modes: project mode took **10.55 seconds / 382 MiB** and
+no-build took **7.64 seconds / 338 MiB**. Razor generation accounted for **2.31
+seconds** of no-build loading. Both retained **53 budget notices**; these results
+do not establish complete vulnerability coverage. No-build emitted no application
+assemblies and reported no compiler errors or Razor generation failures.
+
+A final repeat took **11.46 seconds / 382 MiB** in project mode and **7.44 seconds
+/ 319 MiB** in no-build mode. No-build retained all 25 project finding locations
+and also reported the previously budget-sensitive BinaryFormatter path (26
+records, 52 budget notices). Bounded analysis can still vary at that boundary.
+
+Solution scans now exclude marked test projects before loading independent roots.
+Required test dependencies remain available for binding, but are not analyzed.
+An explicitly selected test project remains eligible. This intentional scope
+selection is reported separately from incomplete coverage.
+
+## Member-scoped component summaries
+
+Component summaries select writers of demanded state and follow their input
+dependencies. Child parameters use the dependency expressions actually passed to
+them. Unknown dispatch and uncertain aliases retain broader callback analysis.
+State changes invalidate dependent method summaries and negative source proofs;
+unrelated completed work is retained. Writes from one callback are invalidated
+together before another graph is analyzed. Structural indexing reuses CFGs and
+has conservative limits separate from the configured taint budget.
+
+A regression fixture puts a large unrelated browser callback beside an ordinary
+input/helper/relay/raw-HTML flow. Unchanged PR 32 misses the independent finding
+in fast, full and max profiles; member-scoped summaries retain it in all three.
+The noisy method may still exhaust its own eligibility budget. No profile or
+taint work limit was raised. Tests preserve resets, inheritance, interface
+dispatch, collection state and child-parameter forwarding.
+
+Warm sequential scans of the vulnerable-app fixture, with remote and local
+sources enabled, measured the following:
+
+| Mode | Before seconds / MiB | After seconds / MiB | Before / after records | Before / after cutoffs |
+| --- | --- | --- | --- | --- |
+| Project | 9.15 / 369 | 11.46 / 385 | 28 / 25 | 55 / 54 |
+| No-build | 7.44 / 333 | 7.24 / 338 | 28 / 25 | 54 / 53 |
+
+Two records were intentionally removed: startup directory creation from process
+arguments under framework host roots with fixed suffixes. The other difference
+was the already budget-sensitive BinaryFormatter path; other candidate scans
+retained it. All 25 stable finding locations were preserved. Analysis stage times
+were 4.32 to 5.03 seconds in project mode and 4.37 to 4.14 in no-build mode.
+These measurements do not establish an overall speedup. XssAttributes still
+misses two raw-HTML paths at the default budget; bounded coverage remains partial.

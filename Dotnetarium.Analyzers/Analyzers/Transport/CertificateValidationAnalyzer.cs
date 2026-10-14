@@ -18,7 +18,7 @@ namespace Dotnetarium.Analyzers.Transport
         public override void Initialize(AnalysisContext context)
         {
             context.EnableConcurrentExecution();
-            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
+            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.Analyze | GeneratedCodeAnalysisFlags.ReportDiagnostics);
             context.RegisterCompilationStartAction(start =>
             {
                 var global = start.Options.AnalyzerConfigOptionsProvider.GlobalOptions;
@@ -34,6 +34,7 @@ namespace Dotnetarium.Analyzers.Transport
 
         private static void AnalyzeAssignment(OperationAnalysisContext context, ConcurrentDictionary<SyntaxTree, SyntaxTree> releaseTrees)
         {
+            if (context.IsGeneratedCode && !RazorCodeAnalysis.IsUserCode(context.Operation.Syntax)) return;
             var assignment = (ISimpleAssignmentOperation)context.Operation;
             if (assignment.Target is IPropertyReferenceOperation property && IsValidationProperty(property.Property) &&
                 !IsEnvironmentExempt(assignment) && !IsDebugOnly(assignment, releaseTrees) &&
@@ -43,6 +44,7 @@ namespace Dotnetarium.Analyzers.Transport
 
         private static void AnalyzeCreation(OperationAnalysisContext context, ConcurrentDictionary<SyntaxTree, SyntaxTree> releaseTrees)
         {
+            if (context.IsGeneratedCode && !RazorCodeAnalysis.IsUserCode(context.Operation.Syntax)) return;
             var creation = (IObjectCreationOperation)context.Operation;
             if (creation.Constructor?.ContainingType.ToDisplayString() != "System.Net.Security.SslStream" ||
                 IsEnvironmentExempt(creation) || IsDebugOnly(creation, releaseTrees)) return;

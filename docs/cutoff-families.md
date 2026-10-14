@@ -5,6 +5,39 @@ LANCommander. All comparisons use remote + local sources, fast analysis at
 method/lambda depth **3** and **2,500 work units**, Release/net10.0. Cross-app
 phase tracing used no-build mode. Application source and budgets were unchanged.
 
+## Follow-up: resumable delegate matching
+
+Delegate compatibility lookup now retains a candidate cursor per constructed
+signature. A work/cancellation exception leaves the current candidate pending;
+readers receive an immutable target set only after the entire query completes.
+An empty completed set is cached too. The compatibility predicate and candidate
+inventory are unchanged, including generic/optional/params/ref/variance
+adaptations. This remains a reachability aid, not runtime dispatch resolution.
+
+Thirteen new cases cover late source/sink targets, equality with an uninterrupted
+query, cancellation recovery, concurrent readers and separate closed generic
+signatures. The full 1,323-case suite passed. No limits, rules or source/sink
+models changed.
+
+| Application | Cutoffs before / after | Findings before / after |
+| --- | ---: | ---: |
+| Vulnerable .NET app | 79 / 81 | 16 / 16 |
+| Sarifintown | 264 / 262 | 1 / 1 |
+| LANCommander | 1,752 / 1,703 | 16 / 16 |
+
+All finding locations were retained. LANCommander work cutoffs fell from 601 to
+549; depth cutoffs were 1,151/1,154. Its single-run time was 46.02/46.16 seconds,
+so this improves repeated lookup work without an established total-time speedup.
+The smaller apps show the expected cache-order variation; this does not address
+their dominant state/dataflow/helper-depth costs. All scans remain partial.
+
+Three isolated vulnerable-app runs gave median times of 8.17 seconds before and
+7.39 after (ranges 7.10-11.44 and 7.21-9.42). The earlier slower candidate
+measurement did not persist. These samples are too small to establish a speedup.
+Budgeted findings varied from 16-18 before and 17-19 after; all 16 baseline
+finding locations remained in every candidate repeat. This is existing bounded
+analysis/cache-order variation, not a promise of stable additional coverage.
+
 ## Completed improvement: resumable sink indexing
 
 An interrupted sink summary used to discard its structural scan. The next root
@@ -49,7 +82,7 @@ phase can also invoke component-state dataflow; it is not just source indexing.
 
 | Family | Evidence | Recommended next work | Safety requirement |
 | --- | --- | --- | --- |
-| Interrupted delegate matching | LANCommander stops inside `SourceDelegateTargets.Compatible`. `GetTargets` builds its complete array inside a cache factory, losing progress on a work exception. | Resume signature matching; then consider cheap arity/return-shape indexes. | Never publish a partial target set. Preserve late targets, generic/optional/params/ref/variance adaptations and unknown types. |
+| Interrupted delegate matching | LANCommander stopped inside `SourceDelegateTargets.Compatible`; its cache factory lost unfinished matching work. | Resumable matching is implemented. Cheap arity/return-shape indexes remain a possible follow-up. | Never publish a partial target set. Preserve late targets, generic/optional/params/ref/variance adaptations and unknown types. |
 | Broad source/helper closure | Source checks traverse media interfaces, generic callbacks and snippet/file helpers. Operation indexing already resumes, but target matching and transitive closure can still repeat. | Reuse completed method dependencies; investigate resumable closure traversal per configured checker. | Unknown calls and cycles are not absence proofs. Invalidate state-dependent negatives when component state changes. |
 | Repeated points-to/dataflow work | Array, argument, assignment and flow-capture visits exhaust budgets; several roots stop across nine rules. | Profile a single handler and its component-state prerequisites. Reduce irrelevant state/captured-input dependencies. | Completed exact-context results already have caches. Do not simply add another cache or share partial/stale taint results. Preserve aliases, captured values and inherited state. |
 | Deep wrappers | About two-thirds of Sarifintown/LANCommander stops are depth limits, including ordinary fluent/helper chains. | Inspect helper dependency summaries and precise transfer models; consider demand-driven prerequisite analysis. | A depth abort cannot be reused as a clean result. Blanket recursion, interface, array or render exclusions would lose real flows. |
@@ -103,8 +136,9 @@ Media services dispatch through interfaces/default-interface methods and async
 LINQ/channel pipelines. These are legitimate application patterns, not evidence
 that all recursion or delegates should be skipped. Prefer proven lexical delegate
 targets when available, while retaining a conservative fallback. There were 102
-deduplicated candidate stops inside delegate compatibility matching, making it
-the clearest next reusable-work fix.
+deduplicated candidate stops inside delegate compatibility matching in the
+earlier trace. That restart problem is now addressed. Broader source/helper
+closure and component-state prerequisites are the next targets.
 
 All application scans remain partial. Keep [profile coverage notices](RuleConfiguration.md#analysis-profiles-and-call-depth)
 visible when assessing findings. [Performance measurements](scan-performance.md)

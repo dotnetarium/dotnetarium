@@ -88,3 +88,4 @@ public class FileController : ControllerBase {
     }
     "File-access reports: $scratch"
 } finally { $env:NUGET_PACKAGES = $previousPackages }
+exit 0

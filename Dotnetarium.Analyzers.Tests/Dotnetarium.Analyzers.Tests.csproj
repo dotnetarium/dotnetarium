@@ -47,6 +47,9 @@
     <Compile Include="../Dotnetarium.Tool/SecretVerificationContext.cs" Link="Tool/SecretVerificationContext.cs" />
     <Compile Include="../Dotnetarium.Tool/SecretTokenValidation.cs" Link="Tool/SecretTokenValidation.cs" />
     <Compile Include="../Dotnetarium.Tool/ProviderSecretVerifier.cs" Link="Tool/ProviderSecretVerifier.cs" />
+    <Compile Include="../Dotnetarium.Tool/ScanReport.cs" Link="Tool/ScanReport.cs" />
+    <Compile Include="../Dotnetarium.Tool/SarifWriter.cs" Link="Tool/SarifWriter.cs" />
+    <Compile Include="../Dotnetarium.Tool/SourceLocationSpan.cs" Link="Tool/SourceLocationSpan.cs" />
   </ItemGroup>
 
 </Project>

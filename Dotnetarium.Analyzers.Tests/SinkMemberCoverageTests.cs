@@ -42,7 +42,10 @@ public sealed partial class SinkCoverageTests
         new("System.IO.File", "Replace", "destinationFileName", "System.IO.File.Replace(\"fixed\", input, \"backup\");"),
         new("System.IO.File", "Replace", "destinationBackupFileName", "System.IO.File.Replace(\"fixed\", \"destination\", input);"),
         new("System.IO.FileInfo", "Replace", "destinationBackupFileName", "_ = new System.IO.FileInfo(\"fixed\").Replace(\"destination\", input);"),
-        new("SharpCompress.Readers.IAsyncReaderExtensions", "WriteEntryToAsync", "destinationFileInfo", "_ = SharpCompress.Readers.IAsyncReaderExtensions.WriteEntryToAsync((SharpCompress.Readers.IAsyncReader)null!, new System.IO.FileInfo(input));")
+        new("SharpCompress.Readers.IAsyncReaderExtensions", "WriteEntryToAsync", "destinationFileInfo", "_ = SharpCompress.Readers.IAsyncReaderExtensions.WriteEntryToAsync((SharpCompress.Readers.IAsyncReader)null!, new System.IO.FileInfo(input));"),
+        new("Microsoft.AspNetCore.Mvc.ControllerBase", "File", "fileStream", "_ = this.File(new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(input)), \"text/html\");"),
+        new("Microsoft.AspNetCore.Http.Results", "File", "fileStream", "_ = Microsoft.AspNetCore.Http.Results.File(new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(input)), \"text/html\");"),
+        new("Microsoft.AspNetCore.Http.TypedResults", "File", "fileStream", "_ = Microsoft.AspNetCore.Http.TypedResults.File(new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(input)), \"text/html\");")
     ];
 
     [Fact]
@@ -65,7 +68,7 @@ public sealed partial class SinkCoverageTests
     {
         var probe = ExtraArgumentProbes[index];
         var rule = RuleFor(new ConfigurationReader().GetBuiltinConfiguration().Sinks
-            .Single(sink => sink.Type == probe.Type).TaintTypes.Single());
+            .Single(sink => sink.Type == probe.Type && sink.Methods?.Any(method => method.Name == probe.Method && method.Arguments?.Contains(probe.Argument) == true) == true).TaintTypes.Single());
         await AssertWitness(probe.Type + "." + probe.Method + "(" + probe.Argument + ")", probe.Statement, rule);
     }
 
@@ -256,6 +259,20 @@ public sealed partial class SinkCoverageTests
             yield return M("System.Net.Http.HttpClient", "DNA0011", member, $"_ = new System.Net.Http.HttpClient().{member}(input);");
         foreach (var member in new[] { "PostAsync", "PutAsync", "PatchAsync" })
             yield return M("System.Net.Http.HttpClient", "DNA0011", member, $"_ = new System.Net.Http.HttpClient().{member}(input, new System.Net.Http.StringContent(\"body\"));");
+        yield return M("System.Net.Http.HttpClient", "DNA0011", "SendAsync", "_ = new System.Net.Http.HttpClient().SendAsync(new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, input));");
+        foreach (var member in new[] { "PostAsJsonAsync", "PutAsJsonAsync", "PatchAsJsonAsync" })
+            yield return M("System.Net.Http.Json.HttpClientJsonExtensions", "DNA0011", member,
+                $"_ = System.Net.Http.Json.HttpClientJsonExtensions.{member}(new System.Net.Http.HttpClient(), input, new {{ Value = \"fixed\" }});");
+        yield return M("System.Net.Http.Json.HttpClientJsonExtensions", "DNA0011", "GetFromJsonAsync",
+            "_ = System.Net.Http.Json.HttpClientJsonExtensions.GetFromJsonAsync<object>(new System.Net.Http.HttpClient(), input);");
+        yield return M("Microsoft.AspNetCore.Mvc.ControllerBase", "DNA0003", "Content", "_ = this.Content(input, \"text/html\");");
+        yield return M("Microsoft.AspNetCore.Mvc.ControllerBase", "DNA0003", "File", "_ = this.File(System.Text.Encoding.UTF8.GetBytes(input), \"text/html\");");
+        foreach (var type in new[] { "Microsoft.AspNetCore.Http.Results", "Microsoft.AspNetCore.Http.TypedResults" })
+        {
+            yield return M(type, "DNA0003", "Content", $"_ = {type}.Content(input, \"text/html\");");
+            yield return M(type, "DNA0003", "Text", $"_ = {type}.Text(input, \"text/html\");");
+            yield return M(type, "DNA0003", "File", $"_ = {type}.File(System.Text.Encoding.UTF8.GetBytes(input), \"text/html\");");
+        }
         yield return M("System.Net.Http.HttpRequestMessage", "DNA0011", ".ctor", "_ = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, input);");
         yield return M("Grpc.Net.Client.GrpcChannel", "DNA0011", "ForAddress", "_ = Grpc.Net.Client.GrpcChannel.ForAddress(input);");
         yield return P("System.Net.Http.HttpRequestMessage", "DNA0011", "RequestUri", "new System.Net.Http.HttpRequestMessage().RequestUri = new System.Uri(input);");

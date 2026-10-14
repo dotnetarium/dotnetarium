@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Reflection;
 using Dotnetarium.Analyzers;
 using Microsoft.CodeAnalysis;
 
@@ -53,6 +54,42 @@ internal static class SarifWriter
         json.WriteString("dotnetarium.loadingMode", loadingMode);
         json.WriteBoolean("dotnetarium.experimental", loadingMode == "no-build");
         json.WriteString("dotnetarium.coverage", report.IsPartial ? "partial" : "complete");
+        json.WriteString("dotnetarium.budgetAccounting", "logical-work");
+        json.WriteStartArray("dotnetarium.analysisSettings");
+        foreach (var settings in report.AnalysisSettings.OrderBy(settings => settings.Project, StringComparer.Ordinal))
+        {
+            json.WriteStartObject();
+            json.WriteString("project", settings.Project);
+            json.WriteString("profile", settings.Profile);
+            json.WriteNumber("methodDepth", settings.MethodDepth);
+            json.WriteNumber("lambdaDepth", settings.LambdaDepth);
+            json.WriteNumber("workBudget", settings.WorkBudget);
+            json.WriteBoolean("experimentalFilePersistence", settings.ExperimentalFilePersistence);
+            json.WriteStartArray("threatModels");
+            foreach (var scope in settings.ThreatModels) json.WriteStringValue(scope);
+            json.WriteEndArray();
+            json.WriteEndObject();
+        }
+        json.WriteEndArray();
+        json.WriteStartArray("dotnetarium.cutoffs");
+        foreach (var cutoff in report.Cutoffs.OrderBy(cutoff => cutoff.Project, StringComparer.Ordinal)
+            .ThenBy(cutoff => cutoff.Rule, StringComparer.Ordinal).ThenBy(cutoff => cutoff.Root, StringComparer.Ordinal))
+        {
+            json.WriteStartObject();
+            json.WriteString("project", cutoff.Project);
+            json.WriteString("rule", cutoff.Rule);
+            json.WriteString("root", cutoff.Root);
+            json.WriteString("stage", cutoff.Stage);
+            json.WriteString("reason", cutoff.Reason);
+            json.WriteNumber("count", cutoff.Count);
+            if (cutoff.Work.HasValue) json.WriteNumber("work", cutoff.Work.Value);
+            if (cutoff.Limit.HasValue) json.WriteNumber("limit", cutoff.Limit.Value);
+            if (cutoff.Graphs.HasValue) json.WriteNumber("graphs", cutoff.Graphs.Value);
+            if (cutoff.Blocks.HasValue) json.WriteNumber("blocks", cutoff.Blocks.Value);
+            if (cutoff.Operations.HasValue) json.WriteNumber("operations", cutoff.Operations.Value);
+            json.WriteEndObject();
+        }
+        json.WriteEndArray();
         json.WriteStartObject("dotnetarium.stageSeconds");
         foreach (var stage in report.StageSeconds.OrderBy(stage => stage.Key, StringComparer.Ordinal))
             json.WriteNumber(stage.Key, Math.Round(stage.Value, 3));
@@ -88,6 +125,10 @@ internal static class SarifWriter
         json.WriteStartObject("tool");
         json.WriteStartObject("driver");
         json.WriteString("name", "Dotnetarium");
+        var version = typeof(SarifWriter).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(SarifWriter).Assembly.GetName().Version?.ToString() ?? "unknown";
+        json.WriteString("version", version);
+        json.WriteString("semanticVersion", version.Split('+')[0]);
         json.WriteString("informationUri", "https://github.com/dotnetarium/dotnetarium");
         json.WriteStartArray("rules");
         foreach (var descriptor in descriptors)

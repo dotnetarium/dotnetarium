@@ -27,6 +27,8 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
         // be collected once no caller uses them. Only points-to opts into this.
         private static readonly ConditionalWeakTable<IOperation, SharedWeakAnalysisCache<TAnalysisContext, TAnalysisResult>> s_sharedRootCache = new();
         protected virtual bool ShareActiveRootResults => false;
+        private static readonly ConditionalWeakTable<TAnalysisResult, MeasuredCost> s_costs = new();
+        private sealed record MeasuredCost(AnalysisWorkBudget.Cost Value);
 
         protected DataFlowAnalysis(AbstractAnalysisDomain<TAnalysisData> analysisDomain, DataFlowOperationVisitor<TAnalysisData, TAnalysisContext, TAnalysisResult, TAbstractAnalysisValue> operationVisitor)
         {
@@ -50,14 +52,29 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
                 return Run(analysisContext);
             }
 
-            if (ShareActiveRootResults)
-                return s_sharedRootCache.GetValue(analysisContext.ControlFlowGraph.OriginalOperation, _ => new())
-                    .GetOrCompute(analysisContext, context => Run(context));
-            var analysisResultsMap = s_resultCache.GetOrCreateValue(analysisContext.ControlFlowGraph.OriginalOperation);
-            return analysisResultsMap.GetOrAdd(analysisContext, _ => Run(analysisContext));
+            bool computed = false;
+            TAnalysisResult? Compute(TAnalysisContext context)
+            {
+                computed = true;
+                return Run(context);
+            }
+            var result = ShareActiveRootResults
+                ? s_sharedRootCache.GetValue(analysisContext.ControlFlowGraph.OriginalOperation, _ => new()).GetOrCompute(analysisContext, Compute)
+                : s_resultCache.GetOrCreateValue(analysisContext.ControlFlowGraph.OriginalOperation).GetOrAdd(analysisContext, Compute);
+            if (!computed && result != null && s_costs.TryGetValue(result, out var cost)) AnalysisWorkBudget.Replay(cost.Value);
+            return result;
         }
 
         private TAnalysisResult? Run(TAnalysisContext analysisContext)
+        {
+            using var measurement = AnalysisWorkBudget.IsActive ? null : new AnalysisWorkBudget(uint.MaxValue, default);
+            var start = AnalysisWorkBudget.Snapshot;
+            var result = RunCore(analysisContext);
+            if (result != null) s_costs.GetValue(result, _ => new(AnalysisWorkBudget.Snapshot - start));
+            return result;
+        }
+
+        private TAnalysisResult? RunCore(TAnalysisContext analysisContext)
         {
             AnalysisWorkBudget.EnterGraph();
             var cfg = analysisContext.ControlFlowGraph;

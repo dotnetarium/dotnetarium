@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
+using Analyzer.Utilities;
 using Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -33,6 +34,7 @@ namespace Dotnetarium.Config
         private readonly ComponentStateDependencies dependencies;
         private readonly object gate = new();
         private bool computing;
+        internal bool HasIncompleteAnalysis { get; private set; }
         private readonly Dictionary<INamedTypeSymbol, ComponentGroup> groups = new(SymbolEqualityComparer.Default);
         private readonly List<(INamedTypeSymbol Parent, INamedTypeSymbol Child)> links = new();
         private readonly HashSet<INamedTypeSymbol> callbackStateTypes = new(SymbolEqualityComparer.Default);
@@ -201,18 +203,23 @@ namespace Dotnetarium.Config
                     foreach (var neighbor in neighbors[member]) pending.Push(neighbor);
                 }
                 var group = new ComponentGroup(
-                    callbacks.Where(method => members.Contains(method.ContainingType.OriginalDefinition)).ToArray(),
+                    Ordered(callbacks.Where(method => members.Contains(method.ContainingType.OriginalDefinition))).ToArray(),
                     // A render summary only contributes parameter writes to
                     // another tracked component. Rendering text or markup alone
                     // is handled by the ordinary XSS root, not this state model.
-                    renders.Where(method => members.Contains(method.ContainingType.OriginalDefinition) &&
+                    Ordered(renders.Where(method => members.Contains(method.ContainingType.OriginalDefinition) &&
                         forwardingTypes.Contains(method.ContainingType.OriginalDefinition) &&
                         (!SymbolEqualityComparer.Default.Equals(method.ContainingType.OriginalDefinition, start) ||
                          links.Any(link => SymbolEqualityComparer.Default.Equals(link.Parent, start) &&
-                             SymbolEqualityComparer.Default.Equals(link.Child, start)))).ToArray());
+                             SymbolEqualityComparer.Default.Equals(link.Child, start))))).ToArray());
                 groups[start] = group;
             }
         }
+
+        private static IOrderedEnumerable<IMethodSymbol> Ordered(IEnumerable<IMethodSymbol> methods) =>
+            methods.OrderBy(method => method.Locations.FirstOrDefault()?.SourceTree?.FilePath, System.StringComparer.Ordinal)
+                .ThenBy(method => method.Locations.FirstOrDefault()?.SourceSpan.Start ?? 0)
+                .ThenBy(method => method.ToDisplayString(), System.StringComparer.Ordinal);
 
         private static bool IsBrowserInputAttribute(IInvocationOperation attribute, string name, SemanticModel model)
         {
@@ -285,7 +292,13 @@ namespace Dotnetarium.Config
                 !groups.TryGetValue(member.ContainingType.OriginalDefinition, out var group)) return null;
             lock (gate)
             {
-                if (!computing) Compute(group, member);
+                if (values.TryGetValue(member, out var known)) return known;
+                if (!computing)
+                {
+                    try { Compute(group, member); }
+                    catch (AnalysisWorkLimitException) when (values.ContainsKey(member)) { HasIncompleteAnalysis = true; }
+                    catch (AnalysisDepthLimitException) when (values.ContainsKey(member)) { HasIncompleteAnalysis = true; }
+                }
                 return values.TryGetValue(member, out var value) ? value : null;
             }
         }
@@ -294,6 +307,10 @@ namespace Dotnetarium.Config
         {
             if (group.Required.Add(requested.OriginalDefinition)) group.Completed = false;
             if (group.Completed) return;
+            // Cached component prerequisites must not consume the arbitrary
+            // requesting root's taint budget. Bound state convergence separately.
+            using var prerequisite = new AnalysisWorkBudget(configuration.AnalysisSettings.Work, CancellationToken.None,
+                stopAtDepthLimit: configuration.AnalysisSettings.Profile == AnalysisProfile.Fast, stage: "component-state");
             // Backward closure: writers of requested state, then writers of their
             // inputs. Read-only callbacks do not connect unrelated state members.
             bool expanded;

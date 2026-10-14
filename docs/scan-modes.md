@@ -1,5 +1,12 @@
 # Project and no-build scans
 
+SARIF records the tool version and effective per-project analysis profile, method
+and lambda depths, work budget and threat models. Cutoffs include their rule,
+root, stage and available work counters. Cached dataflow results replay logical
+work costs; cache warmth saves CPU without buying extra analysis depth. Negative
+source/sink proofs and component-state convergence have separate bounded budgets.
+An unfinished negative proof preserves normal taint analysis eligibility.
+
 The global tool has two input-loading modes. Both use Roslyn compilations,
 semantic symbols, the same rules, taint engine and SARIF data flows.
 

@@ -17,6 +17,7 @@ namespace Dotnetarium.Analyzers.Taint
     /// <summary>Runs one configured taint context over each relevant C# operation block.</summary>
     public abstract class TaintAnalyzer : DiagnosticAnalyzer
     {
+        private sealed record Cutoff(byte Reason, string Stage);
         protected abstract SinkKind SinkKind { get; }
         protected abstract DiagnosticDescriptor TaintedDataEnteringSinkDescriptor { get; }
         protected virtual IEnumerable<SinkKind> SinkKinds => new[] { SinkKind };
@@ -36,8 +37,17 @@ namespace Dotnetarium.Analyzers.Taint
             context.RegisterCompilationStartAction(start =>
             {
                 var settings = Configuration.GetOrCreate(start);
+                if (SinkKind == (SinkKind)(int)TaintType.CrossSiteScripting)
+                    start.RegisterCompilationEndAction(end =>
+                    {
+                        if (settings.TaintConfiguration.HasIncompleteFilePersistence)
+                            end.ReportDiagnostic(Diagnostic.Create(AnalysisDiagnostics.WorkLimit, Location.None,
+                                properties: ImmutableDictionary<string, string>.Empty.Add("dotnetarium.rule", "DNA0003")
+                                    .Add("dotnetarium.stage", "file-persistence").Add("dotnetarium.reason", "proof-limit"),
+                                messageArgs: new object[] { "Experimental file persistence reached its bounded proof limits. Stored-file XSS coverage is partial; ordinary taint analysis continues." }));
+                    });
                 var fast = settings.TaintConfiguration.AnalysisSettings.Profile == AnalysisProfile.Fast;
-                var cutoffs = new ConcurrentDictionary<ISymbol, byte>(SymbolEqualityComparer.Default);
+                var cutoffs = new ConcurrentDictionary<ISymbol, Cutoff>(SymbolEqualityComparer.Default);
                 if (fast)
                     start.RegisterCompilationEndAction(end =>
                     {
@@ -46,12 +56,21 @@ namespace Dotnetarium.Analyzers.Taint
                             properties: ImmutableDictionary<string, string>.Empty
                                 .Add("dotnetarium.coverage", "partial")
                                 .Add("dotnetarium.rule", TaintedDataEnteringSinkDescriptor.Id)
+                                .Add("dotnetarium.stage", string.Join(",", cutoffs.Values.Select(value => value.Stage).Distinct().OrderBy(stage => stage, StringComparer.Ordinal)))
                                 .Add("dotnetarium.cutoffCount", cutoffs.Count.ToString(System.Globalization.CultureInfo.InvariantCulture))
-                                .Add("dotnetarium.depthCutoffCount", cutoffs.Values.Count(value => value == 1).ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                            messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: {cutoffs.Count} method analyses stopped at fast profile limits ({settings.MaxTaintAnalysisWork} work units; method depth {settings.MaxInterproceduralMethodCallChain}, lambda/local-function depth {settings.MaxInterproceduralLambdaOrLocalFunctionCallChain}). {cutoffs.Values.Count(value => value == 1)} reached call depth; {cutoffs.Values.Count(value => value == 0)} exhausted work. Coverage is partial; other methods continue. Use AnalysisProfile=full or explicit limits in dotnetarium.json for deeper analysis." }));
+                                .Add("dotnetarium.depthCutoffCount", cutoffs.Values.Count(value => value.Reason == 1).ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                            messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: {cutoffs.Count} method analyses stopped at fast profile limits ({settings.MaxTaintAnalysisWork} work units; method depth {settings.MaxInterproceduralMethodCallChain}, lambda/local-function depth {settings.MaxInterproceduralLambdaOrLocalFunctionCallChain}). {cutoffs.Values.Count(value => value.Reason == 1)} reached call depth; {cutoffs.Values.Count(value => value.Reason == 0)} exhausted work. Coverage is partial; other methods continue. Use AnalysisProfile=full or explicit limits in dotnetarium.json for deeper analysis." }));
                     });
                 foreach (var kind in SinkKinds)
                 {
+                    start.RegisterCompilationEndAction(end =>
+                    {
+                        if (settings.TaintConfiguration.HasIncompleteComponentState(kind))
+                            end.ReportDiagnostic(Diagnostic.Create(AnalysisDiagnostics.WorkLimit, Location.None,
+                                properties: ImmutableDictionary<string, string>.Empty.Add("dotnetarium.rule", TaintedDataEnteringSinkDescriptor.Id)
+                                    .Add("dotnetarium.stage", "component-state").Add("dotnetarium.reason", "work-or-depth-limit"),
+                                messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: component prerequisites reached their limits. Proven inputs are retained, but component-state coverage is partial." }));
+                    });
                     var sourceMap = settings.TaintConfiguration.GetSourceSymbolMap(kind);
                     var sinkMap = settings.TaintConfiguration.GetSinkSymbolMap(kind);
                     if (sourceMap.IsEmpty || sinkMap.IsEmpty)
@@ -71,7 +90,7 @@ namespace Dotnetarium.Analyzers.Taint
             TaintedDataSymbolMap<SourceInfo> sources,
             TaintedDataSymbolMap<SanitizerInfo> sanitizers,
             TaintedDataSymbolMap<SinkInfo> sinks,
-            ConcurrentDictionary<ISymbol, byte>? cutoffs)
+            ConcurrentDictionary<ISymbol, Cutoff>? cutoffs)
         {
             if (MigrationAnalysisExclusion.IsExcluded(block.OwningSymbol))
                 return;
@@ -100,25 +119,34 @@ namespace Dotnetarium.Analyzers.Taint
                     return;
                 AnalyzeGraph(graph, block.OwningSymbol);
             }
-            catch (AnalysisDepthLimitException error) when (ReferenceEquals(error.Budget, budget) && cutoffs != null)
+            catch (AnalysisDepthLimitException error) when (cutoffs != null)
             {
-                cutoffs.TryAdd(block.OwningSymbol, 1);
+                cutoffs.TryAdd(block.OwningSymbol, new(1, error.Budget.Stage));
             }
-            catch (AnalysisWorkLimitException error) when (ReferenceEquals(error.Budget, budget))
+            catch (AnalysisWorkLimitException error)
             {
+                var exhausted = error.Budget;
                 if (cutoffs != null)
                 {
                     // One notice per public rule, rather than thousands of
                     // method warnings during live analysis or ordinary builds.
-                    cutoffs.TryAdd(block.OwningSymbol, 0);
+                    cutoffs.TryAdd(block.OwningSymbol, new(0, exhausted.Stage));
                     return;
                 }
                 block.ReportDiagnostic(Diagnostic.Create(AnalysisDiagnostics.WorkLimit,
                     block.OwningSymbol.Locations.FirstOrDefault(location => location.IsInSource) ?? graph.OriginalOperation.Syntax.GetLocation(),
                     properties: ImmutableDictionary<string, string>.Empty
                         .Add("dotnetarium.coverage", "partial")
-                        .Add("dotnetarium.rule", TaintedDataEnteringSinkDescriptor.Id),
-                    messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: analysis of '{block.OwningSymbol.ToDisplayString()}' stopped after {budget.Work} work units (limit {budget.Limit}; {budget.Graphs} flow analyses, {budget.Blocks} block visits, {budget.Operations} operation visits). Coverage is incomplete for this method; other methods continue. Increase MaxTaintAnalysisWork in dotnetarium.json to retry." }));
+                        .Add("dotnetarium.rule", TaintedDataEnteringSinkDescriptor.Id)
+                        .Add("dotnetarium.root", block.OwningSymbol.ToDisplayString())
+                        .Add("dotnetarium.stage", exhausted.Stage)
+                        .Add("dotnetarium.reason", "work-limit")
+                        .Add("dotnetarium.work", exhausted.Work.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                        .Add("dotnetarium.limit", exhausted.Limit.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                        .Add("dotnetarium.graphs", exhausted.Graphs.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                        .Add("dotnetarium.blocks", exhausted.Blocks.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                        .Add("dotnetarium.operations", exhausted.Operations.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: {exhausted.Stage} analysis of '{block.OwningSymbol.ToDisplayString()}' stopped after {exhausted.Work} work units (limit {exhausted.Limit}; {exhausted.Graphs} flow analyses, {exhausted.Blocks} block visits, {exhausted.Operations} operation visits). Coverage is incomplete for this method; other methods continue. Increase MaxTaintAnalysisWork in dotnetarium.json to retry." }));
             }
 
             void AnalyzeGraph(Microsoft.CodeAnalysis.FlowAnalysis.ControlFlowGraph currentGraph, ISymbol owner)

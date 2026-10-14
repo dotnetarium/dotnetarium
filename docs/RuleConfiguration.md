@@ -1,5 +1,8 @@
 # Rule configuration in 2.x
 
+`ExperimentalFilePersistence` is an optional boolean, off by default. It enables
+bounded stored-file XSS correlation in both hosts; see [stored HTML](stored-html.md).
+
 The built-in models live in `Dotnetarium.Analyzers/Config/Main.json`. Place `dotnetarium.json` beside a project to extend them. The analyzer NuGet package adds it to `AdditionalFiles` automatically. The global tool finds the file beside a scanned project or solution; use `--config` to select another file. If you use the analyzer assembly without its NuGet package, include it manually:
 
 ```xml

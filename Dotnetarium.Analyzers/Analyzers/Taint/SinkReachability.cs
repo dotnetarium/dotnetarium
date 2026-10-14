@@ -34,8 +34,15 @@ namespace Dotnetarium.Analyzers.Taint
             this.sinks = sinks;
         }
 
-        internal bool MayReachSink(ControlFlowGraph graph, CancellationToken cancellationToken = default) =>
-            results.GetOrAdd(graph, root => Compute(root, cancellationToken));
+        internal bool MayReachSink(ControlFlowGraph graph, CancellationToken cancellationToken = default)
+        {
+            // A bounded negative proof is an optimization, not taint coverage.
+            // An interrupted proof must preserve eligibility and must not spend
+            // different amounts of the caller's budget on cold/warm caches.
+            using var budget = new AnalysisWorkBudget(2048, cancellationToken);
+            try { return results.GetOrAdd(graph, root => Compute(root, cancellationToken)); }
+            catch (AnalysisWorkLimitException error) when (ReferenceEquals(error.Budget, budget)) { return true; }
+        }
 
         private bool Compute(ControlFlowGraph root, CancellationToken cancellationToken)
         {

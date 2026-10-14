@@ -46,11 +46,11 @@ $onlyCutoff = Scan $budgetProject @('-nb', '--fail')
 AssertMode $onlyCutoff 'no-build' 'partial'
 if (@($onlyCutoff.results).Count -ne 0 -or -not (HasNotice $onlyCutoff 'analysis-budget') -or
     -not $onlyCutoff.invocations[0].executionSuccessful) { throw 'A cutoff was treated as a finding or execution failure in no-build mode.' }
-# An actual analyzer failure remains fatal in no-build mode. The host invokes
-# the analyzer with malformed project configuration, which surfaces as AD0001.
+# Invalid project configuration remains fatal in no-build mode and is recorded
+# in SARIF before analyzer execution.
 '{"Version":' | Set-Content -LiteralPath (Join-Path $budgetRoot 'dotnetarium.json')
 $failure = Scan $budgetProject @('-nb') 2
-if (-not (HasNotice $failure 'analyzer-failure') -or $failure.invocations[0].executionSuccessful) {
-    throw 'No-build must not hide genuine analyzer failures.'
+if (-not (HasNotice $failure 'configuration-error') -or $failure.invocations[0].executionSuccessful) {
+    throw 'No-build must not hide invalid project configuration.'
 }
-'PASS budget policy: no-build exits 0/1, default exits 2, partial warnings and independent findings retained, real analyzer failure exits 2'
+'PASS budget policy: no-build exits 0/1, default exits 2, partial warnings and independent findings retained, invalid configuration exits 2 with SARIF'

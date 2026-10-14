@@ -17,6 +17,7 @@ namespace Dotnetarium.Config
         public uint? MaxInterproceduralLambdaOrLocalFunctionCallChain { get; set; }
         public uint? MaxTaintAnalysisWork { get; set; }
         public bool? TaintFlowVisualizationEnabled { get; set; }
+        public bool? ExperimentalFilePersistence { get; set; }
         public Dictionary<string, TaintEntryPointData> TaintEntryPoints { get; set; }
         public List<TaintSource> TaintSources { get; set; }
         public List<Sink> Sinks { get; set; }
@@ -53,6 +54,7 @@ namespace Dotnetarium.Config
         public string Name { get; set; }
         public string[] Arguments { get; set; }
         public (string argName, object value)[] Condition { get; set; }
+        public string[] ContentTypes { get; set; }
     }
 
     internal sealed class Sanitizer

@@ -251,14 +251,17 @@ public sealed class SourceReachabilityTests
         var checker = Checker(compilation);
         var graph = Graph(compilation, "Run");
         using (var budget = new AnalysisWorkBudget(40, CancellationToken.None))
-            Assert.Throws<AnalysisWorkLimitException>(() => checker.MayReachSource(graph));
+        {
+            Assert.True(checker.MayReachSource(graph));
+            Assert.Equal(0, budget.Work);
+        }
         Assert.True(checker.MayReachSource(graph));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void Small_budget_retries_eventually_finish_without_dropping_a_late_source(bool hasSource)
+    public void Source_proof_uses_its_own_budget_without_dropping_a_late_source(bool hasSource)
     {
         var noise = string.Concat(Enumerable.Repeat("count++;", 100));
         var compilation = Compile($$"""
@@ -288,7 +291,9 @@ public sealed class SourceReachabilityTests
             catch (AnalysisWorkLimitException) { }
         }
         Assert.True(completed, "Repeated roots must be able to finish proof work larger than one root's budget.");
-        Assert.True(retries > 1);
+        using var caller = new AnalysisWorkBudget(1, CancellationToken.None);
+        Assert.Equal(hasSource, checker.MayReachSource(graph));
+        Assert.Equal(0, caller.Work);
     }
 
     [Theory]
@@ -315,9 +320,13 @@ public sealed class SourceReachabilityTests
             fieldReferenceMatcher: _ => { visits++; return hasOrigin; });
         var checker = new SourceReachability(compilation, new TaintedDataSymbolMap<SourceInfo>(types, [info]));
         using (var budget = new AnalysisWorkBudget(40, CancellationToken.None))
-            Assert.Throws<AnalysisWorkLimitException>(() => checker.MayReachSource(graph));
+        {
+            Assert.False(checker.MayReachSource(graph));
+            Assert.Equal(0, budget.Work);
+        }
         Assert.True(visits > 0);
         hasOrigin = true;
+        checker.InvalidateStateProofs(_ => true);
         Assert.True(checker.MayReachSource(graph));
     }
 

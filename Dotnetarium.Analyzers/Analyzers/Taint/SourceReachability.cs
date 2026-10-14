@@ -18,6 +18,23 @@ namespace Dotnetarium.Analyzers.Taint
     /// <summary>Proves absence of an origin, rather than confusing transfer/entry-point containers with source methods.</summary>
     internal sealed class SourceReachability
     {
+        // Component state only gains origins across events. Positive proofs stay
+        // valid; discard affected negatives and resumable scans before retrying.
+        internal void InvalidateStateProofs(System.Func<IMethodSymbol, bool> affected)
+        {
+            foreach (var method in sourceFreeMethods.Keys)
+                if (affected(method)) sourceFreeMethods.TryRemove(method, out _);
+            foreach (var graph in results.Keys.Concat(scans.Keys).Distinct().ToArray())
+            {
+                var syntax = graph.OriginalOperation.Syntax;
+                var model = compilation.GetSemanticModel(syntax.SyntaxTree);
+                var owner = graph.OriginalOperation is IAnonymousFunctionOperation lambda ? lambda.Symbol :
+                    model.GetDeclaredSymbol(syntax) as IMethodSymbol ?? model.GetEnclosingSymbol(syntax.SpanStart) as IMethodSymbol;
+                if (owner != null && !affected(owner)) continue;
+                if (!results.TryGetValue(graph, out var positive) || !positive)
+                { results.TryRemove(graph, out _); scans.TryRemove(graph, out _); }
+            }
+        }
         internal const int MethodBudget = 2048;
         private static readonly ConditionalWeakTable<ControlFlowGraph, SummaryBuilder> Summaries = new();
         private readonly Compilation compilation;

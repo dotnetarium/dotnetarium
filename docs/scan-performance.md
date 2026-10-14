@@ -517,3 +517,36 @@ Solution scans now exclude marked test projects before loading independent roots
 Required test dependencies remain available for binding, but are not analyzed.
 An explicitly selected test project remains eligible. This intentional scope
 selection is reported separately from incomplete coverage.
+
+## Member-scoped component summaries
+
+Component summaries select writers of demanded state and follow their input
+dependencies. Child parameters use the dependency expressions actually passed to
+them. Unknown dispatch and uncertain aliases retain broader callback analysis.
+State changes invalidate dependent method summaries and negative source proofs;
+unrelated completed work is retained. Writes from one callback are invalidated
+together before another graph is analyzed. Structural indexing reuses CFGs and
+has conservative limits separate from the configured taint budget.
+
+A regression fixture puts a large unrelated browser callback beside an ordinary
+input/helper/relay/raw-HTML flow. Unchanged PR 32 misses the independent finding
+in fast, full and max profiles; member-scoped summaries retain it in all three.
+The noisy method may still exhaust its own eligibility budget. No profile or
+taint work limit was raised. Tests preserve resets, inheritance, interface
+dispatch, collection state and child-parameter forwarding.
+
+Warm sequential scans of the vulnerable-app fixture, with remote and local
+sources enabled, measured the following:
+
+| Mode | Before seconds / MiB | After seconds / MiB | Before / after records | Before / after cutoffs |
+| --- | --- | --- | --- | --- |
+| Project | 9.15 / 369 | 11.46 / 385 | 28 / 25 | 55 / 54 |
+| No-build | 7.44 / 333 | 7.24 / 338 | 28 / 25 | 54 / 53 |
+
+Two records were intentionally removed: startup directory creation from process
+arguments under framework host roots with fixed suffixes. The other difference
+was the already budget-sensitive BinaryFormatter path; other candidate scans
+retained it. All 25 stable finding locations were preserved. Analysis stage times
+were 4.32 to 5.03 seconds in project mode and 4.37 to 4.14 in no-build mode.
+These measurements do not establish an overall speedup. XssAttributes still
+misses two raw-HTML paths at the default budget; bounded coverage remains partial.

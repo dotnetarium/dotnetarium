@@ -83,6 +83,14 @@ for the covered APIs, trust boundaries and implementation plan. The default
 changed: stdin-based flows require opting into local sources. Local scope does
 not automatically treat all files or database reads as sources.
 
+Path findings exclude ordinary startup directory creation from process arguments
+when the destination is a framework host's web/content root plus fixed directory
+names. This narrow exception applies only in the entry point, only to
+`Directory.CreateDirectory`, and only while the host root and path aliases are
+not reassigned. Request-controlled paths, dynamic suffixes, file reads/writes and
+archive extraction retain their normal checks. Passing a path directly as a CLI
+argument also remains eligible; local privilege boundaries require review.
+
 ## EF migration scope
 
 Entity Framework migrations and model snapshots are excluded from taint analysis.

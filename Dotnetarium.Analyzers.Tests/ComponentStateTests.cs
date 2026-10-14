@@ -10,6 +10,74 @@ namespace Dotnetarium.Analyzers.Tests;
 public sealed class ComponentStateTests
 {
     [Fact]
+    public async Task Interface_dispatched_state_writes_remain_eligible()
+    {
+        var diagnostics = await FrameworkProbe.Analyze("""
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public interface IRelay { void Copy(); }
+            public sealed class Page : ComponentBase, IRelay {
+                private string input = "fixed", output = "fixed";
+                private void Changed(ChangeEventArgs args) => input = args.Value.ToString();
+                private void Relay() => ((IRelay)this).Copy();
+                void IRelay.Copy() => output = input;
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.OpenElement(2, "button");
+                    builder.AddAttribute(3, "onclick", EventCallback.Factory.Create(this, Relay));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(4, output);
+                }
+            }
+            """, new XssTaintAnalyzer());
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "DNA9000");
+        Assert.Single(diagnostics.Where(diagnostic => diagnostic.Id == "DNA0003"));
+    }
+
+    [Theory]
+    [InlineData("fast")]
+    [InlineData("full")]
+    [InlineData("max")]
+    public async Task Unrelated_callback_work_does_not_block_a_state_relay(string profile)
+    {
+        var noise = string.Join("\n", Enumerable.Range(0, 900).Select(i => "noise = noise.Trim();"));
+        var source = """
+            using Microsoft.AspNetCore.Components;
+            using Microsoft.AspNetCore.Components.Rendering;
+            public sealed class Page : ComponentBase {
+                private string input = "fixed", output = "fixed", noise = "fixed";
+                private void Changed(ChangeEventArgs args) => input = args.Value.ToString();
+                private void Relay() => Copy();
+                private void Copy() => output = input;
+                private void Noisy(ChangeEventArgs args) { noise = args.Value.ToString();
+            """ + noise + """
+                }
+                protected override void BuildRenderTree(RenderTreeBuilder builder) {
+                    builder.OpenElement(0, "input");
+                    builder.AddAttribute(1, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Changed));
+                    builder.CloseElement();
+                    builder.OpenElement(2, "button");
+                    builder.AddAttribute(3, "onclick", EventCallback.Factory.Create(this, Relay));
+                    builder.CloseElement();
+                    builder.OpenElement(4, "input");
+                    builder.AddAttribute(5, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, Noisy));
+                    builder.CloseElement();
+                    builder.AddMarkupContent(6, output);
+                }
+            }
+            """;
+        var diagnostics = await FrameworkProbe.Analyze(source, new XssTaintAnalyzer(), configuration:
+            $$"""{"Version":"2.0","AnalysisProfile":"{{profile}}"}""");
+        // The noisy callback's own eligibility proof may hit the work limit.
+        // It must not prevent the independent render/relay from being analyzed.
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "DNA9000" &&
+            diagnostic.GetMessage().Contains("Page.BuildRenderTree"));
+        Assert.Single(diagnostics.Where(diagnostic => diagnostic.Id == "DNA0003"));
+    }
+
+    [Fact]
     public async Task Shared_layout_does_not_pull_sibling_callbacks_into_parent_state()
     {
         var noise = string.Join("\n", Enumerable.Range(0, 600).Select(i => $"builder.AddContent({i + 2}, \"fixed\");"));

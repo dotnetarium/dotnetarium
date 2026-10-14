@@ -28,7 +28,9 @@ namespace Dotnetarium.Config
         private readonly Dictionary<IMethodSymbol, ControlFlowGraph?> graphs = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<IMethodSymbol, TaintedDataAnalysisResult> summaries = new(SymbolEqualityComparer.Default);
         private readonly HashSet<IMethodSymbol> sourceFreeSummaries = new(SymbolEqualityComparer.Default);
+        private readonly HashSet<ISymbol> pendingChanges = new(SymbolEqualityComparer.Default);
         private SourceReachability? summarySources;
+        private readonly ComponentStateDependencies dependencies;
         private readonly object gate = new();
         private bool computing;
         private readonly Dictionary<INamedTypeSymbol, ComponentGroup> groups = new(SymbolEqualityComparer.Default);
@@ -41,6 +43,8 @@ namespace Dotnetarium.Config
             internal IMethodSymbol[] Callbacks { get; }
             internal IMethodSymbol[] Renders { get; }
             internal bool Completed { get; set; }
+            internal readonly HashSet<ISymbol> Required = new(SymbolEqualityComparer.Default);
+            internal readonly HashSet<IMethodSymbol> Selected = new(SymbolEqualityComparer.Default);
             internal ComponentGroup(IMethodSymbol[] callbacks, IMethodSymbol[] renders)
             { Callbacks = callbacks; Renders = renders; }
         }
@@ -50,6 +54,7 @@ namespace Dotnetarium.Config
         {
             this.compilation = compilation; this.options = options; this.configuration = configuration;
             this.kind = kind; this.execution = execution ?? new ComponentExecutionModel(compilation, options);
+            dependencies = new ComponentStateDependencies(compilation, GetGraph);
             foreach (var tree in compilation.SyntaxTrees)
             {
                 var model = compilation.GetSemanticModel(tree);
@@ -263,7 +268,7 @@ namespace Dotnetarium.Config
                 !groups.TryGetValue(field.ContainingType.OriginalDefinition, out var group)) return null;
             lock (gate)
             {
-                if (!computing && !group.Completed) Compute(group);
+                if (!computing) Compute(group, field);
                 return collectionValues.TryGetValue(field, out var members) && members.TryGetValue(property.Property, out var value) ? value : null;
             }
         }
@@ -280,13 +285,53 @@ namespace Dotnetarium.Config
                 !groups.TryGetValue(member.ContainingType.OriginalDefinition, out var group)) return null;
             lock (gate)
             {
-                if (!computing && !group.Completed) Compute(group);
+                if (!computing) Compute(group, member);
                 return values.TryGetValue(member, out var value) ? value : null;
             }
         }
 
-        private void Compute(ComponentGroup group)
+        private void Compute(ComponentGroup group, ISymbol requested)
         {
+            if (group.Required.Add(requested.OriginalDefinition)) group.Completed = false;
+            if (group.Completed) return;
+            // Backward closure: writers of requested state, then writers of their
+            // inputs. Read-only callbacks do not connect unrelated state members.
+            bool expanded;
+            do
+            {
+                expanded = false;
+                foreach (var method in group.Callbacks.Concat(group.Renders))
+                {
+                    ComponentStateDependencies.Footprint footprint;
+                    IEnumerable<ISymbol> writes;
+                    if (group.Renders.Contains(method) && GetGraph(method) is { } render)
+                    {
+                        // Only expressions supplying demanded child parameters
+                        // contribute parent dependencies, not the entire render.
+                        var parameters = ParameterWrites(render).Where(write => group.Required.Contains(write.Property.OriginalDefinition)).ToArray();
+                        if (parameters.Length == 0) continue;
+                        footprint = new ComponentStateDependencies.Footprint();
+                        foreach (var parameter in parameters)
+                        {
+                            var input = dependencies.ForValue(parameter.Value);
+                            footprint.Reads.UnionWith(input.Reads);
+                            footprint.Unknown |= input.Unknown;
+                        }
+                        writes = parameters.Select(write => (ISymbol)write.Property.OriginalDefinition);
+                    }
+                    else { footprint = dependencies.ForMethod(method); writes = footprint.Writes; }
+                    if (!footprint.Unknown && !writes.Any(group.Required.Contains)) continue;
+                    expanded |= group.Selected.Add(method);
+                    foreach (var read in footprint.Reads) expanded |= group.Required.Add(read);
+                    if (footprint.Unknown)
+                        foreach (var candidate in group.Callbacks)
+                        {
+                            expanded |= group.Selected.Add(candidate);
+                            foreach (var input in dependencies.ForMethod(candidate).Reads.Concat(dependencies.ForMethod(candidate).Writes))
+                                expanded |= group.Required.Add(input);
+                        }
+                }
+            } while (expanded);
             computing = true;
             try
             {
@@ -296,7 +341,7 @@ namespace Dotnetarium.Config
                 do
                 {
                     changed = false;
-                    foreach (var method in group.Callbacks)
+                    foreach (var method in group.Callbacks.Where(group.Selected.Contains))
                     {
                         var graph = GetGraph(method);
                         if (graph == null || Analyze(graph, method) is not { } result) continue;
@@ -307,7 +352,7 @@ namespace Dotnetarium.Config
                                 entry.Key.InstanceLocation.Locations.Any(location => SymbolEqualityComparer.Default.Equals(location.Symbol, method.ContainingType)))
                                 changed |= Add(entry.Key.Symbol, entry.Value);
                     }
-                    foreach (var method in group.Renders)
+                    foreach (var method in group.Renders.Where(group.Selected.Contains))
                     {
                         var graph = GetGraph(method);
                         if (graph == null || Analyze(graph, method) is not { } result) continue;
@@ -351,7 +396,7 @@ namespace Dotnetarium.Config
                     if (members.TryGetValue(member, out var old)) value = TaintedDataAbstractValue.MergeTainted(new[] { old, value });
                     if (old != null && old.Equals(value)) continue;
                     members[member] = value;
-                    InvalidateSummaries();
+                    InvalidateSummaries(field);
                     changed = true;
                 }
             }
@@ -398,19 +443,38 @@ namespace Dotnetarium.Config
                 values[member] = merged;
             }
             else values.Add(member, value);
-            InvalidateSummaries();
+            InvalidateSummaries(member);
             return true;
         }
 
-        private void InvalidateSummaries()
+        private void InvalidateSummaries(ISymbol changed)
+        {
+            pendingChanges.Add(changed.OriginalDefinition);
+        }
+
+        private void FlushInvalidation()
         {
             // Changing modeled inputs invalidates completed taint summaries.
             // Refresh CFG identity too, so nested interprocedural caches cannot
             // reuse results obtained against an earlier component state.
-            summaries.Clear();
-            graphs.Clear();
-            sourceFreeSummaries.Clear();
-            summarySources = null;
+            if (pendingChanges.Count == 0) return;
+            var changed = new HashSet<ISymbol>(pendingChanges, SymbolEqualityComparer.Default);
+            pendingChanges.Clear();
+            bool Affected(IMethodSymbol method)
+            {
+                var footprint = dependencies.ForMethod(method);
+                return footprint.Unknown || footprint.Reads.Overlaps(changed);
+            }
+            foreach (var method in summaries.Keys.Concat(sourceFreeSummaries).Distinct(SymbolEqualityComparer.Default).OfType<IMethodSymbol>().ToArray())
+            {
+                if (!Affected(method)) continue;
+                summaries.Remove(method);
+                graphs.Remove(method);
+                sourceFreeSummaries.Remove(method);
+            }
+            summarySources?.InvalidateStateProofs(Affected);
+            foreach (var group in groups.Values)
+                if (group.Required.Overlaps(changed)) group.Completed = false;
         }
 
         private TaintedDataAnalysisResult? Analyze(ControlFlowGraph graph, IMethodSymbol method)
@@ -458,6 +522,9 @@ namespace Dotnetarium.Config
 
         private ControlFlowGraph? GetGraph(IMethodSymbol method)
         {
+            // All writes from one completed callback are invalidated together,
+            // before another graph/summary can observe the new modeled state.
+            FlushInvalidation();
             // The compilation is immutable. Reuse CFGs across summary passes
             // and budget retries, while recalculating taint against current state.
             // Access is serialized by gate; an aborted taint result is never cached.

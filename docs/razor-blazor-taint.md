@@ -75,6 +75,19 @@ runs the official SDK Razor generator in memory for conventional Web/Razor/Blazo
 projects. Missing or failed generation is disclosed while ordinary C# scanning
 continues; custom build inputs can still require project mode.
 
+Component state summaries follow writers of the requested member and callbacks
+that supply those writers' inputs. Child parameter dependencies follow the values
+passed to those parameters. Unrelated callback state does not join that closure.
+Opaque dispatch, dynamic calls and uncertain collection aliases retain broader
+analysis. Helper writes, inherited state, collection members and separate browser
+events remain eligible; a reset inside the same callback is honored by its CFG.
+
+Changes to modeled state invalidate summaries and source proofs that depend on
+that member. Unrelated component groups retain completed work. A cutoff never
+becomes a completed summary or proof that a member is safe. Coverage notices may
+still occur in a noisy callback's own analysis without blocking an independent
+render or state relay.
+
 The CLI uses Roslyn 5.9 for current SDK generator compatibility and reports
 analyzer/generator assembly load failures as incomplete coverage. The analyzer
 package keeps its Roslyn 5.0 minimum. Mapped console/SARIF locations point to

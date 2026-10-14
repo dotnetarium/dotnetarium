@@ -37,6 +37,27 @@ same compilation are supported; automatic persistence correlation and arbitrary
 cross-project/browser delivery are not inferred. Authentication, membership,
 victim delivery and browser CSP require a separate application review.
 
+## Experimental file persistence
+
+Set `"ExperimentalFilePersistence": true` in `dotnetarium.json` to test a bounded
+write/read correlation. It is off by default in both the analyzer and CLI.
+
+The experiment proves an untrusted `File.WriteAllText`/`WriteAllBytes` payload
+(including async variants), then treats matching `ReadAllText`/`ReadAllBytes`
+results as stored XSS sources. It supports identical literal paths and generated
+paths stored in an auto-property of a record in the same static `Dictionary`.
+The read must retrieve a record from that dictionary with `TryGetValue`.
+An actual raw HTML sink is still required; filesystem writes alone are not XSS.
+
+Different dictionaries/paths, trusted or HTML-encoded writes, plain-text responses
+and attachment downloads are negative controls. The model does not infer database
+storage, arbitrary streams, cross-project persistence, victim delivery or browser
+CSP. Fixed lookup keys and mutable/ambiguous record-path patterns are excluded.
+
+Proofs stop at 128 relevant file operations, 2,048 syntax nodes per identity
+method, or the configured work budget. Exhausted proofs produce a coverage notice;
+ordinary taint analysis continues. SARIF records whether the experiment is enabled.
+
 ## Rendering is not sanitization
 
 Markdig `Markdown.ToHtml` and `Markdown.Parse` preserve taint, including the

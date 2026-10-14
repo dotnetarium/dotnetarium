@@ -164,6 +164,10 @@
   },
   "TaintSources": [
     {
+      "Type": "Microsoft.AspNetCore.Components.NavigationManager", "Scope": "remote",
+      "TaintTypes": [ "ServerSideRequestForgery" ], "Properties": []
+    },
+    {
       "Type": "SharpCompress.Common.IEntry", "IsInterface": true,
       "Scope": "independent", "TaintTypes": [ "PathEscape" ], "Properties": [ "Key" ]
     },
@@ -1894,6 +1898,121 @@
       ]
     },
     {
+        "Type": "Microsoft.AspNetCore.Mvc.ControllerBase",
+        "TaintTypes": [
+          "CrossSiteScripting"
+        ],
+        "Methods": [
+          {
+            "Name": "Content",
+            "Arguments": [
+              "content"
+            ],
+            "ContentTypes": [
+              "text/html",
+              "application/xhtml+xml",
+              "image/svg+xml"
+            ]
+          },
+          {
+            "Name": "File",
+            "Arguments": [
+              "fileContents",
+              "fileStream"
+            ],
+            "ContentTypes": [
+              "text/html",
+              "application/xhtml+xml",
+              "image/svg+xml"
+            ]
+          }
+        ]
+    },
+    {
+        "Type": "Microsoft.AspNetCore.Http.Results",
+        "TaintTypes": [
+          "CrossSiteScripting"
+        ],
+        "Methods": [
+          {
+            "Name": "Content",
+            "Arguments": [
+              "content"
+            ],
+            "ContentTypes": [
+              "text/html",
+              "application/xhtml+xml",
+              "image/svg+xml"
+            ]
+          },
+          {
+            "Name": "Text",
+            "Arguments": [
+              "content"
+            ],
+            "ContentTypes": [
+              "text/html",
+              "application/xhtml+xml",
+              "image/svg+xml"
+            ]
+          },
+          {
+            "Name": "File",
+            "Arguments": [
+              "fileContents",
+              "fileStream"
+            ],
+            "ContentTypes": [
+              "text/html",
+              "application/xhtml+xml",
+              "image/svg+xml"
+            ]
+          }
+        ]
+    },
+    {
+        "Type": "Microsoft.AspNetCore.Http.TypedResults",
+        "TaintTypes": [
+          "CrossSiteScripting"
+        ],
+        "Methods": [
+          {
+            "Name": "Content",
+            "Arguments": [
+              "content"
+            ],
+            "ContentTypes": [
+              "text/html",
+              "application/xhtml+xml",
+              "image/svg+xml"
+            ]
+          },
+          {
+            "Name": "Text",
+            "Arguments": [
+              "content"
+            ],
+            "ContentTypes": [
+              "text/html",
+              "application/xhtml+xml",
+              "image/svg+xml"
+            ]
+          },
+          {
+            "Name": "File",
+            "Arguments": [
+              "fileContents",
+              "fileStream"
+            ],
+            "ContentTypes": [
+              "text/html",
+              "application/xhtml+xml",
+              "image/svg+xml"
+            ]
+          }
+        ]
+    },
+    {
       "Type": "Microsoft.AspNetCore.Html.HtmlString",
       "TaintTypes": [
         "CrossSiteScripting"
@@ -2375,7 +2494,17 @@
           "Arguments": [
             "requestUri"
           ]
-        }
+        },
+        { "Name": "SendAsync", "Arguments": [ "request" ] }
+      ]
+    },
+    {
+      "Type": "System.Net.Http.Json.HttpClientJsonExtensions", "TaintTypes": [ "ServerSideRequestForgery" ],
+      "Methods": [
+        { "Name": "GetFromJsonAsync", "Arguments": [ "requestUri" ] },
+        { "Name": "PostAsJsonAsync", "Arguments": [ "requestUri" ] },
+        { "Name": "PutAsJsonAsync", "Arguments": [ "requestUri" ] },
+        { "Name": "PatchAsJsonAsync", "Arguments": [ "requestUri" ] }
       ]
     },
     {

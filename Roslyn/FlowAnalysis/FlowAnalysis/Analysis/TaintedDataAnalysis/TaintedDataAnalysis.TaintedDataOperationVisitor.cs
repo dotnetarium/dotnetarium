@@ -398,6 +398,8 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 IOperation originalOperation,
                 TaintedDataAbstractValue defaultValue)
             {
+                TrackHttpDestination(method, visitedArguments, originalOperation);
+                var destinationState = IsHttpSend(method) ? CurrentAnalysisData.CoreAnalysisData.Where(pair => IsDestinationProperty(pair.Key.Symbol)).ToArray() : null;
                 var targets = GetInterfaceTargets(method, visitedInstance);
                 IEnumerable<IArgumentOperation> taintedArguments = GetTaintedArguments(visitedArguments);
                 TaintedDataAbstractValue result = defaultValue;
@@ -592,6 +594,8 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                     taintedParameterNamesCached?.Dispose();
                 }
 
+                if (destinationState != null)
+                    foreach (var pair in destinationState) CurrentAnalysisData.SetAbstractValue(pair.Key, pair.Value);
                 return result;
             }
 
@@ -930,9 +934,86 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 }
             }
 
+            private void TrackHttpDestination(IMethodSymbol method, ImmutableArray<IArgumentOperation> arguments, IOperation operation)
+            {
+                if (!IsHttpSend(method)) return;
+                var ssrf = (SinkKind)(int)Dotnetarium.Analyzers.Taint.TaintType.ServerSideRequestForgery;
+                if (!DataFlowAnalysisContext.SinkInfos.GetInfosForType(method.ContainingType).Any(info => info.SinkKinds.Contains(ssrf))) return;
+                IOperation? client = operation is IInvocationOperation invocation ? invocation.Instance : null;
+                var request = arguments.FirstOrDefault(argument => argument.Parameter?.Name == "request")?.Value;
+                var uri = arguments.FirstOrDefault(argument => argument.Parameter?.Name == "requestUri")?.Value;
+                if (method.ContainingType.ToDisplayString() == "System.Net.Http.Json.HttpClientJsonExtensions")
+                    client = arguments.FirstOrDefault(argument => argument.Parameter?.Name == "client")?.Value;
+                else if (method.ContainingType.ToDisplayString() != "System.Net.Http.HttpClient") return;
+                if (client == null) return;
+
+                // Payload/header taint is not destination taint. Read only the
+                // tracked URI property of this particular request/client object.
+                if (request != null)
+                {
+                    var requestValue = MemberValue(request, "System.Net.Http.HttpRequestMessage", "RequestUri");
+                    if (requestValue.Kind == TaintedDataAbstractValueKind.Tainted)
+                        TrackTaintedDataEnteringSink(method, operation.Syntax.GetLocation(), ImmutableHashSet.Create(ssrf), requestValue.SourceOrigins);
+                    if (KnownAbsoluteRequest(request)) return;
+                }
+                if (uri != null && HasLiteralAuthority(uri)) return;
+                var baseValue = MemberValue(client, "System.Net.Http.HttpClient", "BaseAddress");
+                if (baseValue.Kind == TaintedDataAbstractValueKind.Tainted)
+                    TrackTaintedDataEnteringSink(method, operation.Syntax.GetLocation(), ImmutableHashSet.Create(ssrf), baseValue.SourceOrigins);
+            }
+
+            private TaintedDataAbstractValue MemberValue(IOperation instance, string type, string member)
+            {
+                var locations = GetPointsToAbstractValue(instance).Locations;
+                var values = CurrentAnalysisData.CoreAnalysisData.Where(pair =>
+                    pair.Key.Symbol is IPropertySymbol property && property.Name == member && property.ContainingType.ToDisplayString() == type &&
+                    pair.Key.InstanceLocation.Locations.Overlaps(locations) && pair.Value.Kind == TaintedDataAbstractValueKind.Tainted)
+                    .Select(pair => pair.Value).ToArray();
+                return values.Length == 0 ? TaintedDataAbstractValue.NotTainted : TaintedDataAbstractValue.MergeTainted(values);
+            }
+
+            private bool KnownAbsoluteRequest(IOperation request)
+            {
+                var locations = GetPointsToAbstractValue(request).Locations;
+                return locations.Count > 0 && locations.All(location => location.Creation is IObjectCreationOperation creation &&
+                    creation.Type?.ToDisplayString() == "System.Net.Http.HttpRequestMessage" &&
+                    creation.Arguments.Any(argument => argument.Parameter?.Name == "requestUri" && HasLiteralAuthority(argument.Value)) &&
+                    !CurrentAnalysisData.CoreAnalysisData.Any(pair => pair.Key.Symbol is IPropertySymbol { Name: "RequestUri" } &&
+                        pair.Key.InstanceLocation.Locations.Contains(location)));
+            }
+
+            private static bool HasLiteralAuthority(IOperation value)
+            {
+                while (value is IConversionOperation conversion) value = conversion.Operand;
+                if (value is IObjectCreationOperation creation && creation.Type?.ToDisplayString() == "System.Uri" && creation.Arguments.Length > 0)
+                    value = creation.Arguments[0].Value;
+                return value.ConstantValue.Value is string text && Uri.TryCreate(text, UriKind.Absolute, out var uri) &&
+                    uri.Scheme is "http" or "https";
+            }
+
+            private static bool IsHttpSend(IMethodSymbol method)
+            {
+                if (method.Name is "GetAsync" or "GetStringAsync" or "GetByteArrayAsync" or "GetStreamAsync" or "PostAsync" or "PutAsync" or "PatchAsync" or "DeleteAsync" or "SendAsync")
+                    return method.ContainingType.ToDisplayString() == "System.Net.Http.HttpClient";
+                return method.Name is "GetFromJsonAsync" or "PostAsJsonAsync" or "PutAsJsonAsync" or "PatchAsJsonAsync" &&
+                    method.ContainingType.ToDisplayString() == "System.Net.Http.Json.HttpClientJsonExtensions";
+            }
+
+            private static bool IsDestinationProperty(ISymbol? symbol) => symbol is IPropertySymbol property &&
+                (property.ContainingType.ToDisplayString() == "System.Net.Http.HttpClient" && property.Name == "BaseAddress" ||
+                 property.ContainingType.ToDisplayString() == "System.Net.Http.HttpRequestMessage" && property.Name == "RequestUri");
+
             private void ProcessAssignmentOperation(IAssignmentOperation assignmentOperation)
             {
                 TaintedDataAbstractValue assignmentValueAbstractValue = this.GetCachedAbstractValue(assignmentOperation.Value);
+                if (assignmentOperation.Target is IPropertyReferenceOperation destination && destination.Instance != null && IsDestinationProperty(destination.Property) &&
+                    DataFlowAnalysisContext.SinkInfos.GetInfosForType(destination.Property.ContainingType).Any(info =>
+                        info.SinkKinds.Contains((SinkKind)(int)Dotnetarium.Analyzers.Taint.TaintType.ServerSideRequestForgery)))
+                {
+                    var entity = AnalysisEntity.Create(destination.Property, ImmutableArray<AbstractIndex>.Empty, destination.Property.Type,
+                        GetPointsToAbstractValue(destination.Instance), parent: null, entityForInstanceLocation: null);
+                    CurrentAnalysisData.SetAbstractValue(entity, assignmentValueAbstractValue);
+                }
                 if (assignmentOperation.Target != null
                     && assignmentValueAbstractValue.Kind == TaintedDataAbstractValueKind.Tainted
                     && assignmentOperation.Target is IPropertyReferenceOperation propertyReferenceOperation)

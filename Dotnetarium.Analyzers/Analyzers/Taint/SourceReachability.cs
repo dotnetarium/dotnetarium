@@ -56,8 +56,12 @@ namespace Dotnetarium.Analyzers.Taint
             types = WellKnownTypeProvider.GetOrCreate(compilation);
         }
 
-        internal bool MayReachSource(ControlFlowGraph graph, CancellationToken cancellationToken = default) =>
-            results.GetOrAdd(graph, root => Compute(root, cancellationToken));
+        internal bool MayReachSource(ControlFlowGraph graph, CancellationToken cancellationToken = default)
+        {
+            using var budget = new AnalysisWorkBudget(2048, cancellationToken);
+            try { return results.GetOrAdd(graph, root => Compute(root, cancellationToken)); }
+            catch (AnalysisWorkLimitException error) when (ReferenceEquals(error.Budget, budget)) { return true; }
+        }
 
         private bool Compute(ControlFlowGraph root, CancellationToken cancellationToken)
         {

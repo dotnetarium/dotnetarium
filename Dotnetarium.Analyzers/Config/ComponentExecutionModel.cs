@@ -29,6 +29,16 @@ namespace Dotnetarium.Config
         }
 
         internal bool HasServerCallbacks(INamedTypeSymbol type) => (GetMode(type) & Mode.Server) != 0;
+        internal bool IsServerNavigation(IPropertyReferenceOperation property)
+        {
+            if (clientProject) return false;
+            var owner = compilation.GetSemanticModel(property.Syntax.SyntaxTree).GetEnclosingSymbol(property.Syntax.SpanStart) as IMethodSymbol;
+            if (owner == null || !IsComponent(owner.ContainingType)) return true;
+            var mode = GetMode(owner.ContainingType);
+            if ((mode & Mode.Server) != 0 || mode == Mode.Unknown) return true;
+            return (mode & Mode.Prerender) != 0 && owner.IsOverride && owner.Name is
+                "OnInitialized" or "OnInitializedAsync" or "OnParametersSet" or "OnParametersSetAsync" or "BuildRenderTree";
+        }
         internal bool HasServerLifecycle(INamedTypeSymbol type)
         {
             var mode = GetMode(type);

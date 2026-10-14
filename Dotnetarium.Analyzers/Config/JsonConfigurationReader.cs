@@ -136,6 +136,7 @@ namespace Dotnetarium.Config
 
             target.TaintFlowVisualizationEnabled = overlay.TaintFlowVisualizationEnabled ??
                                                    target.TaintFlowVisualizationEnabled;
+            target.ExperimentalFilePersistence = overlay.ExperimentalFilePersistence ?? target.ExperimentalFilePersistence;
             target.AnalysisProfile = overlay.AnalysisProfile ?? target.AnalysisProfile;
             target.MaxInterproceduralMethodCallChain = overlay.MaxInterproceduralMethodCallChain ??
                                                         target.MaxInterproceduralMethodCallChain;

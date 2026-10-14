@@ -29,7 +29,10 @@ public sealed class SinkReachabilityTests
         var graph = Graph(compilation, "Demo", "Run");
         var checker = Checker(compilation);
         using (var budget = new AnalysisWorkBudget(64, CancellationToken.None))
-            Assert.Throws<AnalysisWorkLimitException>(() => checker.MayReachSink(graph));
+        {
+            checker.MayReachSink(graph);
+            Assert.Equal(0, budget.Work);
+        }
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
@@ -86,7 +89,10 @@ public sealed class SinkReachabilityTests
         var graph = Graph(compilation, "Demo", "Run");
         var checker = Checker(compilation);
         using (var budget = new AnalysisWorkBudget(64, CancellationToken.None))
-            Assert.Throws<AnalysisWorkLimitException>(() => checker.MayReachSink(graph));
+        {
+            Assert.True(checker.MayReachSink(graph));
+            Assert.Equal(0, budget.Work);
+        }
         for (var attempt = 0; attempt < 64; attempt++)
         {
             using var budget = new AnalysisWorkBudget(64, CancellationToken.None);

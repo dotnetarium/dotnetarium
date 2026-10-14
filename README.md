@@ -31,6 +31,7 @@ Version 2.x does not support VB.NET, .NET Framework or Visual Studio 2022.
 | Files and serialization | File paths, archive extraction, unsafe XML resolution, Json.NET type handling and explicitly restored BinaryFormatter |
 | Cryptography | Legacy ciphers, ECB, fixed IVs/nonces, low PBKDF2 work factors and literal post-quantum private keys |
 | Credentials | Literal secrets used by C# APIs (`DNA0009`) and recognizable provider credentials in configuration files (`DNA0022`) |
+| CORS | Applied policies accepting every origin with credentials (`DNA0024`) |
 
 Input models include ASP.NET Core, Razor/Blazor, gRPC, SignalR, WebSockets, messaging, Azure Functions and selected game-engine RPCs. Library models include Dapper, Npgsql, SharpCompress, Markdig and selected cryptography APIs. Coverage depends on the modeled APIs and available references; see the [rule notes](docs/rules) and [framework guides](#guides).
 

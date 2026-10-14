@@ -140,6 +140,9 @@ namespace Dotnetarium.Config
                             method.InOut?.Any(pair => pair.outArgumentName != TaintedTargetValue.Return) == true));
                 }
 
+            if (remoteEnabled && kind == (SinkKind)(int)TaintType.CrossSiteScripting && model.ExperimentalFilePersistence == true)
+                For("System.IO.File");
+
             var compiled = ImmutableHashSet.CreateBuilder<SourceInfo>();
             foreach (var (type, definition) in definitions)
             {
@@ -155,6 +158,9 @@ namespace Dotnetarium.Config
                 if (remoteEnabled && type == "Microsoft.AspNetCore.Http.EndpointFilterInvocationContext")
                     methods = methods.Add(((name, arguments) => name == "GetArgument" && arguments.Length == 1 &&
                         endpointFilters.Value.GetBoundParameters(arguments[0].Parent).Any(parameter => IsMinimalApiInputParameter(parameter, compilation)),
+                        ImmutableHashSet<string>.Empty.Add(TaintedTargetValue.Return)));
+                if (remoteEnabled && type == "System.IO.File" && kind == (SinkKind)(int)TaintType.CrossSiteScripting && model.ExperimentalFilePersistence == true)
+                    methods = methods.Add(((name, arguments) => StoredFiles.IsUntrustedRead(name, arguments),
                         ImmutableHashSet<string>.Empty.Add(TaintedTargetValue.Return)));
                 var transfers = definition.Transfers
                     .Where(method => method.InOut != null)
@@ -212,6 +218,9 @@ namespace Dotnetarium.Config
                     serverBoundPropertyAttributes: sources.SelectMany(source => source.ServerPropertyAttributes ?? Array.Empty<string>())
                         .ToImmutableHashSet(StringComparer.Ordinal),
                     propertyReferenceMatcher: property => remoteEnabled && (
+                        (type == "Microsoft.AspNetCore.Components.NavigationManager" &&
+                            kind == (SinkKind)(int)TaintType.ServerSideRequestForgery && property.Property.Name is "BaseUri" or "Uri" &&
+                            componentExecution.IsServerNavigation(property)) ||
                         (type == "System.Object" && IsMixedAggregateRequestProperty(property)) ||
                         endpointFilters.Value.GetBoundParameters(property).Any(parameter => IsMinimalApiInputParameter(parameter, compilation)) ||
                         messageInputs.Value.IsPropertyInput(property)),
@@ -225,8 +234,15 @@ namespace Dotnetarium.Config
             return compiled.ToImmutable();
         }
 
+        private StoredFileInputModel? storedFiles;
+        private StoredFileInputModel StoredFiles => System.Threading.LazyInitializer.EnsureInitialized(ref storedFiles,
+            () => new StoredFileInputModel(compilation, options, this));
+        internal bool HasIncompleteFilePersistence => storedFiles?.IsPartial == true;
+
         private ComponentStateInputModel ComponentInputs(SinkKind kind) => componentInputs.GetOrAdd(kind,
             current => new Lazy<ComponentStateInputModel>(() => new ComponentStateInputModel(compilation, options, this, current, componentExecution))).Value;
+        internal bool HasIncompleteComponentState(SinkKind kind) => componentInputs.TryGetValue(kind, out var model) &&
+            model.IsValueCreated && model.Value.HasIncompleteAnalysis;
 
         private TaintedDataAbstractValue? GetComponentPropertyValue(IPropertyReferenceOperation property, SinkKind kind)
         {
@@ -722,22 +738,32 @@ namespace Dotnetarium.Config
                     sinkProperties: sink.Properties,
                     sinkMethodMatchingParameters:
                         (sink.Methods ?? Array.Empty<SinkMethod>())
-                            .Where(method => method.Condition != null)
+                            .Where(method => method.Condition != null || method.ContentTypes != null)
                             .Select(method =>
                                 ((MethodMatcher)((name, arguments) =>
-                                    name == method.Name && method.Condition.All(condition =>
+                                    name == method.Name && (method.Condition == null || method.Condition.All(condition =>
                                         arguments.Any(argument =>
                                             argument.Parameter?.Name == condition.argName &&
                                             argument.Value.ConstantValue.HasValue &&
-                                            Equals(argument.Value.ConstantValue.Value, condition.value)))),
+                                            Equals(argument.Value.ConstantValue.Value, condition.value)))) &&
+                                    (method.ContentTypes == null || ActiveResponseContent(arguments, method.ContentTypes))),
                                  method.Arguments ?? Array.Empty<string>())),
                     sinkMethodParameters:
                         (sink.Methods ?? Array.Empty<SinkMethod>())
-                            .Where(method => method.Condition == null)
+                            .Where(method => method.Condition == null && method.ContentTypes == null)
                             .Select(method => (method.Name, method.Arguments ?? Array.Empty<string>())));
             }
 
             return builder.ToImmutableAndFree();
+        }
+
+        private static bool ActiveResponseContent(ImmutableArray<IArgumentOperation> arguments, string[] contentTypes)
+        {
+            if (arguments.Any(argument => argument.Parameter?.Name == "fileDownloadName" &&
+                argument.Value.ConstantValue.Value is string { Length: > 0 })) return false;
+            return arguments.Any(argument => argument.Parameter?.Name == "contentType" &&
+                argument.Value.ConstantValue.Value is string type &&
+                contentTypes.Contains(type.Split(';')[0].Trim(), StringComparer.OrdinalIgnoreCase));
         }
 
         private sealed class SourceDefinition

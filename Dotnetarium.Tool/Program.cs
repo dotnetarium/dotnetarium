@@ -137,6 +137,13 @@ internal static class Program
                     configOptions = await ProjectAnalysisOptions.WithTestProjectMetadataAsync(configOptions, project.FilePath!, inputs.MSBuildPath,
                         selection.Configuration, ScanSelection.FrameworkOf(project));
                 var analyzerOptions = new AnalyzerOptions(additionalFiles, new AnalysisProfileOptions(configOptions));
+                var effectiveConfig = ConfigurationManager.GetProjectConfiguration(additionalFiles);
+                var effectiveSettings = new TaintAnalysisSettings(effectiveConfig, analyzerOptions);
+                report.AnalysisSettings.Add(new(project.FilePath ?? project.Name,
+                    effectiveSettings.Profile.ToString().ToLowerInvariant(), effectiveSettings.MethodDepth,
+                    effectiveSettings.LambdaDepth, effectiveSettings.Work,
+                    (effectiveConfig.ThreatModels ?? [SourceScope.Remote]).Select(scope => scope.ToString().ToLowerInvariant()).Order(StringComparer.Ordinal).ToArray(),
+                    effectiveConfig.ExperimentalFilePersistence == true));
                 var analysisStarted = Stopwatch.GetTimestamp();
                 var result = await compilation.WithAnalyzers(analyzers, analyzerOptions).GetAllDiagnosticsAsync();
                 report.RecordElapsed("analysis-total", analysisStarted);
@@ -148,7 +155,14 @@ internal static class Program
                 foreach (var diagnostic in result.Where(diagnostic => diagnostic.Id.StartsWith("DNA", StringComparison.Ordinal) &&
                     diagnostic.Id != AnalysisDiagnostics.WorkLimitId)) diagnostics.Add(diagnostic);
                 foreach (var notice in result.Where(diagnostic => diagnostic.Id == AnalysisDiagnostics.WorkLimitId))
+                {
                     report.Warn("analysis-budget", $"{project.Name}: {notice}");
+                    string Get(string key, string fallback = "") => notice.Properties.GetValueOrDefault("dotnetarium." + key) ?? fallback;
+                    long? Number(string key) => long.TryParse(Get(key), out var value) ? value : null;
+                    report.Cutoffs.Add(new(project.FilePath ?? project.Name, Get("rule"), Get("root"), Get("stage", "dataflow"),
+                        Get("reason", "profile-limit"), Number("work"), Number("limit"), Number("graphs"), Number("blocks"), Number("operations"),
+                        (int)(Number("cutoffCount") ?? 1)));
+                }
                 foreach (var error in projectErrors.Take(20))
                     if (options.NoBuild && error.Id != "AD0001")
                         report.Warn("compiler-error", $"{project.Name}: {error}");

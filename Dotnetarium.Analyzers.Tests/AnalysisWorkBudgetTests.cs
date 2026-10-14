@@ -113,6 +113,58 @@ public sealed class AnalysisWorkBudgetTests
         }
     }
 
+    [Fact]
+    public void Warm_points_to_cache_has_the_same_logical_cost_and_cannot_bypass_a_smaller_budget()
+    {
+        var compilation = Compile("""
+            public static class Demo {
+                static object Identity(object input) => input;
+                public static object Run(object input) => Identity(input);
+            }
+            """);
+        var method = (IMethodSymbol)compilation.GetTypeByMetadataName("Demo")!.GetMembers("Run").Single();
+        var graph = method.GetTopmostOperationBlock(compilation)!.GetEnclosingControlFlowGraph()!;
+        var options = new AnalyzerOptions([]);
+        var config = InterproceduralAnalysisConfiguration.Create(options, DnaRuleCatalog.CommandInjection,
+            graph, compilation, InterproceduralAnalysisKind.ContextSensitive, CancellationToken.None, 5, 5);
+        PointsToAnalysisResult? Analyze() => PointsToAnalysis.TryGetOrComputeResult(graph, method, options,
+            WellKnownTypeProvider.GetOrCreate(compilation), PointsToAnalysisKind.Complete, config, null);
+        long cost;
+        using (var cold = new AnalysisWorkBudget(10000, CancellationToken.None)) { Assert.NotNull(Analyze()); cost = cold.Work; }
+        using (var warm = new AnalysisWorkBudget(10000, CancellationToken.None)) { Assert.NotNull(Analyze()); Assert.Equal(cost, warm.Work); }
+        using var small = new AnalysisWorkBudget((uint)cost - 1, CancellationToken.None);
+        Assert.Same(small, Assert.Throws<AnalysisWorkLimitException>(() => Analyze()).Budget);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Multiple_rules_are_repeatable_on_the_same_compilation_with_parallel_roots(bool concurrent)
+    {
+        var compilation = Compile("""
+            using System;
+            using System.Diagnostics;
+            using System.Net.Http;
+            public class Demo {
+                static string Wrap(string value) => "prefix" + value;
+                public void First() => Process.Start(Wrap(Console.ReadLine()));
+                public void Second() => new HttpClient().GetAsync(Console.ReadLine());
+            }
+            """);
+        var options = new AnalyzerOptions([new ConfigFile("""{"Version":"2.0","ThreatModels":["remote","local"],"AnalysisProfile":"full","MaxTaintAnalysisWork":500}""")]);
+        string[]? expected = null;
+        for (var i = 0; i < 4; i++)
+        {
+            var diagnostics = await compilation.WithAnalyzers([new CommandInjectionTaintAnalyzer(), new ServerSideRequestForgeryTaintAnalyzer()],
+                new CompilationWithAnalyzersOptions(options, null, concurrent, false, false)).GetAnalyzerDiagnosticsAsync();
+            Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "AD0001");
+            var actual = diagnostics.Select(diagnostic => diagnostic.Id + ":" + diagnostic.Location.SourceSpan.Start + ":" + diagnostic.GetMessage()).Order(StringComparer.Ordinal).ToArray();
+            if (expected == null) expected = actual; else Assert.Equal(expected, actual);
+        }
+        Assert.Contains(expected!, finding => finding.StartsWith("DNA0002:", StringComparison.Ordinal));
+        Assert.Contains(expected!, finding => finding.StartsWith("DNA0011:", StringComparison.Ordinal));
+    }
+
     private static CSharpCompilation Compile(string source)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)

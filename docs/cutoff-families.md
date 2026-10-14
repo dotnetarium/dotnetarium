@@ -1,5 +1,8 @@
 # Taint cutoff families
 
+For the final depth-3 comparison of 1,000, 2,000 and 2,500 work budgets in both
+loading modes, see the [budget matrix](performance-budget-matrix.md).
+
 October 13, 2026 investigation of the vulnerable .NET app, Sarifintown and
 LANCommander. Comparisons use remote + local sources, fast analysis at
 method/lambda depth **3**, Release/net10.0. Work budgets are **2,500** unless

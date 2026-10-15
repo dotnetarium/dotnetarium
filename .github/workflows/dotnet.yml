@@ -52,6 +52,9 @@ jobs:
       - name: Check identifier and boundary precision on .NET 8 and 10
         shell: pwsh
         run: ./tests/TaintPrecisionSmoke/Test.ps1
+      - name: Check consequential file access in analyzer and both CLI modes
+        shell: pwsh
+        run: ./tests/ConsequentialFileSmoke/Test.ps1
       - name: Check Markdown, archive extraction and generated Razor CLI coverage
         shell: pwsh
         run: ./tests/MarkupArchiveSmoke/Test.ps1
@@ -97,6 +100,9 @@ jobs:
       - name: Check identifier and boundary precision on .NET 8 and 10
         shell: pwsh
         run: ./tests/TaintPrecisionSmoke/Test.ps1
+      - name: Check consequential file access in analyzer and both CLI modes
+        shell: pwsh
+        run: ./tests/ConsequentialFileSmoke/Test.ps1
       - name: Check Markdown, archive extraction and generated Razor CLI coverage
         shell: pwsh
         run: ./tests/MarkupArchiveSmoke/Test.ps1

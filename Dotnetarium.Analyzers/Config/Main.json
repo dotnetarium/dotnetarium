@@ -163,6 +163,7 @@
     }
   },
   "TaintSources": [
+    { "Type": "System.Formats.Tar.TarEntry", "Scope": "independent", "TaintTypes": [ "PathEscape" ], "Properties": [ "Name" ] },
     {
       "Type": "Microsoft.AspNetCore.Components.NavigationManager", "Scope": "remote",
       "TaintTypes": [ "ServerSideRequestForgery" ], "Properties": []
@@ -1142,6 +1143,192 @@
   ],
   "Sinks": [
     {
+      "Type": "System.IO.FileSystemInfo", "TaintTypes": [ "PathEscape" ],
+      "Methods": [
+        { "Name": "Delete", "Arguments": [ ".This" ] },
+        { "Name": "CreateAsSymbolicLink", "Arguments": [ ".This", "pathToTarget" ] }
+      ]
+    },
+    {
+      "Type": "System.IO.DirectoryInfo",
+      "TaintTypes": [
+        "PathEscape"
+      ],
+      "Methods": [
+        {
+          "Name": "Delete",
+          "Arguments": [
+            ".This"
+          ]
+        },
+        {
+          "Name": "MoveTo",
+          "Arguments": [
+            ".This",
+            "destDirName"
+          ]
+        }
+      ]
+    },
+    {
+      "Type": "System.Runtime.Loader.AssemblyLoadContext",
+      "TaintTypes": [
+        "PathEscape"
+      ],
+      "Methods": [
+        {
+          "Name": "LoadFromAssemblyPath",
+          "Arguments": [
+            "assemblyPath"
+          ]
+        },
+        {
+          "Name": "LoadFromNativeImagePath",
+          "Arguments": [
+            "nativeImagePath",
+            "assemblyPath"
+          ]
+        },
+        {
+          "Name": "LoadUnmanagedDllFromPath",
+          "Arguments": [
+            "unmanagedDllPath"
+          ]
+        }
+      ]
+    },
+    {
+      "Type": "System.Runtime.InteropServices.NativeLibrary",
+      "TaintTypes": [
+        "PathEscape"
+      ],
+      "Methods": [
+        {
+          "Name": "Load",
+          "Arguments": [
+            "libraryPath"
+          ]
+        },
+        {
+          "Name": "TryLoad",
+          "Arguments": [
+            "libraryPath"
+          ]
+        }
+      ]
+    },
+    {
+      "Type": "System.IO.Compression.ZipFile",
+      "TaintTypes": [
+        "PathEscape"
+      ],
+      "Methods": [
+        {
+          "Name": "Open",
+          "Arguments": [
+            "archiveFileName"
+          ]
+        },
+        {
+          "Name": "OpenRead",
+          "Arguments": [
+            "archiveFileName"
+          ]
+        },
+        {
+          "Name": "ExtractToDirectory",
+          "Arguments": [
+            "destinationDirectoryName",
+            "sourceArchiveFileName"
+          ]
+        }
+      ]
+    },
+    {
+      "Type": "System.Formats.Tar.TarEntry",
+      "TaintTypes": [
+        "PathEscape"
+      ],
+      "Methods": [
+        {
+          "Name": "ExtractToFile",
+          "Arguments": [
+            "destinationFileName"
+          ]
+        },
+        {
+          "Name": "ExtractToFileAsync",
+          "Arguments": [
+            "destinationFileName"
+          ]
+        }
+      ]
+    },
+    {
+      "Type": "System.Formats.Tar.TarFile",
+      "TaintTypes": [
+        "PathEscape"
+      ],
+      "Methods": [
+        {
+          "Name": "ExtractToDirectory",
+          "Arguments": [
+            "destinationDirectoryName",
+            "sourceFileName"
+          ]
+        },
+        {
+          "Name": "ExtractToDirectoryAsync",
+          "Arguments": [
+            "destinationDirectoryName",
+            "sourceFileName"
+          ]
+        }
+      ]
+    },
+    {
+      "Type": "Microsoft.AspNetCore.Mvc.ControllerBase",
+      "TaintTypes": [
+        "PathEscape"
+      ],
+      "Methods": [
+        {
+          "Name": "PhysicalFile",
+          "Arguments": [
+            "physicalPath"
+          ]
+        }
+      ]
+    },
+    {
+      "Type": "Microsoft.AspNetCore.Http.Results",
+      "TaintTypes": [
+        "PathEscape"
+      ],
+      "Methods": [
+        {
+          "Name": "File",
+          "Arguments": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "Type": "Microsoft.AspNetCore.Http.TypedResults",
+      "TaintTypes": [
+        "PathEscape"
+      ],
+      "Methods": [
+        {
+          "Name": "PhysicalFile",
+          "Arguments": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
       "Type": "Godot.AesContext", "TaintTypes": [ "HardcodedSecret" ],
       "Methods": [ { "Name": "Start", "Arguments": [ "key" ] } ]
     },
@@ -1462,12 +1649,6 @@
       ],
       "Methods": [
         {
-          "Name": "CreateDirectory",
-          "Arguments": [
-            "path"
-          ]
-        },
-        {
           "Name": "CreateSymbolicLink",
           "Arguments": [
             "path",
@@ -1476,42 +1657,6 @@
         },
         {
           "Name": "Delete",
-          "Arguments": [
-            "path"
-          ]
-        },
-        {
-          "Name": "EnumerateDirectories",
-          "Arguments": [
-            "path"
-          ]
-        },
-        {
-          "Name": "EnumerateFiles",
-          "Arguments": [
-            "path"
-          ]
-        },
-        {
-          "Name": "EnumerateFileSystemEntries",
-          "Arguments": [
-            "path"
-          ]
-        },
-        {
-          "Name": "GetDirectories",
-          "Arguments": [
-            "path"
-          ]
-        },
-        {
-          "Name": "GetFiles",
-          "Arguments": [
-            "path"
-          ]
-        },
-        {
-          "Name": "GetFileSystemEntries",
           "Arguments": [
             "path"
           ]
@@ -1672,6 +1817,7 @@
             "path"
           ]
         },
+        { "Name": "ReadLinesAsync", "Arguments": [ "path" ] },
         {
           "Name": "Replace",
           "Arguments": [
@@ -1725,26 +1871,71 @@
       ],
       "Methods": [
         {
-          "Name": ".ctor",
+          "Name": "OpenRead",
           "Arguments": [
-            "fileName"
+            ".This"
+          ]
+        },
+        {
+          "Name": "OpenWrite",
+          "Arguments": [
+            ".This"
+          ]
+        },
+        {
+          "Name": "OpenText",
+          "Arguments": [
+            ".This"
+          ]
+        },
+        {
+          "Name": "Open",
+          "Arguments": [
+            ".This"
+          ]
+        },
+        {
+          "Name": "Create",
+          "Arguments": [
+            ".This"
+          ]
+        },
+        {
+          "Name": "CreateText",
+          "Arguments": [
+            ".This"
+          ]
+        },
+        {
+          "Name": "AppendText",
+          "Arguments": [
+            ".This"
+          ]
+        },
+        {
+          "Name": "Delete",
+          "Arguments": [
+            ".This"
           ]
         },
         {
           "Name": "CopyTo",
           "Arguments": [
+            ".This",
             "destFileName"
           ]
         },
         {
           "Name": "MoveTo",
           "Arguments": [
+            ".This",
             "destFileName"
           ]
         },
         {
           "Name": "Replace",
           "Arguments": [
+            ".This",
             "destinationFileName",
             "destinationBackupFileName"
           ]

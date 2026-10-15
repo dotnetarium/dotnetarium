@@ -14,12 +14,15 @@ using Microsoft.CodeAnalysis.Diagnostics;
 
 var cases = new (string Name, string Statement, string Rule, bool ShouldWarn)[]
 {
-    ("directory enumeration", "System.IO.Directory.EnumerateFiles(path);", "DNA0004", true),
-    ("directory enumeration of directories", "System.IO.Directory.EnumerateDirectories(path);", "DNA0004", true),
-    ("directory enumeration of entries", "System.IO.Directory.EnumerateFileSystemEntries(path);", "DNA0004", true),
-    ("directory listing of directories", "System.IO.Directory.GetDirectories(path);", "DNA0004", true),
-    ("directory listing of entries", "System.IO.Directory.GetFileSystemEntries(path);", "DNA0004", true),
-    ("directory creation", "System.IO.Directory.CreateDirectory(path);", "DNA0004", true),
+    ("directory enumeration", "System.IO.Directory.EnumerateFiles(path);", "DNA0004", false),
+    ("directory enumeration of directories", "System.IO.Directory.EnumerateDirectories(path);", "DNA0004", false),
+    ("directory enumeration of entries", "System.IO.Directory.EnumerateFileSystemEntries(path);", "DNA0004", false),
+    ("directory listing of directories", "System.IO.Directory.GetDirectories(path);", "DNA0004", false),
+    ("directory listing of entries", "System.IO.Directory.GetFileSystemEntries(path);", "DNA0004", false),
+    ("directory creation", "System.IO.Directory.CreateDirectory(path);", "DNA0004", false),
+    ("enumerated file delete", "foreach (var file in System.IO.Directory.EnumerateFiles(path)) System.IO.File.Delete(file);", "DNA0004", true),
+    ("file object read", "new System.IO.FileInfo(path).OpenRead();", "DNA0004", true),
+    ("file object construction", "_ = new System.IO.FileInfo(path);", "DNA0004", false),
     ("directory symlink target", "System.IO.Directory.CreateSymbolicLink(\"link\", path);", "DNA0004", true),
     ("file handle", "System.IO.File.OpenHandle(path);", "DNA0004", true),
     ("file symlink target", "System.IO.File.CreateSymbolicLink(\"link\", path);", "DNA0004", true),

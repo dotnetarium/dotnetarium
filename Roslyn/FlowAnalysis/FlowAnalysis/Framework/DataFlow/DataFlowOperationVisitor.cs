@@ -2522,7 +2522,10 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
                     }
                     else
                     {
-                        Debug.Assert(arguments.Length == invokedMethod.Parameters.Length);
+                        // Summary-only lambda traversal can inspect captures
+                        // without supplying the callback's runtime arguments.
+                        Debug.Assert(arguments.Length == invokedMethod.Parameters.Length ||
+                            isLambdaOrLocalFunction && arguments.IsEmpty);
                     }
 
                     foreach (var argument in arguments)

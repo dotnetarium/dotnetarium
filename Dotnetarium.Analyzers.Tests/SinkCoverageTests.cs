@@ -56,9 +56,19 @@ public sealed partial class SinkCoverageTests
         new("Microsoft.AspNetCore.Mvc.RedirectResult", "DNA0005", "_ = new Microsoft.AspNetCore.Mvc.RedirectResult(input);"),
         new("Microsoft.AspNetCore.Http.Results", "DNA0005", "_ = Microsoft.AspNetCore.Http.Results.Redirect(input);"),
         new("Microsoft.AspNetCore.Http.TypedResults", "DNA0005", "_ = Microsoft.AspNetCore.Http.TypedResults.Redirect(input);"),
-        new("System.IO.Directory", "DNA0004", "_ = System.IO.Directory.CreateDirectory(input);"),
+        new("System.IO.FileSystemInfo", "DNA0004", "((System.IO.FileSystemInfo)new System.IO.FileInfo(input)).Delete();"),
+        new("System.IO.DirectoryInfo", "DNA0004", "new System.IO.DirectoryInfo(input).Delete();"),
+        new("System.Runtime.Loader.AssemblyLoadContext", "DNA0004", "_ = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromAssemblyPath(input);"),
+        new("System.Runtime.InteropServices.NativeLibrary", "DNA0004", "_ = System.Runtime.InteropServices.NativeLibrary.Load(input);"),
+        new("System.IO.Compression.ZipFile", "DNA0004", "_ = System.IO.Compression.ZipFile.OpenRead(input);"),
+        new("System.Formats.Tar.TarEntry", "DNA0004", "((System.Formats.Tar.TarEntry)null!).ExtractToFile(input, true);"),
+        new("System.Formats.Tar.TarFile", "DNA0004", "System.Formats.Tar.TarFile.ExtractToDirectory(new System.IO.MemoryStream(), input, true);"),
+        new("Microsoft.AspNetCore.Mvc.ControllerBase", "DNA0004", "_ = this.PhysicalFile(input, \"text/plain\");"),
+        new("Microsoft.AspNetCore.Http.Results", "DNA0004", "_ = Microsoft.AspNetCore.Http.Results.File(input, \"text/plain\");"),
+        new("Microsoft.AspNetCore.Http.TypedResults", "DNA0004", "_ = Microsoft.AspNetCore.Http.TypedResults.PhysicalFile(input, \"text/plain\");"),
+        new("System.IO.Directory", "DNA0004", "System.IO.Directory.Delete(input);"),
         new("System.IO.File", "DNA0004", "_ = System.IO.File.OpenRead(input);"),
-        new("System.IO.FileInfo", "DNA0004", "_ = new System.IO.FileInfo(input);"),
+        new("System.IO.FileInfo", "DNA0004", "_ = new System.IO.FileInfo(input).OpenRead();"),
         new("System.Reflection.Assembly", "DNA0004", "_ = System.Reflection.Assembly.LoadFrom(input);"),
         new("System.IO.StreamReader", "DNA0004", "_ = new System.IO.StreamReader(input);"),
         new("System.IO.StreamWriter", "DNA0004", "_ = new System.IO.StreamWriter(input);"),
@@ -211,6 +221,9 @@ public sealed partial class SinkCoverageTests
     };
 
     private const string StubTypes = """
+        public sealed class TestLoader : System.Runtime.Loader.AssemblyLoadContext {
+            public System.IntPtr LoadNative(string path) => LoadUnmanagedDllFromPath(path);
+        }
         namespace System.DirectoryServices
         {
             public sealed class DirectorySearcher

@@ -12,7 +12,9 @@ if ($ToolPackage) {
     $package = [System.IO.Path]::GetFullPath($ToolPackage)
     $packageVersion = [System.IO.Path]::GetFileNameWithoutExtension($package).Substring('dotnetarium.'.Length)
     $feed = [System.Security.SecurityElement]::Escape((Split-Path -Parent $package))
-    $installConfig = Join-Path $scratch 'nuget.config'
+    # Only tool installation should use the local-only feed. A conventional
+    # nuget.config here would also override every generated fixture's restore.
+    $installConfig = Join-Path $scratch 'tool-install.config'
     "<configuration><packageSources><clear/><add key=`"local`" value=`"$feed`"/></packageSources></configuration>" | Set-Content -LiteralPath $installConfig
     # Release versions are reused by local builds. An isolated package cache
     # prevents a previously published package with the same version winning.

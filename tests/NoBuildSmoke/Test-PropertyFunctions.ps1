@@ -41,7 +41,10 @@ public class Entry : Controller {
 }
 '@ | Set-Content -LiteralPath (Join-Path $functionRoot 'App/Entry.cs')
 & dotnet restore $functionApp --nologo -v quiet > (Join-Path $functionRoot 'restore.log') 2>&1
-if ($LASTEXITCODE -ne 0) { throw 'Property-function fixture restore failed.' }
+if ($LASTEXITCODE -ne 0) {
+    Get-Content -LiteralPath (Join-Path $functionRoot 'restore.log') | Write-Host
+    throw 'Property-function fixture restore failed.'
+}
 $assets = Join-Path $functionRoot 'App/obj/project.assets.json'
 $assetsHash = (Get-FileHash -LiteralPath $assets).Hash
 $functionRun = Scan $functionApp @('--framework', 'net10.0')

@@ -177,17 +177,13 @@ When the limit is reached, analysis stops for that root and other methods and
 rules continue. The analyzer package emits **DNA9000**: fast analysis summarizes
 affected methods per rule; full/max analysis identifies each root and its work
 counters. This is a coverage notice, not a security finding.
-The global tool writes an `analysis-budget` SARIF execution notification and
-marks the scan **partial**. Default loading returns exit code **2**, including
-with `--fail`. Experimental `-nb` / `--no-build` loading treats taint cutoffs as
-nonfatal: it returns **0**, or **1** when `--fail` is set and security findings
-are present, unless a separate fatal error occurs.
-The coverage notice is excluded from security findings and rule definitions.
-Other findings are retained in SARIF; zero findings in a partial scan is not a
-clean result. Default-mode compiler and workspace failures also return 2 and
-retain partial SARIF when requested. No-build mode continues through compiler
-errors in usable compilations; invalid inputs and analyzer failures remain
-fatal. See [scan modes](scan-modes.md) for the full exit-code policy.
+The package emits DNA9000 at informational severity. The global tool retains
+an `analysis-budget` informational SARIF notification and detailed counters.
+Configured limits never fail either loader or become security findings. Missing
+inputs are tracked separately through `dotnetarium.inputStatus`; bounds use
+`dotnetarium.analysisStatus`. `--fail` applies only to security findings unless a
+separate operational failure requires exit 2. Zero findings does not establish
+safety. See [scan modes](scan-modes.md) for status and exit semantics.
 
 To retry with a larger budget, set a positive integer in `dotnetarium.json`:
 

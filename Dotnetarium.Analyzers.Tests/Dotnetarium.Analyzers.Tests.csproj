@@ -49,6 +49,9 @@
     <Compile Include="../Dotnetarium.Tool/ProviderSecretVerifier.cs" Link="Tool/ProviderSecretVerifier.cs" />
     <Compile Include="../Dotnetarium.Tool/ScanReport.cs" Link="Tool/ScanReport.cs" />
     <Compile Include="../Dotnetarium.Tool/SarifWriter.cs" Link="Tool/SarifWriter.cs" />
+    <Compile Include="../Dotnetarium.Tool/SarifRuleMetadata.cs" Link="Tool/SarifRuleMetadata.cs" />
+    <EmbeddedResource Include="../Dotnetarium.Tool/SarifMetadata.json" LogicalName="Dotnetarium.SarifMetadata.json" />
+    <EmbeddedResource Include="../docs/rules/DNA*.md" LogicalName="Dotnetarium.RuleHelp.%(Filename)%(Extension)" />
     <Compile Include="../Dotnetarium.Tool/SourceLocationSpan.cs" Link="Tool/SourceLocationSpan.cs" />
   </ItemGroup>
 

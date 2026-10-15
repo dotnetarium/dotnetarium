@@ -86,13 +86,15 @@ assembly load failures produce a `generator-load` coverage notice and exit 2,
 instead of a complete scan with missing generated components. A future SDK's
 newer generator may require a newer tool runtime.
 
-CLI console output and SARIF use Razor's mapped source locations, keeping hidden
-generated sections at their physical C# locations. An installed analyzer and CLI
+CLI console output and SARIF use Razor's mapped source locations. Hidden
+binding sources use a matching mapped value read on the same rendered element.
+Unmapped generated steps are explicit rather than assigned guessed locations.
+An installed analyzer and CLI
 fixture checks query inputs, a three-component stored-message flow, unsafe
 `DisableHtml()` output, encoded negative controls and generator load failure on
 .NET 8 and .NET 10. See `tests/MarkupArchiveSmoke/Test.ps1`.
 
-The tool's experimental `-nb` / `--no-build` mode runs the selected SDK's official
+The tool's default no-build mode runs the selected SDK's official
 Razor generator in memory, without targets, restore or application emission.
-It reports partial coverage when generation or other required inputs are missing. See
+It reports input warnings when generation or other required inputs are missing. See
 [scan modes](scan-modes.md) for requirements and exit codes.

@@ -1,4 +1,4 @@
-param([string]$ToolDll, [switch]$ExperimentalDirect)
+param([string]$ToolDll, [switch]$ProjectMode)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
@@ -92,7 +92,7 @@ public class PrecisionController : ControllerBase {
     if ($LASTEXITCODE -ne 0) { throw "Installed analyzer build failed: $framework" }
     $toolSarif = Join-Path $projectRoot 'tool.sarif'
     $arguments = @($ToolDll, $project, '--sarif', $toolSarif, '--fail')
-    if ($ExperimentalDirect) { $arguments += '--experimental-direct' }
+    if ($ProjectMode) { $arguments += '-p' }
     & dotnet @arguments | Out-Null
     if ($LASTEXITCODE -ne 1) { throw "CLI findings/coverage exit mismatch: $framework" }
     foreach ($reportPath in @($compilerSarif, $toolSarif)) {
@@ -105,11 +105,11 @@ public class PrecisionController : ControllerBase {
         }
         if ($reportPath -eq $toolSarif) {
             # Direct loading intentionally does not run dependency analyzer packages.
-            $expectedCoverage = if ($ExperimentalDirect) { 'partial' } else { 'complete' }
+            $expectedCoverage = 'available'
             $unexpectedNotices = @($run.invocations[0].toolExecutionNotifications | Where-Object {
-                -not $ExperimentalDirect -or $_.descriptor.id -notin @('generation', 'package-build-inputs')
+                $ProjectMode -or $_.descriptor.id -notin @('generation', 'package-build-inputs')
             })
-            if ($run.invocations[0].properties.'dotnetarium.coverage' -ne $expectedCoverage -or
+            if ($run.invocations[0].properties.'dotnetarium.inputStatus' -ne $expectedCoverage -or
                 $unexpectedNotices.Count -ne 0 -or
                 @($findings | Where-Object { -not @($_.codeFlows).Count }).Count -ne 0) {
                 throw "CLI coverage or source-flow mismatch: $framework"
@@ -118,5 +118,5 @@ public class PrecisionController : ControllerBase {
     }
     "PASS ${framework}: installed analyzer and CLI each report four path and two redirect flows" | Write-Output
 }
-"Precision checks passed (experimental direct=$ExperimentalDirect). Reports: $scratch" | Write-Output
+"Precision checks passed (project mode=$ProjectMode). Reports: $scratch" | Write-Output
 exit 0

@@ -1,5 +1,10 @@
 # Final fast-profile budget comparison
 
+> Historical measurements below retain their original loader and exit policy.
+> Current scans default to no-build; `-p` selects project loading. Limits are
+> informational and input quality is reported separately. See [scan modes](scan-modes.md).
+
+
 October 14, 2026. Unchanged production code from `6aa39e3`, rebuilt at documentation
 commit `f232c35`. Windows, Ryzen 7 255 / 16 logical processors, SDK 10.0.401,
 Release; requested framework `net10.0`. All rules and **remote + local** sources

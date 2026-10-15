@@ -11,23 +11,27 @@ The global tool has two input-loading modes. Both use Roslyn compilations,
 semantic symbols, the same rules, taint engine and SARIF data flows.
 
 ```sh
-# Default: project-aware loading; compiler/workspace errors fail the scan.
+# Default: reconstruct inputs without running targets or restore.
 dotnetarium MyApp.sln --sarif results.sarif --fail
 
-# Experimental: reconstruct inputs without executing the project's build.
-dotnetarium MyApp.sln -nb --sarif exploratory.sarif --fail
-dotnetarium MyApp.csproj --no-build --configuration Release --framework net10.0
+# MSBuild design-time project loading; does not emit application assemblies.
+dotnetarium MyApp.sln -p --sarif project.sarif --fail
+dotnetarium MyApp.csproj --project --configuration Release --framework net10.0
 ```
 
-| Behavior | Default | `-nb` / `--no-build` |
+| Behavior | Default: no-build | `-p` / `--project` |
 | --- | --- | --- |
-| Project inputs | SDK/MSBuild design-time evaluation | Read conventional SDK project XML and source files |
-| Build targets | Design-time targets may run; no application assembly is emitted | Never executed |
-| Restore | Use the SDK workspace's normal project-loading behavior | Never invoked; use existing validated assets and cached compile references |
-| Source generators | Run through the Roslyn workspace when available | Only the selected SDK's official Razor generator runs, in memory; other generators are skipped |
-| Compiler errors | Preserve findings and return exit 2 | Preserve resolvable findings, warn and mark coverage partial |
-| Taint cutoffs | Return exit 2; retain findings | Warn and mark coverage partial; retain findings |
-| Analyzer failures | Return exit 2 | Return exit 2 |
+| Project inputs | Read conventional SDK XML and source files | SDK/MSBuild design-time evaluation |
+| Build targets | Never run | Design-time targets may run |
+| Restore | Never run; use validated assets and installed reference packs | SDK workspace behavior |
+| Generators | Official SDK Razor generator only, in memory | Available generators run through the workspace |
+| Compiler diagnostics | Warn; analyze resolved code | Warn; analyze resolved code |
+| Taint limits | Informational; retain other findings | Informational; retain other findings |
+| Unusable compilation or analyzer failure | Exit 2 | Exit 2 |
+
+There is no automatic fallback that executes project targets. Choose `-p` when
+custom imports, conditional source selection or non-Razor generators need project
+evaluation. The old no-build flags are removed; omit them to use the default.
 
 ## CLI options
 
@@ -36,7 +40,7 @@ dotnetarium MyApp.csproj --no-build --configuration Release --framework net10.0
 | `--sarif <path>` | Write SARIF 2.1.0 with relative paths and available data flows |
 | `--config <path>` | Override discovered `dotnetarium.json` |
 | `--fail` | Return 1 for findings when there is no fatal scan failure |
-| `-nb`, `--no-build` | Select experimental no-build loading |
+| `-p`, `--project` | Select MSBuild design-time project loading |
 | `--configuration <name>` | Select configuration; default is `Debug` |
 | `--framework <net8.0\|net10.0>` | Select root target framework and compatible dependencies |
 | `--respect-editorconfig` | Apply configured rule severity/suppression; off by default in the CLI |
@@ -54,7 +58,7 @@ dotnetarium src/MyApp.sln --config-include '**/*.json' --config-include '.github
 Quote globs to prevent shell expansion. They are relative to each printed config
 scan root; includes are combined and exclusions take precedence. They also apply
 to explicit configuration `AdditionalFiles`, without changing C# project selection
-or loading of `dotnetarium.json`. See [credential scope](rules/DNA0022.md).
+or loading of `dotnetarium.json`. See [credential scope](credential-scanning.md).
 
 ## Requirements and limits
 
@@ -105,13 +109,13 @@ A missing/incompatible SDK, malformed Razor or generator exception produces
 `razor-generation` notices. Independent C# analysis continues, including when a
 Razor-only dependency has no usable generated C#. Missing/custom build inputs
 can still reduce coverage; CSS-scope computation and arbitrary SDK targets are
-not reconstructed. The mode remains experimental.
+not reconstructed. These limitations are disclosed as input notices.
 
 Protobuf and other generated APIs need supplied generated C#. The loader warns
 when those generators are skipped. It does not sweep `obj` or `bin` into analysis. An explicit
 `<Compile Include="obj/.../Generated.cs" />` can supply generated code, with a
 warning that freshness and configuration/framework provenance were not verified.
-Default mode remains preferable for generated-code coverage.
+Use `-p` when non-Razor generated APIs require project evaluation.
 
 ## Test projects
 
@@ -124,7 +128,7 @@ project remains available for symbol binding and is not scheduled for analysis.
 
 Pass a test `.csproj` explicitly to analyze it. Intentional exclusions appear in
 the console and SARIF `dotnetarium.excludedTestProjects`; they do not make production
-coverage partial. Repository configuration credential scanning has its own file
+input status degraded. Repository configuration credential scanning has its own file
 scope and can still report real secrets in test-related configuration.
 
 Compiler errors in one method need not prevent checks in other resolved methods.
@@ -135,33 +139,40 @@ every broken method.
 
 ## Output and exit codes
 
-The console identifies the selected mode. SARIF invocation properties include
-`dotnetarium.loadingMode` (`project` or `no-build`), `dotnetarium.experimental`,
-and `dotnetarium.coverage` (`complete` or `partial`). Coverage notices remain in
-the console and `toolExecutionNotifications`.
+The console identifies the mode, effective profile, findings, bounded stops and
+input status. Expected loader limitations are summarized; input warnings and
+errors remain visible. Detailed notices are retained in SARIF.
+
+| SARIF field | Meaning |
+| --- | --- |
+| `executionSuccessful` | The scanner finished without an operational failure |
+| `dotnetarium.loadingMode` | `no-build` or `project` |
+| `dotnetarium.inputStatus` | `available` for supported inputs without detected input warnings; `degraded` for missing, unresolved or skipped inputs |
+| `dotnetarium.analysisStatus` | `within-profile`, `limited` when roots hit configured limits, or `not-run` when analysis did not start |
+| `dotnetarium.analysisSettings` | Effective profiles, depths, budgets and threat models |
+| `dotnetarium.cutoffs` | Detailed limits by rule/root/stage |
+
+These fields replace the old single complete/partial coverage field and the
+experimental-mode marker. `available` is not a guarantee that arbitrary build
+steps have been reproduced, and `within-profile` is not exhaustive analysis.
+Expected generator/target exclusions are informational; failed Razor generation,
+missing references and compiler errors remain input warnings. Only unusable
+inputs, invalid configuration and operational analyzer/generator failures fail
+execution. A failed root/project load is not silently converted to success.
 
 `dotnetarium.stageSeconds` records loading time, accumulated compilation and
-analysis times (`compilation-total` / `analysis-total`), and the wall time for
-parallel project processing (`project-stages-wall`). The accumulated times
-include overlapping projects and dependency waits; they must not be added to
-estimate total scan time. Analysis time includes Roslyn compiler diagnostics.
+analysis times, and parallel project processing wall time. Accumulated times
+include overlapping work; do not add them to estimate scan wall time.
 
-For no-build scans, `complete` describes the supported reconstructed inputs: it
-does not certify that a real build would succeed or that custom build steps
-produce no additional code. Missing/generated/unsupported inputs and compiler
-errors produce `partial` coverage.
+| Exit | Meaning |
+| --- | --- |
+| 0 | No execution failure; findings allowed without `--fail` |
+| 1 | Findings present with `--fail` |
+| 2 | Unusable input, invalid configuration or operational failure |
 
-- **0:** analysis finished; findings do not fail the command unless `--fail` is set.
-- **1:** findings were found with `--fail` and no fatal analysis failure occurred.
-- **2:** invalid input/configuration, unusable compilation, no analyzed C# project,
-  or analyzer failure. Default mode also uses 2 for workspace/compiler errors
-  and taint work-limit cutoffs.
-
-In no-build mode, coverage warnings alone can therefore yield exit 0 or 1 with
-partial coverage. Check SARIF coverage when CI requires complete inputs. Compiler
-errors and taint cutoffs alone set `executionSuccessful: true` in no-build mode,
-with `dotnetarium.coverage: partial` and warning notifications. This accepts
-incomplete analysis; it does not establish that the skipped paths are safe.
+Configured depth/work limits alone never produce exit 2 in either mode. Compiler
+errors in usable compilations do not fail execution. Warnings do not establish
+that unresolved code is safe; inspect them when the affected code matters.
 
 ## NuGet analyzer and IDE behavior
 
@@ -174,7 +185,7 @@ safe control and an unbound call that must not be guessed as a sink.
 
 A build host may stop before invoking analyzers. Dotnetarium cannot override
 that decision, and package diagnostics cannot claim CLI-wide input coverage.
-Use the global tool's `-nb` mode when custom build failures block analysis.
+Use the global tool's default no-build mode when custom build failures block analysis.
 This keeps one analyzer engine and exposes the loading-mode difference in the
 tool's console and SARIF rather than adding a package setting with no control
 over its host.

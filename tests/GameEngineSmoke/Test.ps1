@@ -39,7 +39,7 @@ public partial class Demo : Node {
     foreach ($mode in @('no-build', 'project')) {
         $sarif = Join-Path $directory "$mode.sarif"
         $flags = @()
-        if ($mode -eq 'no-build') { $flags = @('-nb') }
+        if ($mode -eq 'project') { $flags = @('-p') }
         & dotnet $ToolDll $project @flags --sarif $sarif > (Join-Path $directory "$mode.log") 2>&1
         if ($LASTEXITCODE -ne 0) { Get-Content (Join-Path $directory "$mode.log"); throw "Godot scan failed: $framework/$mode" }
         $run = (Get-Content -LiteralPath $sarif -Raw | ConvertFrom-Json).runs[0]
@@ -60,7 +60,7 @@ public partial class Demo : Node {
 $unity = Join-Path $scratch 'Assembly-CSharp.csproj'
 '<Project><PropertyGroup><TargetFrameworkVersion>v4.7.1</TargetFrameworkVersion></PropertyGroup></Project>' | Set-Content -LiteralPath $unity
 $unitySarif = Join-Path $scratch 'unity.sarif'
-& dotnet $ToolDll $unity -nb --sarif $unitySarif > (Join-Path $scratch 'unity.log') 2>&1
+& dotnet $ToolDll $unity --sarif $unitySarif > (Join-Path $scratch 'unity.log') 2>&1
 if ($LASTEXITCODE -ne 2) { throw 'Unsupported Unity loading was silently treated as success.' }
 "Game engine checks passed. Reports: $scratch" | Write-Output
 # The final native command deliberately returns 2. GitHub's PowerShell wrapper

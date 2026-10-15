@@ -44,7 +44,7 @@ namespace Dotnetarium.Analyzers.Taint
                             end.ReportDiagnostic(Diagnostic.Create(AnalysisDiagnostics.WorkLimit, Location.None,
                                 properties: ImmutableDictionary<string, string>.Empty.Add("dotnetarium.rule", "DNA0003")
                                     .Add("dotnetarium.stage", "file-persistence").Add("dotnetarium.reason", "proof-limit"),
-                                messageArgs: new object[] { "Experimental file persistence reached its bounded proof limits. Stored-file XSS coverage is partial; ordinary taint analysis continues." }));
+                                messageArgs: new object[] { "Experimental file persistence reached its bounded proof limits. Other stored-file paths may be unexamined; ordinary taint analysis continues." }));
                     });
                 var fast = settings.TaintConfiguration.AnalysisSettings.Profile == AnalysisProfile.Fast;
                 var cutoffs = new ConcurrentDictionary<ISymbol, Cutoff>(SymbolEqualityComparer.Default);
@@ -54,12 +54,12 @@ namespace Dotnetarium.Analyzers.Taint
                         if (cutoffs.IsEmpty) return;
                         end.ReportDiagnostic(Diagnostic.Create(AnalysisDiagnostics.WorkLimit, Location.None,
                             properties: ImmutableDictionary<string, string>.Empty
-                                .Add("dotnetarium.coverage", "partial")
+                                .Add("dotnetarium.analysisStatus", "limited")
                                 .Add("dotnetarium.rule", TaintedDataEnteringSinkDescriptor.Id)
                                 .Add("dotnetarium.stage", string.Join(",", cutoffs.Values.Select(value => value.Stage).Distinct().OrderBy(stage => stage, StringComparer.Ordinal)))
                                 .Add("dotnetarium.cutoffCount", cutoffs.Count.ToString(System.Globalization.CultureInfo.InvariantCulture))
                                 .Add("dotnetarium.depthCutoffCount", cutoffs.Values.Count(value => value.Reason == 1).ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                            messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: {cutoffs.Count} method analyses stopped at fast profile limits ({settings.MaxTaintAnalysisWork} work units; method depth {settings.MaxInterproceduralMethodCallChain}, lambda/local-function depth {settings.MaxInterproceduralLambdaOrLocalFunctionCallChain}). {cutoffs.Values.Count(value => value.Reason == 1)} reached call depth; {cutoffs.Values.Count(value => value.Reason == 0)} exhausted work. Coverage is partial; other methods continue. Use AnalysisProfile=full or explicit limits in dotnetarium.json for deeper analysis." }));
+                            messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: {cutoffs.Count} method analyses stopped at fast profile limits ({settings.MaxTaintAnalysisWork} work units; method depth {settings.MaxInterproceduralMethodCallChain}, lambda/local-function depth {settings.MaxInterproceduralLambdaOrLocalFunctionCallChain}). {cutoffs.Values.Count(value => value.Reason == 1)} reached call depth; {cutoffs.Values.Count(value => value.Reason == 0)} exhausted work. Other methods continue. Use AnalysisProfile=full or explicit limits in dotnetarium.json for deeper analysis." }));
                     });
                 foreach (var kind in SinkKinds)
                 {
@@ -69,7 +69,7 @@ namespace Dotnetarium.Analyzers.Taint
                             end.ReportDiagnostic(Diagnostic.Create(AnalysisDiagnostics.WorkLimit, Location.None,
                                 properties: ImmutableDictionary<string, string>.Empty.Add("dotnetarium.rule", TaintedDataEnteringSinkDescriptor.Id)
                                     .Add("dotnetarium.stage", "component-state").Add("dotnetarium.reason", "work-or-depth-limit"),
-                                messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: component prerequisites reached their limits. Proven inputs are retained, but component-state coverage is partial." }));
+                                messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: component prerequisites reached their limits. Proven inputs are retained; other component-state paths may be unexamined." }));
                     });
                     var sourceMap = settings.TaintConfiguration.GetSourceSymbolMap(kind);
                     var sinkMap = settings.TaintConfiguration.GetSinkSymbolMap(kind);
@@ -136,7 +136,7 @@ namespace Dotnetarium.Analyzers.Taint
                 block.ReportDiagnostic(Diagnostic.Create(AnalysisDiagnostics.WorkLimit,
                     block.OwningSymbol.Locations.FirstOrDefault(location => location.IsInSource) ?? graph.OriginalOperation.Syntax.GetLocation(),
                     properties: ImmutableDictionary<string, string>.Empty
-                        .Add("dotnetarium.coverage", "partial")
+                        .Add("dotnetarium.analysisStatus", "limited")
                         .Add("dotnetarium.rule", TaintedDataEnteringSinkDescriptor.Id)
                         .Add("dotnetarium.root", block.OwningSymbol.ToDisplayString())
                         .Add("dotnetarium.stage", exhausted.Stage)

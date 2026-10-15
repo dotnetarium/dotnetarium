@@ -29,7 +29,7 @@ foreach ($framework in @('net8.0','net10.0')) {
     if ($LASTEXITCODE -ne 0) { throw 'Test-scope fixture restore failed.' }
     foreach ($mode in @('project','no-build')) {
         $flags = @()
-        if ($mode -eq 'no-build') { $flags = @('-nb') }
+        if ($mode -eq 'project') { $flags = @('-p') }
         $sarif = Join-Path $directory "$mode.sarif"
         & dotnet $ToolDll $solution @flags --framework $framework --sarif $sarif > ($sarif + '.log') 2>&1
         if ($LASTEXITCODE -ne 0) { Get-Content ($sarif + '.log'); throw "Solution test exclusion failed: $mode" }
@@ -38,9 +38,9 @@ foreach ($framework in @('net8.0','net10.0')) {
         $properties = $run.invocations[0].properties
         # The explicit non-test SDK consumer remains selected. NB discloses its
         # unevaluated package build inputs rather than claiming complete coverage.
-        $expectedCoverage = if ($mode -eq 'no-build') { 'partial' } else { 'complete' }
+        $expectedCoverage = 'available'
         if (@($properties.'dotnetarium.analyzedProjects').Count -ne 1 -or @($properties.'dotnetarium.excludedTestProjects').Count -ne 3 -or
-            $properties.'dotnetarium.coverage' -ne $expectedCoverage) { throw 'Test exclusion or explicit non-test selection has inconsistent scope metadata.' }
+            $properties.'dotnetarium.inputStatus' -ne $expectedCoverage) { throw 'Test exclusion or explicit non-test selection has inconsistent scope metadata.' }
         if (@($run.invocations[0].toolExecutionNotifications | Where-Object { $_.descriptor.id -ne 'package-build-inputs' }).Count -ne 0) {
             throw 'Unexpected coverage gap in the test-selection fixture.'
         }

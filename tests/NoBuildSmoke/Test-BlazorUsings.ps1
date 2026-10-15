@@ -30,7 +30,7 @@ public static class Services {
         if ($case -eq 'explicit') {
             "using Microsoft.Extensions.DependencyInjection;`n$source" | Set-Content -LiteralPath $sourcePath
         } else { $source | Set-Content -LiteralPath $sourcePath }
-        $run = Scan $project @('-nb')
+        $run = Scan $project @()
         $expectError = $case -in @('disabled', 'removed', 'plain-sdk')
         if ((HasNotice $run 'compiler-error') -ne $expectError) {
             throw "Incorrect Blazor implicit using binding: $framework/$case. Reports: $scratch"

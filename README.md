@@ -33,7 +33,12 @@ Version 2.x does not support VB.NET, .NET Framework or Visual Studio 2022.
 | Credentials | Literal secrets used by C# APIs (`DNA0009`) and recognizable provider credentials in configuration files (`DNA0022`) |
 | CORS | Applied policies accepting every origin with credentials (`DNA0024`) |
 
-Input models include ASP.NET Core, Razor/Blazor, gRPC, SignalR, WebSockets, messaging, Azure Functions and selected game-engine RPCs. Library models include Dapper, Npgsql, SharpCompress, Markdig and selected cryptography APIs. Coverage depends on the modeled APIs and available references; see the [rule notes](docs/rules) and [framework guides](#guides).
+| Coverage | Models |
+| --- | --- |
+| Inputs | ASP.NET Core, Razor/Blazor, gRPC, SignalR, WebSockets, messaging, Azure Functions and selected game-engine RPCs |
+| Libraries | Dapper, Npgsql, SharpCompress, Markdig and selected cryptography APIs |
+
+Coverage depends on the modeled APIs and available references. See the [rule notes](docs/rules) and [framework guides](#guides) for supported patterns and limitations.
 
 ## Scan
 
@@ -41,15 +46,17 @@ The tool accepts `.csproj`, `.sln` and `.slnx` files:
 
 ```sh
 dotnetarium MyApp.csproj --configuration Release --framework net10.0
-dotnetarium MyApp.sln -nb --sarif exploratory.sarif
+dotnetarium MyApp.sln -p --sarif project.sarif
 ```
 
 | Mode | How it loads code |
 | --- | --- |
-| Project mode, default | SDK/MSBuild design-time evaluation and available generators; SDK selection respects `global.json` |
-| `-nb` / `--no-build`, experimental | Reconstructs SDK inputs without targets or restore; runs only the official SDK Razor generator in memory |
+| No-build, default | Reconstructs SDK inputs without targets or restore; runs the official SDK Razor generator in memory |
+| `-p` / `--project` | SDK/MSBuild design-time evaluation and available generators; no application assembly is emitted |
 
 Solution scans exclude test projects in both modes. Pass a test `.csproj` explicitly to scan it. No-build mode needs installed reference packs and existing validated package assets; unresolved code or missing generators reduce coverage. See [scan modes and requirements](docs/scan-modes.md).
+
+Existing CLI scripts should remove `-nb` / `--no-build`; those flags are no longer accepted. Add `-p` to retain project loading.
 
 | Common option | Purpose |
 | --- | --- |
@@ -62,15 +69,15 @@ Solution scans exclude test projects in both modes. Pass a test `.csproj` explic
 | `--verify-secrets` | Check supported configuration credentials with their providers; detection is otherwise offline |
 | `--help` | Show all options, including configuration-file include/exclude globs |
 
-Credential scanning starts at the nearest Git root, including root workflows when the solution is under `src/`. Outside Git it starts at the project/solution directory. The analyzer checks configuration supplied through `AdditionalFiles`. Secret values are omitted from output. See [credential detection, scope and verification](docs/rules/DNA0022.md).
+Credential scanning starts at the nearest Git root, including root workflows when the solution is under `src/`. Outside Git it starts at the project/solution directory. The analyzer checks configuration supplied through `AdditionalFiles`. Secret values are omitted from output. See [credential detection, scope and verification](docs/credential-scanning.md).
 
 | Exit code | Meaning |
 | --- | --- |
 | `0` | No fatal scan failure; findings are allowed without `--fail` |
 | `1` | Findings are present and `--fail` is set |
-| `2` | Invalid/unusable inputs or analyzer failure; project mode also fails on compiler/workspace errors and taint cutoffs |
+| `2` | Unusable inputs, invalid configuration or analyzer/generator failure |
 
-In no-build mode, compiler errors and taint cutoffs are nonfatal but mark coverage **partial**. Check SARIF's `dotnetarium.coverage` when CI requires complete inputs. A partial scan with zero findings does not establish safety.
+Configured depth/work limits are normal and informational. Missing references, compiler errors or unavailable Razor generation produce input warnings while useful analysis continues. SARIF records input quality (`available` / `degraded`) separately from analysis limits (`within-profile` / `limited`). Neither status guarantees that every vulnerability was found.
 
 ## Configure
 
@@ -92,7 +99,7 @@ Remote inputs are enabled by default. Add `local` to check console input, proces
 | `full` | CLI: both loading modes | 5 | 5,000 |
 | `max` | Explicit opt-in | 10 | 10,000 |
 
-Profiles change analysis effort, not rules. Cutoffs retain other findings and report partial coverage through `DNA9000`. See [configuration, numeric overrides and scope](docs/RuleConfiguration.md) and [performance comparisons](docs/performance-budget-matrix.md).
+Profiles change analysis effort, not rules. Cutoffs retain other findings and report configured limits through informational `DNA9000`. See [configuration, numeric overrides and scope](docs/RuleConfiguration.md) and [performance comparisons](docs/performance-budget-matrix.md).
 
 Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `dotnet_diagnostic.DNAxxxx.severity` to change a rule's severity. The CLI requires `--respect-editorconfig` to apply that policy.
 
@@ -103,7 +110,9 @@ Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `d
 | Web input and rendering | [Minimal APIs](docs/minimal-api-taint.md), [Razor/Blazor](docs/razor-blazor-taint.md), [stored HTML/Markdown](docs/stored-html.md) |
 | RPC and messaging | [gRPC](docs/grpc-taint.md), [SignalR](docs/signalr-taint.md), [message consumers](docs/messaging-taint.md), [Azure Functions](docs/azure-functions-taint.md) |
 | Game engines | [Godot and Unity coverage](docs/game-engines.md) |
+| TLS and credentials | [Certificate validation](docs/tls-certificates.md), [credential scanning](docs/credential-scanning.md) |
 | Coverage and performance | [Scan modes](docs/scan-modes.md), [engine limits](docs/scan-performance.md) |
+| SARIF and GitHub | [Severity, remediation guidance and paths](docs/sarif-reporting.md) |
 | Development | [Architecture](docs/Architecture.md), [releasing](docs/Releasing.md) |
 
 Run from source with a .NET 10 SDK:

@@ -53,9 +53,9 @@ foreach ($framework in @('net8.0','net10.0')) {
     '[Microsoft.AspNetCore.Mvc.ApiController] public class Entry : Microsoft.AspNetCore.Mvc.ControllerBase { public void Run(string input) => System.Diagnostics.Process.Start(input); }' | Set-Content (Join-Path $app 'Entry.cs')
     & dotnet restore $project --nologo -v quiet
     if ($LASTEXITCODE -ne 0) { throw 'Razor reference fixture restore failed.' }
-    $normal = Scan $project @() (Join-Path $app 'project.sarif')
+    $normal = Scan $project @('-p') (Join-Path $app 'project.sarif')
     Findings $normal 4
-    $nb = Scan $project @('-nb') (Join-Path $app 'no-build.sarif')
+    $nb = Scan $project @() (Join-Path $app 'no-build.sarif')
     Findings $nb 4
     if ((HasNotice $nb 'razor-generation') -or (HasNotice $nb 'compiler-error')) { throw 'Razor generation or generated project references are incomplete.' }
     $signature = { param($run) @($run.results | ForEach-Object { "$($_.ruleId):$($_.locations[0].physicalLocation.artifactLocation.uri):$($_.locations[0].physicalLocation.region.startLine)" } | Sort-Object) }
@@ -63,14 +63,14 @@ foreach ($framework in @('net8.0','net10.0')) {
     if (Get-ChildItem $directory -Recurse -Include App.dll,Library.dll) { throw 'Scanning emitted application/project-reference assemblies.' }
     # Source changes must trigger fresh generation without another build/restore.
     "@Input`n<Child Content=`"safe`" />`n@code { [SupplyParameterFromQuery] public string Input { get; set; } = `"`"; }" | Set-Content (Join-Path $app 'Query.razor')
-    Findings (Scan $project @('-nb') (Join-Path $app 'fresh.sarif')) 3
+    Findings (Scan $project @() (Join-Path $app 'fresh.sarif')) 3
     # Custom targets remain unexecuted, and a missing SDK must preserve C# findings.
     $marker = Join-Path $app 'target-ran.txt'
     (Get-Content -Raw $project).Replace('</Project>', "<Target Name=`"MustNotRun`" BeforeTargets=`"Build;CoreCompile;ResolveReferences`"><WriteLinesToFile File=`"$marker`" Lines=`"ran`" /><Error Text=`"DO NOT BUILD`" /></Target></Project>") | Set-Content $project
-    Findings (Scan $project @('-nb') (Join-Path $app 'custom.sarif')) 3
+    Findings (Scan $project @() (Join-Path $app 'custom.sarif')) 3
     if (Test-Path $marker) { throw 'No-build executed project targets.' }
     '{"sdk":{"version":"999.0.100","rollForward":"disable"}}' | Set-Content (Join-Path $directory 'global.json')
-    $failed = Scan $project @('-nb') (Join-Path $app 'failed.sarif')
+    $failed = Scan $project @() (Join-Path $app 'failed.sarif')
     if (-not (HasNotice $failed 'razor-generation') -or @($failed.results | Where-Object ruleId -eq 'DNA0002').Count -ne 1) { throw 'SDK generation failure hid independent C# findings or coverage notices.' }
     "PASS ${framework}: .razor/.cshtml/imports/code-behind/link/remove, generated dependency types, mapped flows, freshness, no emit/targets, SDK failure fallback" | Write-Output
 }

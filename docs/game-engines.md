@@ -36,14 +36,14 @@ in project mode. No-build mode reconstructs standard GodotSharp package requests
 reads matching restored assets from `.godot/mono/temp/obj`, and excludes `.godot`
 cache files from the default source inventory. Restore separately first.
 
-No-build mode reports partial coverage: Godot generators and SDK targets are not
+Default no-build loading discloses that Godot generators and SDK targets are not
 executed; platform-specific constants, custom SDK options, preview bindings and
 generated signal/property/method helpers can be missing. RPC annotations and
 ordinary C# method bodies exist in the original files, so they remain analyzable.
 This differs from Razor templates whose executable C# bodies must be generated.
 A missing `MethodName` helper is disclosed as a compiler error and does not make
 the independent RPC/crypto findings disappear. Inspect coverage notices and use
-project mode when generated helpers matter.
+`-p` project mode when generated helpers matter.
 
 Godot validation includes real GodotSharp 4.7.2 metadata and both CLI modes on
 .NET 8 and 10. The smoke test checks safe controls, source flows, missing helpers

@@ -1,0 +1,61 @@
+{
+  "Reviewed": "2026-10-14",
+  "SeverityByCwe": {
+    "89": { "Score": "8.8", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-sql-injection/" },
+    "78": { "Score": "9.8", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-command-line-injection/" },
+    "79": { "Score": "7.8", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-web-xss/" },
+    "22": { "Score": "7.5", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-path-injection/" },
+    "601": { "Score": "6.1", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-web-unvalidated-url-redirection/" },
+    "90": { "Score": "9.8", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-ldap-injection/" },
+    "643": { "Score": "9.8", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-xml-xpath-injection/" },
+    "502": { "Score": "9.8", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-unsafe-deserialization-untrusted-input/" },
+    "798": {
+      "Score": "9.8",
+      "Reference": "https://github.com/github/codeql/blob/dd4405c2c2a8cd5ee7d200e7230ab8dd52e13dc6/csharp/ql/src/Security%20Features/CWE-798/HardcodedCredentials.ql"
+    },
+    "614": { "Score": "5.0", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-web-cookie-secure-not-set/" },
+    "1004": { "Score": "5.0", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-web-cookie-httponly-not-set/" },
+    "1275": { "Score": "5.0", "Reference": "https://codeql.github.com/codeql-query-help/javascript/js-samesite-none-cookie/", "Note": "JavaScript analogue for the combined cookie rule's SameSite coverage." },
+    "918": { "Score": "9.1", "Reference": "https://codeql.github.com/codeql-query-help/python/py-full-ssrf/", "Note": "Python full-SSRF analogue; the C# experimental query has no security-severity metadata." },
+    "94": { "Score": "9.3", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-code-injection/" },
+    "327": { "Score": "7.5", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-weak-encryption/" },
+    "329": { "Score": "7.5", "Reference": "https://codeql.github.com/codeql-query-help/java/java-static-initialization-vector/", "Note": "Java encryption-IV analogue; also used as the CWE baseline for fixed AEAD nonces." },
+    "916": { "Score": "8.1", "Reference": "https://codeql.github.com/codeql-query-help/javascript/js-insufficient-password-hash/", "Note": "JavaScript password-work-factor analogue." },
+    "321": {
+      "Score": "7.5",
+      "Reference": "https://github.com/github/codeql/blob/dd4405c2c2a8cd5ee7d200e7230ab8dd52e13dc6/csharp/ql/src/Security%20Features/CWE-321/HardcodedSymmetricEncryptionKey.ql",
+      "Note": "Hard-coded key analogue; not a CodeQL PQC-specific assessment."
+    },
+    "209": { "Score": "5.4", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-information-exposure-through-exception/", "Note": "Exception-disclosure analogue for detailed gRPC errors." },
+    "319": { "Score": "8.8", "Reference": "https://codeql.github.com/codeql-query-help/java/java-insecure-basic-auth/", "Note": "Java credential-transmission analogue for gRPC call credentials over plaintext." },
+    "295": { "Score": "7.5", "Reference": "https://codeql.github.com/codeql-query-help/javascript/js-disabling-certificate-validation/", "Note": "JavaScript accept-all certificate-validation analogue." },
+    "611": { "Score": "9.1", "Reference": "https://codeql.github.com/codeql-query-help/csharp/cs-xml-insecure-dtd-handling/" },
+    "942": { "Score": "7.5", "Reference": "https://codeql.github.com/codeql-query-help/javascript/js-cors-misconfiguration-for-credentials/", "Note": "JavaScript credentialed-CORS analogue." }
+  },
+  "PrecisionByRule": {
+    "DNA0001": "high",
+    "DNA0002": "high",
+    "DNA0003": "high",
+    "DNA0004": "high",
+    "DNA0005": "medium",
+    "DNA0006": "high",
+    "DNA0007": "high",
+    "DNA0008": "medium",
+    "DNA0009": "medium",
+    "DNA0010": "high",
+    "DNA0011": "high",
+    "DNA0012": "high",
+    "DNA0013": "medium",
+    "DNA0014": "medium",
+    "DNA0015": "high",
+    "DNA0016": "medium",
+    "DNA0017": "high",
+    "DNA0018": "high",
+    "DNA0019": "high",
+    "DNA0020": "high",
+    "DNA0021": "high",
+    "DNA0022": "high",
+    "DNA0023": "high",
+    "DNA0024": "high"
+  }
+}

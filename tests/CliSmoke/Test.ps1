@@ -433,14 +433,14 @@ if ($LASTEXITCODE -ne 0) { throw 'Application fixture restore failed.' }
 Add-Content -LiteralPath (Join-Path $projectPath 'Unsafe Input.cs') -Value 'class Broken { MissingType value; }'
 $incompleteSarif = Join-Path $scratch 'incomplete.sarif'
 $invalidProjectOutput = & $tool $project --sarif $incompleteSarif 2>&1
-if ($LASTEXITCODE -ne 2 -or -not ($invalidProjectOutput -match 'CS0246') -or
-    -not ($invalidProjectOutput -match 'Scan incomplete') -or
+if ($LASTEXITCODE -ne 0 -or -not ($invalidProjectOutput -match 'CS0246') -or
+    -not ($invalidProjectOutput -match 'Scan completed') -or
     -not (Test-Path -LiteralPath $incompleteSarif)) {
     throw 'CLI did not explain incomplete scanning of a project with compiler errors.'
 }
 $incompleteReport = Get-Content -LiteralPath $incompleteSarif -Raw | ConvertFrom-Json
-if ($incompleteReport.runs[0].invocations[0].executionSuccessful -ne $false -or
-    $incompleteReport.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'partial' -or
+if ($incompleteReport.runs[0].invocations[0].executionSuccessful -ne $true -or
+    $incompleteReport.runs[0].invocations[0].properties.'dotnetarium.inputStatus' -ne 'degraded' -or
     -not @($incompleteReport.runs[0].invocations[0].toolExecutionNotifications |
         Where-Object { $_.descriptor.id -eq 'compiler-error' }).Count -or
     -not @($incompleteReport.runs[0].results).Count) {
@@ -476,7 +476,7 @@ foreach ($failFlag in @($false, $true)) {
     $scanArguments = @($budgetProject, '--sarif', $budgetSarif)
     if ($failFlag) { $scanArguments += '--fail' }
     $budgetOutput = & $tool @scanArguments 2>&1
-    if ($LASTEXITCODE -ne 2) { throw 'A budget cutoff must return incomplete exit code 2, including with --fail.' }
+    if ($LASTEXITCODE -ne $(if ($failFlag) { 1 } else { 0 })) { throw 'Configured limits must not fail execution.' }
     $budgetReport = Get-Content -LiteralPath $budgetSarif -Raw | ConvertFrom-Json
     $budgetFindings = @($budgetReport.runs[0].results)
     $budgetNotices = @($budgetReport.runs[0].invocations[0].toolExecutionNotifications |
@@ -486,8 +486,8 @@ foreach ($failFlag in @($false, $true)) {
         @($budgetFindings | Where-Object ruleId -eq 'DNA0014').Count -ne 1 -or
         -not ($budgetNotices.message.text -match 'Demo.Expensive') -or
         -not (@($budgetFindings | Where-Object ruleId -eq 'DNA0002')[0].message.text -match 'Ordinary') -or
-        $budgetReport.runs[0].invocations[0].executionSuccessful -ne $false -or
-        $budgetReport.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'partial' -or
+        $budgetReport.runs[0].invocations[0].executionSuccessful -ne $true -or
+        $budgetReport.runs[0].invocations[0].properties.'dotnetarium.inputStatus' -ne 'available' -or
         @($budgetReport.runs[0].tool.driver.rules | Where-Object id -eq 'DNA9000').Count) {
         throw 'Budget handling lost independent findings or exposed a coverage notice as a security rule.'
     }
@@ -553,7 +553,7 @@ $migrationReport = Get-Content -LiteralPath $migrationSarif -Raw | ConvertFrom-J
 if (@($migrationReport.runs[0].results).Count -ne 3 -or
     @($migrationReport.runs[0].results | Where-Object ruleId -eq 'DNA0002').Count -ne 1 -or
     @($migrationReport.runs[0].results | Where-Object ruleId -eq 'DNA0009').Count -ne 2 -or
-    $migrationReport.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'complete') {
+    $migrationReport.runs[0].invocations[0].properties.'dotnetarium.inputStatus' -ne 'available') {
     throw 'CLI migration fixture must retain two literal secrets and one ordinary command finding.'
 }
 
@@ -601,7 +601,7 @@ foreach ($scope in @(
     if ($LASTEXITCODE -ne 1) { throw "CLI scope scan failed: $($scope.Name)" }
     $scopeReport = Get-Content -LiteralPath $scopeSarif -Raw | ConvertFrom-Json
     if (@($scopeReport.runs[0].results | Where-Object ruleId -eq 'DNA0002').Count -ne $scope.Count -or
-        $scopeReport.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'complete') {
+        $scopeReport.runs[0].invocations[0].properties.'dotnetarium.inputStatus' -ne 'available') {
         throw "CLI and analyzer source selections disagree: $($scope.Name)"
     }
 }

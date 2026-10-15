@@ -1,8 +1,12 @@
 name: GitHub Action integration
 
 on:
-  push:
-    branches: [feature/github-action]
+  workflow_dispatch:
+    inputs:
+      upload-fixture-sarif:
+        description: Upload deliberately vulnerable fixture findings to code scanning.
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'action/**'
@@ -117,3 +121,4 @@ jobs:
       framework: net10.0
       configuration: Release
       category: dotnetarium-action-integration
+      upload-sarif: ${{ github.event_name == 'workflow_dispatch' && inputs.upload-fixture-sarif }}

@@ -6,15 +6,14 @@ GitHub's official code scanning Action. A reusable workflow adds checkout and a
 runner. Both use the same scanning scripts; a future GitHub App can install a
 caller workflow without introducing another scanning implementation.
 
-**Availability:** this integration requires CLI 2.7.0 or newer. Publish 2.7.0
-before enabling these workflows. The Action and reusable workflow must also be
-merged before selecting their published commit SHA.
+The Action uses published CLI 2.7.0 by default. The examples pin tested commits;
+update these pins deliberately when adopting a newer integration.
 
 ## Standalone scan
 
-Add `.github/workflows/dotnetarium.yml`. Replace `WORKFLOW_COMMIT_SHA` with the
-full commit SHA containing the released reusable workflow, and change the target.
-The placeholder below is intentionally not a runnable action reference.
+Add `.github/workflows/dotnetarium.yml` and change `target` to your solution or
+project. Checkout, SDK setup, restore, scanning and upload are handled inside
+the reusable workflow.
 
 ```yaml
 name: Dotnetarium
@@ -31,7 +30,7 @@ permissions:
 
 jobs:
   security:
-    uses: dotnetarium/dotnetarium/.github/workflows/scan.yml@WORKFLOW_COMMIT_SHA
+    uses: dotnetarium/dotnetarium/.github/workflows/scan.yml@d2e046c7aa2cd864fa6acb7f7b108e765b82b38d
     with:
       target: src/MyApp.slnx
 ```
@@ -125,6 +124,18 @@ its pinned revision later. Normal push/PR events then execute on repository
 runners. A rescan button can dispatch a workflow configured with
 `workflow_dispatch`. This keeps execution, permissions and billing in the
 repository without requiring Dotnetarium to host a separate scanning service.
+
+## Integration tests
+
+The GitHub Action integration workflow tests .NET 8/10 on Windows/Linux,
+including both loaders, prepared dependencies, outputs, data flows and execution
+failure handling. Its fixture deliberately contains XSS and ECB findings.
+Normal PR runs retain SARIF as artifacts without publishing fixture alerts.
+
+To test ingestion, run that workflow manually with `upload-fixture-sarif`
+enabled. This creates real test alerts and GitHub's native security check may
+fail because of those deliberate findings, even when the Action job succeeds.
+No check or repository protection is bypassed.
 
 References: [reusable workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows),
 [SARIF upload](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/integrate-with-existing-tools/upload-sarif-file),

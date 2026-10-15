@@ -69,7 +69,7 @@ Existing CLI scripts should remove `-nb` / `--no-build`; those flags are no long
 | `--verify-secrets` | Check supported configuration credentials with their providers; detection is otherwise offline |
 | `--help` | Show all options, including configuration-file include/exclude globs |
 
-Credential scanning starts at the nearest Git root, including root workflows when the solution is under `src/`. Outside Git it starts at the project/solution directory. The analyzer checks configuration supplied through `AdditionalFiles`. Secret values are omitted from output. See [credential detection, scope and verification](docs/rules/DNA0022.md).
+Credential scanning starts at the nearest Git root, including root workflows when the solution is under `src/`. Outside Git it starts at the project/solution directory. The analyzer checks configuration supplied through `AdditionalFiles`. Secret values are omitted from output. See [credential detection, scope and verification](docs/credential-scanning.md).
 
 | Exit code | Meaning |
 | --- | --- |
@@ -110,6 +110,7 @@ Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `d
 | Web input and rendering | [Minimal APIs](docs/minimal-api-taint.md), [Razor/Blazor](docs/razor-blazor-taint.md), [stored HTML/Markdown](docs/stored-html.md) |
 | RPC and messaging | [gRPC](docs/grpc-taint.md), [SignalR](docs/signalr-taint.md), [message consumers](docs/messaging-taint.md), [Azure Functions](docs/azure-functions-taint.md) |
 | Game engines | [Godot and Unity coverage](docs/game-engines.md) |
+| TLS and credentials | [Certificate validation](docs/tls-certificates.md), [credential scanning](docs/credential-scanning.md) |
 | Coverage and performance | [Scan modes](docs/scan-modes.md), [engine limits](docs/scan-performance.md) |
 | SARIF and GitHub | [Severity, remediation guidance and paths](docs/sarif-reporting.md) |
 | GitHub Actions | [Standalone scans and integration with existing CI](docs/github-action.md) |

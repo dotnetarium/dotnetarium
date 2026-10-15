@@ -453,7 +453,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         var condition = (string?)element.Attribute("Condition");
         if (string.IsNullOrWhiteSpace(condition)) return true;
         var expression = Expand(condition, properties).Trim();
-        if (StaticCondition.TryEvaluate(expression, out var result)) return result;
+        if (StaticCondition.TryExpandFunctions(expression, properties, out var expanded) &&
+            StaticCondition.TryEvaluate(expanded, out var result)) return result;
         Warn(project, "condition", $"Unsupported condition; skipped {element.Name.LocalName}: {condition}");
         return false;
     }

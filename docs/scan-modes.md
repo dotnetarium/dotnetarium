@@ -74,7 +74,10 @@ packs are discovered under the .NET installation, `DOTNET_ROOT`, installations
 on `PATH`, and the NuGet cache (`NUGET_PACKAGES` when set).
 
 The loader reads common properties, static string equality/inequality conditions
-combined with `And`, `Or`, `!` and parentheses, nearest
+combined with `And`, `Or`, `!` and parentheses, and literal
+`$(Property.Contains('text'))` checks using case-sensitive ordinal string matching.
+These checks are parsed as data; arbitrary methods, overloads, nested property
+functions and escaped arguments remain unsupported. The loader reads nearest
 `Directory.Build.props` and `Directory.Packages.props`, compile includes/removes,
 project references, explicit assembly references, implicit usings, JSON rules
 and editor configuration. By default it uses Debug and scans supported target

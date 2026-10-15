@@ -1,10 +1,47 @@
 namespace Dotnetarium.Tool;
 
-// A bounded, data-only subset of MSBuild conditions. Never evaluates functions,
-// imports, tasks or targets. Unknown syntax invalidates the whole expression,
+// A bounded, data-only subset of MSBuild conditions. Never invokes MSBuild,
+// arbitrary property functions, imports, tasks or targets. Unknown syntax invalidates the whole expression,
 // including branches whose Boolean value would otherwise short-circuit.
 internal static class StaticCondition
 {
+    // Recognize this conventional TFM check as data, not via reflection or an
+    // MSBuild evaluator. Other methods, overloads and nested expressions remain unknown.
+    internal static bool TryExpandFunctions(string expression, IReadOnlyDictionary<string, string> properties, out string expanded)
+    {
+        expanded = expression;
+        if (expression.Length > 65536) return false;
+        var output = new System.Text.StringBuilder();
+        var position = 0;
+        while (expression.IndexOf("$(", position, StringComparison.Ordinal) is var start && start >= 0)
+        {
+            output.Append(expression, position, start - position);
+            var cursor = start + 2;
+            var nameStart = cursor;
+            while (cursor < expression.Length && (char.IsLetterOrDigit(expression[cursor]) || expression[cursor] == '_')) cursor++;
+            var name = expression[nameStart..cursor];
+            const string method = ".Contains(";
+            if (name.Length == 0 || !expression.AsSpan(cursor).StartsWith(method, StringComparison.Ordinal) ||
+                !properties.TryGetValue(name, out var value) || value.Contains("$(", StringComparison.Ordinal) || value.Contains('%')) return false;
+            cursor += method.Length;
+            while (cursor < expression.Length && char.IsWhiteSpace(expression[cursor])) cursor++;
+            if (cursor == expression.Length || expression[cursor] is not ('\'' or '"')) return false;
+            var quote = expression[cursor++];
+            var end = expression.IndexOf(quote, cursor);
+            if (end < 0) return false;
+            var argument = expression[cursor..end];
+            if (argument.Contains("$(", StringComparison.Ordinal) || argument.Contains('%')) return false;
+            cursor = end + 1;
+            while (cursor < expression.Length && char.IsWhiteSpace(expression[cursor])) cursor++;
+            if (!expression.AsSpan(cursor).StartsWith("))", StringComparison.Ordinal)) return false;
+            output.Append(value.Contains(argument, StringComparison.Ordinal) ? "true" : "false");
+            position = cursor + 2;
+        }
+        output.Append(expression, position, expression.Length - position);
+        expanded = output.ToString();
+        return true;
+    }
+
     internal static bool TryEvaluate(string expression, out bool value)
     {
         value = false;

@@ -1,4 +1,4 @@
-param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly, [switch]$ReferencesOnly, [switch]$BlazorOnly)
+param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly, [switch]$ReferencesOnly, [switch]$BlazorOnly, [switch]$ConditionsOnly)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
@@ -12,7 +12,9 @@ if ($ToolPackage) {
     $package = [System.IO.Path]::GetFullPath($ToolPackage)
     $packageVersion = [System.IO.Path]::GetFileNameWithoutExtension($package).Substring('dotnetarium.'.Length)
     $feed = [System.Security.SecurityElement]::Escape((Split-Path -Parent $package))
-    $installConfig = Join-Path $scratch 'nuget.config'
+    # Only tool installation should use the local-only feed. A conventional
+    # nuget.config here would also override every generated fixture's restore.
+    $installConfig = Join-Path $scratch 'tool-install.config'
     "<configuration><packageSources><clear/><add key=`"local`" value=`"$feed`"/></packageSources></configuration>" | Set-Content -LiteralPath $installConfig
     # Release versions are reused by local builds. An isolated package cache
     # prevents a previously published package with the same version winning.
@@ -50,6 +52,13 @@ function AssertMode($Run, [string]$Mode, [string]$InputStatus) {
 }
 function HasNotice($Run, [string]$Id) {
     return @($Run.invocations[0].toolExecutionNotifications | Where-Object { $_.descriptor.id -eq $Id }).Count -gt 0
+}
+. (Join-Path $PSScriptRoot 'Test-Conditions.ps1')
+. (Join-Path $PSScriptRoot 'Test-LoaderEdges.ps1')
+. (Join-Path $PSScriptRoot 'Test-PropertyFunctions.ps1')
+if ($ConditionsOnly) {
+    "No-build condition checks passed. Reports: $scratch"
+    exit 0
 }
 if ($BlazorOnly) {
     . (Join-Path $PSScriptRoot 'Test-BlazorUsings.ps1')

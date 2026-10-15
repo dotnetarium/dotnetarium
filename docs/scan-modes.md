@@ -73,7 +73,11 @@ remain reconstructed; host runtime assemblies are not substituted for missing pa
 packs are discovered under the .NET installation, `DOTNET_ROOT`, installations
 on `PATH`, and the NuGet cache (`NUGET_PACKAGES` when set).
 
-The loader reads common properties, straightforward conditions, nearest
+The loader reads common properties, static string equality/inequality conditions
+combined with `And`, `Or`, `!` and parentheses, and literal
+`$(Property.Contains('text'))` checks using case-sensitive ordinal string matching.
+These checks are parsed as data; arbitrary methods, overloads, nested property
+functions and escaped arguments remain unsupported. The loader reads nearest
 `Directory.Build.props` and `Directory.Packages.props`, compile includes/removes,
 project references, explicit assembly references, implicit usings, JSON rules
 and editor configuration. By default it uses Debug and scans supported target
@@ -92,7 +96,10 @@ references produce coverage notices.
 
 Custom imports, `Directory.Build.targets`, package build inputs and unsupported
 conditions can change source selection or compiler options. No-build mode warns
-about these inputs. Missing, changed or unverified restore metadata is reported;
+about these inputs, including unevaluated `Choose`/`When`/`Otherwise` branches.
+Shared props items resolve `MSBuildThisFileDirectory` against their defining file;
+test SDK markers are recognized only in active item groups.
+Missing, changed or unverified restore metadata is reported;
 the loader omits package bindings it cannot validate instead of guessing.
 Restore separately, when appropriate for the project, to recover package API
 bindings. This is a separate user action, not part of a no-build scan.

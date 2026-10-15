@@ -1,6 +1,6 @@
 # Secret verification reference
 
-This reference describes the verification contract and provider checks. For everyday usage, see [checking credentials](rules/DNA0022.md#verification-and-reduction).
+This reference describes the verification contract and provider checks. For everyday usage, see [checking credentials](credential-scanning.md#verification-and-reduction).
 
 ## Verification contract
 

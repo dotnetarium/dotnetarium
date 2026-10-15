@@ -58,7 +58,7 @@ dotnetarium src/MyApp.sln --config-include '**/*.json' --config-include '.github
 Quote globs to prevent shell expansion. They are relative to each printed config
 scan root; includes are combined and exclusions take precedence. They also apply
 to explicit configuration `AdditionalFiles`, without changing C# project selection
-or loading of `dotnetarium.json`. See [credential scope](rules/DNA0022.md).
+or loading of `dotnetarium.json`. See [credential scope](credential-scanning.md).
 
 ## Requirements and limits
 

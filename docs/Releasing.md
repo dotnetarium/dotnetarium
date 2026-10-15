@@ -41,3 +41,18 @@ Framework 4.8 projects. New features go to 2.x, whose source of truth is
    credential, publishes both packages, and adds
    the `.nupkg` files to the GitHub release. Verify both package pages and a
    fresh `dotnet tool install --global dotnetarium` after indexing.
+
+## GitHub Action distribution
+
+The Action implementation, reusable workflow, tests and release instructions
+live in [dotnetarium/dotnetarium-action](https://github.com/dotnetarium/dotnetarium-action).
+Use `dotnetarium/dotnetarium-action@<commit>` for the Action or its
+`.github/workflows/scan.yml` for a complete job. This repository consumes a pinned
+workflow revision in `.github/workflows/security-scan.yml`.
+
+Action releases are independent of CLI/NuGet releases. Publishing the Action
+does not publish scanner packages. Keep the default CLI version pinned to a
+tested release. Marketplace publication requires the organization owner to
+accept its Developer Agreement and select **Publish this Action to the GitHub
+Marketplace** when publishing an Action release. See the Action README for
+details and GitHub's [publishing requirements](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/publish-in-github-marketplace).

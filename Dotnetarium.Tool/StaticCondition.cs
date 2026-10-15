@@ -1,0 +1,113 @@
+namespace Dotnetarium.Tool;
+
+// A bounded, data-only subset of MSBuild conditions. Never evaluates functions,
+// imports, tasks or targets. Unknown syntax invalidates the whole expression,
+// including branches whose Boolean value would otherwise short-circuit.
+internal static class StaticCondition
+{
+    internal static bool TryEvaluate(string expression, out bool value)
+    {
+        value = false;
+        if (expression.Length > 65536 || expression.Contains("$(", StringComparison.Ordinal)) return false;
+        var parser = new Parser(expression);
+        if (!parser.TryOr(out var result) || !parser.AtEnd) return false;
+        value = result;
+        return true;
+    }
+
+    private sealed class Parser(string text)
+    {
+        private int position;
+        private int depth;
+        internal bool AtEnd { get { WhiteSpace(); return position == text.Length; } }
+
+        internal bool TryOr(out bool value)
+        {
+            if (!TryAnd(out value)) return false;
+            while (TakeWord("or"))
+            {
+                if (!TryAnd(out var right)) return false;
+                value |= right;
+            }
+            return true;
+        }
+
+        private bool TryAnd(out bool value)
+        {
+            if (!TryUnary(out value)) return false;
+            while (TakeWord("and"))
+            {
+                if (!TryUnary(out var right)) return false;
+                value &= right;
+            }
+            return true;
+        }
+
+        private bool TryUnary(out bool value)
+        {
+            value = false;
+            if (++depth > 64) return false;
+            try
+            {
+                if (Take("!"))
+                {
+                    if (!TryUnary(out var inner)) return false;
+                    value = !inner;
+                    return true;
+                }
+                if (Take("(")) return TryOr(out value) && Take(")");
+                if (!Operand(out var left)) return false;
+                var equal = Take("==");
+                if (equal || Take("!="))
+                {
+                    if (!Operand(out var right)) return false;
+                    value = left.Equals(right, StringComparison.OrdinalIgnoreCase) == equal;
+                    return true;
+                }
+                return bool.TryParse(left, out value);
+            }
+            finally { depth--; }
+        }
+
+        private bool Operand(out string value)
+        {
+            WhiteSpace(); value = "";
+            if (position == text.Length) return false;
+            if (text[position] is '\'' or '"')
+            {
+                var quote = text[position++];
+                var end = text.IndexOf(quote, position);
+                if (end < 0) return false;
+                value = text[position..end]; position = end + 1;
+                return true;
+            }
+            var start = position;
+            while (position < text.Length && char.IsLetter(text[position])) position++;
+            value = text[start..position];
+            return bool.TryParse(value, out _);
+        }
+
+        private bool Take(string token)
+        {
+            WhiteSpace();
+            if (!text.AsSpan(position).StartsWith(token, StringComparison.Ordinal)) return false;
+            position += token.Length;
+            return true;
+        }
+
+        private bool TakeWord(string token)
+        {
+            WhiteSpace();
+            if (!text.AsSpan(position).StartsWith(token, StringComparison.OrdinalIgnoreCase)) return false;
+            var end = position + token.Length;
+            if (end < text.Length && (char.IsLetterOrDigit(text[end]) || text[end] == '_')) return false;
+            position = end;
+            return true;
+        }
+
+        private void WhiteSpace()
+        {
+            while (position < text.Length && char.IsWhiteSpace(text[position])) position++;
+        }
+    }
+}

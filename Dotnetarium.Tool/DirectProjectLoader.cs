@@ -424,13 +424,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         var condition = (string?)element.Attribute("Condition");
         if (string.IsNullOrWhiteSpace(condition)) return true;
         var expression = Expand(condition, properties).Trim();
-        var match = Regex.Match(expression, "^'([^']*)'\\s*(==|!=)\\s*'([^']*)'$");
-        if (match.Success && !expression.Contains("$(", StringComparison.Ordinal))
-        {
-            var equal = match.Groups[1].Value.Equals(match.Groups[3].Value, StringComparison.OrdinalIgnoreCase);
-            return match.Groups[2].Value == "==" ? equal : !equal;
-        }
-        if (bool.TryParse(expression, out var result)) return result;
+        if (StaticCondition.TryEvaluate(expression, out var result)) return result;
         Warn(project, "condition", $"Unsupported condition; skipped {element.Name.LocalName}: {condition}");
         return false;
     }

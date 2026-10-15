@@ -73,7 +73,8 @@ remain reconstructed; host runtime assemblies are not substituted for missing pa
 packs are discovered under the .NET installation, `DOTNET_ROOT`, installations
 on `PATH`, and the NuGet cache (`NUGET_PACKAGES` when set).
 
-The loader reads common properties, straightforward conditions, nearest
+The loader reads common properties, static string equality/inequality conditions
+combined with `And`, `Or`, `!` and parentheses, nearest
 `Directory.Build.props` and `Directory.Packages.props`, compile includes/removes,
 project references, explicit assembly references, implicit usings, JSON rules
 and editor configuration. By default it uses Debug and scans supported target

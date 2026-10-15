@@ -53,6 +53,7 @@
     <EmbeddedResource Include="../Dotnetarium.Tool/SarifMetadata.json" LogicalName="Dotnetarium.SarifMetadata.json" />
     <EmbeddedResource Include="../docs/rules/DNA*.md" LogicalName="Dotnetarium.RuleHelp.%(Filename)%(Extension)" />
     <Compile Include="../Dotnetarium.Tool/SourceLocationSpan.cs" Link="Tool/SourceLocationSpan.cs" />
+    <Compile Include="../Dotnetarium.Tool/StaticCondition.cs" Link="Tool/StaticCondition.cs" />
   </ItemGroup>
 
 </Project>

@@ -33,7 +33,12 @@ Version 2.x does not support VB.NET, .NET Framework or Visual Studio 2022.
 | Credentials | Literal secrets used by C# APIs (`DNA0009`) and recognizable provider credentials in configuration files (`DNA0022`) |
 | CORS | Applied policies accepting every origin with credentials (`DNA0024`) |
 
-Input models include ASP.NET Core, Razor/Blazor, gRPC, SignalR, WebSockets, messaging, Azure Functions and selected game-engine RPCs. Library models include Dapper, Npgsql, SharpCompress, Markdig and selected cryptography APIs. Coverage depends on the modeled APIs and available references; see the [rule notes](docs/rules) and [framework guides](#guides).
+| Coverage | Models |
+| --- | --- |
+| Inputs | ASP.NET Core, Razor/Blazor, gRPC, SignalR, WebSockets, messaging, Azure Functions and selected game-engine RPCs |
+| Libraries | Dapper, Npgsql, SharpCompress, Markdig and selected cryptography APIs |
+
+Coverage depends on the modeled APIs and available references. See the [rule notes](docs/rules) and [framework guides](#guides) for supported patterns and limitations.
 
 ## Scan
 

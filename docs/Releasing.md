@@ -44,31 +44,15 @@ Framework 4.8 projects. New features go to 2.x, whose source of truth is
 
 ## GitHub Action distribution
 
-The Action is developed in `action/`, with its own [README](../action/README.md),
-and can be used directly as `dotnetarium/dotnetarium/action@<commit>`.
-The reusable workflow remains in `.github/workflows/scan.yml`.
+The Action implementation, reusable workflow, tests and release instructions
+live in [dotnetarium/dotnetarium-action](https://github.com/dotnetarium/dotnetarium-action).
+Use `dotnetarium/dotnetarium-action@<commit>` for the Action or its
+`.github/workflows/scan.yml` for a complete job. This repository consumes a pinned
+workflow revision in `.github/workflows/security-scan.yml`.
 
-For Marketplace distribution, use a small public repository such as
-`dotnetarium/scan-action`. Its root `action.yml` should delegate to an immutable,
-tested monorepo commit and forward the public inputs and outputs. Keep the
-implementation and tests in this monorepo; the distribution repository needs
-the entry point, user README and license, not a second scanner implementation.
-This repository has not been created or listed yet.
-
-Before publishing:
-
-1. Test the public entry point from another repository, including SARIF upload.
-2. Use a unique Marketplace name such as **Dotnetarium C# Security Scan**, an
-   informative description and Security as the primary category. Add repository
-   topics such as `github-action`, `csharp`, `dotnet`, `sast` and `sarif` for
-   repository discovery; topics alone do not create a Marketplace listing.
-3. The organization owner must accept the GitHub Marketplace Developer
-   Agreement and have two-factor authentication enabled.
-4. Publish an Action release and select **Publish this Action to the GitHub
-   Marketplace**. Version the entry point independently from the CLI, and keep
-   its default CLI version pinned to a tested release.
-
-GitHub requires a public repository with root-level action metadata; subfolder
-actions are not automatically listed. Reusable workflows cannot be listed as
-Marketplace actions. See [publishing requirements](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/publish-in-github-marketplace)
-and [workflow/action differences](https://docs.github.com/en/actions/concepts/workflows-and-actions/reusing-workflow-configurations).
+Action releases are independent of CLI/NuGet releases. Publishing the Action
+does not publish scanner packages. Keep the default CLI version pinned to a
+tested release. Marketplace publication requires the organization owner to
+accept its Developer Agreement and select **Publish this Action to the GitHub
+Marketplace** when publishing an Action release. See the Action README for
+details and GitHub's [publishing requirements](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/publish-in-github-marketplace).

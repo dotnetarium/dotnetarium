@@ -40,9 +40,6 @@ jobs:
         run: |
           dotnet pack Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj -c Release -p:RunAnalyzers=false -o artifacts
           dotnet pack Dotnetarium.Tool/Dotnetarium.Tool.csproj -c Release -p:RunAnalyzers=false -o artifacts
-      - name: Check GitHub Action scripts with packed CLI
-        shell: pwsh
-        run: ./tests/ActionSmoke/Test.ps1
       - name: Scan through installed global tool
         shell: pwsh
         run: ./tests/CliSmoke/Test.ps1
@@ -83,9 +80,6 @@ jobs:
         run: |
           dotnet pack Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj -c Release -p:RunAnalyzers=false -o artifacts
           dotnet pack Dotnetarium.Tool/Dotnetarium.Tool.csproj -c Release -p:RunAnalyzers=false -o artifacts
-      - name: Check GitHub Action scripts with packed CLI
-        shell: pwsh
-        run: ./tests/ActionSmoke/Test.ps1
       - name: Scan with lowercase project config
         shell: pwsh
         run: ./tests/CliSmoke/Test.ps1

@@ -1,0 +1,22 @@
+name: Dotnetarium security scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  scan:
+    uses: dotnetarium/dotnetarium-action/.github/workflows/scan.yml@396cf8081431186aea3d018aed3366483243f48a
+    with:
+      target: Dotnetarium.Tool/Dotnetarium.Tool.csproj
+      configuration: Release
+      framework: net10.0
+      category: dotnetarium-self-scan

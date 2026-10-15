@@ -1,4 +1,4 @@
-param([string]$ToolDll, [switch]$ExperimentalDirect)
+param([string]$ToolDll, [switch]$ProjectMode)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
@@ -43,13 +43,13 @@ foreach ($scope in @(
     }
     $sarif = Join-Path $scratch "$($scope.Name).sarif"
     $arguments = @($ToolDll, $project, '--sarif', $sarif, '--fail')
-    if ($ExperimentalDirect) { $arguments += '--experimental-direct' }
+    if ($ProjectMode) { $arguments += '-p' }
     & dotnet @arguments | Out-Null
     if ($LASTEXITCODE -ne 1) { throw "Scope scan exit mismatch: $($scope.Name)" }
     $report = Get-Content -LiteralPath $sarif -Raw | ConvertFrom-Json
     if (@($report.runs[0].results).Count -ne $scope.Count -or
         @($report.runs[0].results | Where-Object ruleId -ne 'DNA0002').Count -ne 0 -or
-        $report.runs[0].invocations[0].properties.'dotnetarium.coverage' -ne 'complete') {
+        $report.runs[0].invocations[0].properties.'dotnetarium.inputStatus' -ne 'available') {
         throw "Scope findings/coverage mismatch: $($scope.Name)"
     }
     foreach ($result in $report.runs[0].results) {
@@ -59,9 +59,9 @@ foreach ($scope in @(
 }
 '{"Version":"2.0","ThreatModels":["remtoe"]}' | Set-Content -LiteralPath $config -Encoding utf8
 $arguments = @($ToolDll, $project, '--config', $config)
-if ($ExperimentalDirect) { $arguments += '--experimental-direct' }
+if ($ProjectMode) { $arguments += '-p' }
 $invalid = & dotnet @arguments 2>&1
 if ($LASTEXITCODE -ne 2 -or -not ($invalid -match 'Invalid dotnetarium.json')) {
     throw 'Invalid threat model must fail visibly with exit code 2.'
 }
-"Scope CLI checks passed (experimental direct=$ExperimentalDirect). Reports: $scratch" | Write-Output
+"Scope CLI checks passed (project mode=$ProjectMode). Reports: $scratch" | Write-Output

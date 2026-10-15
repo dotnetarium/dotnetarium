@@ -41,15 +41,17 @@ The tool accepts `.csproj`, `.sln` and `.slnx` files:
 
 ```sh
 dotnetarium MyApp.csproj --configuration Release --framework net10.0
-dotnetarium MyApp.sln -nb --sarif exploratory.sarif
+dotnetarium MyApp.sln -p --sarif project.sarif
 ```
 
 | Mode | How it loads code |
 | --- | --- |
-| Project mode, default | SDK/MSBuild design-time evaluation and available generators; SDK selection respects `global.json` |
-| `-nb` / `--no-build`, experimental | Reconstructs SDK inputs without targets or restore; runs only the official SDK Razor generator in memory |
+| No-build, default | Reconstructs SDK inputs without targets or restore; runs the official SDK Razor generator in memory |
+| `-p` / `--project` | SDK/MSBuild design-time evaluation and available generators; no application assembly is emitted |
 
 Solution scans exclude test projects in both modes. Pass a test `.csproj` explicitly to scan it. No-build mode needs installed reference packs and existing validated package assets; unresolved code or missing generators reduce coverage. See [scan modes and requirements](docs/scan-modes.md).
+
+Existing CLI scripts should remove `-nb` / `--no-build`; those flags are no longer accepted. Add `-p` to retain project loading.
 
 | Common option | Purpose |
 | --- | --- |
@@ -68,9 +70,9 @@ Credential scanning starts at the nearest Git root, including root workflows whe
 | --- | --- |
 | `0` | No fatal scan failure; findings are allowed without `--fail` |
 | `1` | Findings are present and `--fail` is set |
-| `2` | Invalid/unusable inputs or analyzer failure; project mode also fails on compiler/workspace errors and taint cutoffs |
+| `2` | Unusable inputs, invalid configuration or analyzer/generator failure |
 
-In no-build mode, compiler errors and taint cutoffs are nonfatal but mark coverage **partial**. Check SARIF's `dotnetarium.coverage` when CI requires complete inputs. A partial scan with zero findings does not establish safety.
+Configured depth/work limits are normal and informational. Missing references, compiler errors or unavailable Razor generation produce input warnings while useful analysis continues. SARIF records input quality (`available` / `degraded`) separately from analysis limits (`within-profile` / `limited`). Neither status guarantees that every vulnerability was found.
 
 ## Configure
 
@@ -92,7 +94,7 @@ Remote inputs are enabled by default. Add `local` to check console input, proces
 | `full` | CLI: both loading modes | 5 | 5,000 |
 | `max` | Explicit opt-in | 10 | 10,000 |
 
-Profiles change analysis effort, not rules. Cutoffs retain other findings and report partial coverage through `DNA9000`. See [configuration, numeric overrides and scope](docs/RuleConfiguration.md) and [performance comparisons](docs/performance-budget-matrix.md).
+Profiles change analysis effort, not rules. Cutoffs retain other findings and report configured limits through informational `DNA9000`. See [configuration, numeric overrides and scope](docs/RuleConfiguration.md) and [performance comparisons](docs/performance-budget-matrix.md).
 
 Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `dotnet_diagnostic.DNAxxxx.severity` to change a rule's severity. The CLI requires `--respect-editorconfig` to apply that policy.
 

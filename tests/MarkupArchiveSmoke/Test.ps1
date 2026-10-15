@@ -122,7 +122,7 @@ public static class Importer {
             throw "Markup/archive finding mismatch: $reportPath"
         }
         if ($reportPath -eq $toolSarif) {
-            if ($run.invocations[0].properties.'dotnetarium.coverage' -ne 'complete') {
+            if ($run.invocations[0].properties.'dotnetarium.inputStatus' -ne 'available') {
                 throw "CLI unexpectedly partial: $reportPath"
             }
             $markup = @($run.results | Where-Object ruleId -eq 'DNA0003')
@@ -141,7 +141,7 @@ public static class Importer {
     (Get-Content -Raw -LiteralPath $project).Replace('</Project>', '<ItemGroup><Analyzer Include="BrokenGenerator.dll" /></ItemGroup></Project>') |
         Set-Content -LiteralPath $project -Encoding utf8
     $brokenSarif = Join-Path $projectRoot 'broken.sarif'
-    & dotnet $ToolDll $project --sarif $brokenSarif | Out-Null
+    & dotnet $ToolDll $project -p --sarif $brokenSarif | Out-Null
     if ($LASTEXITCODE -ne 2) { throw "Broken generator must produce exit 2: $framework" }
     $brokenRun = (Get-Content -Raw -LiteralPath $brokenSarif | ConvertFrom-Json).runs[0]
     if (-not @($brokenRun.invocations[0].toolExecutionNotifications | Where-Object { $_.descriptor.id -eq 'generator-load' }).Count) {

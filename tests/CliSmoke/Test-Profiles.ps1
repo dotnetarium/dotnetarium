@@ -39,37 +39,37 @@ foreach ($framework in @('net8.0', 'net10.0')) {
     if ($LASTEXITCODE -ne 0) { throw 'Profile fixture restore failed.' }
     $profileBuild = & dotnet build $profileProject --no-restore --nologo -v quiet -p:UseSharedCompilation=false 2>&1
     if ($LASTEXITCODE -ne 0 -or -not ($profileBuild -match 'DNA0002') -or
-        -not ($profileBuild -match 'DNA9000.*fast profile') -or ($profileBuild -match 'AD0001')) {
+        ($profileBuild -match 'AD0001')) {
         $profileBuild | Write-Output
         throw 'Package default must retain common flows and summarize bounded fast coverage.'
     }
     $profileSarif = Join-Path $profileRoot "$framework.sarif"
-    & $tool $profileProject --sarif $profileSarif --fail | Out-Null
+    & $tool $profileProject -p --sarif $profileSarif --fail | Out-Null
     if ($LASTEXITCODE -ne 1) { throw 'CLI default must use full analysis.' }
     $profileRun = (Get-Content $profileSarif -Raw | ConvertFrom-Json).runs[0]
     if (@($profileRun.results | Where-Object ruleId -eq 'DNA0002').Count -ne 2 -or
-        $profileRun.invocations[0].properties.'dotnetarium.coverage' -ne 'complete') {
+        $profileRun.invocations[0].properties.'dotnetarium.inputStatus' -ne 'available') {
         throw 'Full CLI profile must report common/deep flows and keep the deeper constant cleaner safe.'
     }
-    & $tool $profileProject -nb --sarif $profileSarif --fail | Out-Null
+    & $tool $profileProject --sarif $profileSarif --fail | Out-Null
     if ($LASTEXITCODE -ne 1 -or
         @((Get-Content $profileSarif -Raw | ConvertFrom-Json).runs[0].results | Where-Object ruleId -eq 'DNA0002').Count -ne 2) {
         throw 'No-build CLI default must also use full analysis.'
     }
     '{"Version":"2.0","ThreatModels":["remote","local"],"AnalysisProfile":"fast"}' |
         Set-Content -LiteralPath $profileConfig
-    & $tool $profileProject --sarif $profileSarif --fail | Out-Null
-    if ($LASTEXITCODE -ne 2) { throw 'Explicit fast CLI limits must preserve default-mode partial failure behavior.' }
+    & $tool $profileProject -p --sarif $profileSarif --fail | Out-Null
+    if ($LASTEXITCODE -ne 1) { throw 'Fast limits must not turn findings into an execution failure.' }
     $profileRun = (Get-Content $profileSarif -Raw | ConvertFrom-Json).runs[0]
     if (@($profileRun.results | Where-Object ruleId -eq 'DNA0002').Count -ne 1 -or
-        $profileRun.invocations[0].properties.'dotnetarium.coverage' -ne 'partial') {
+        $profileRun.invocations[0].properties.'dotnetarium.inputStatus' -ne 'available') {
         throw 'Explicit fast profile lost the common flow or invented a deeper cleaner finding.'
     }
-    & $tool $profileProject -nb --sarif $profileSarif --fail | Out-Null
+    & $tool $profileProject --sarif $profileSarif --fail | Out-Null
     $profileRun = (Get-Content $profileSarif -Raw | ConvertFrom-Json).runs[0]
     if ($LASTEXITCODE -ne 1 -or
         @($profileRun.results | Where-Object ruleId -eq 'DNA0002').Count -ne 1 -or
-        $profileRun.invocations[0].properties.'dotnetarium.coverage' -ne 'partial') {
+        $profileRun.invocations[0].properties.'dotnetarium.inputStatus' -ne 'available') {
         throw 'No-build fast profile must retain findings and nonfatal partial coverage.'
     }
     '{"Version":"2.0","ThreatModels":["remote","local"],"AnalysisProfile":"full"}' |
@@ -88,13 +88,13 @@ foreach ($framework in @('net8.0', 'net10.0')) {
         $profileBuild | Write-Output
         throw 'Package max opt-in must report the eight-call flow.'
     }
-    & $tool $profileProject --sarif $profileSarif --fail | Out-Null
+    & $tool $profileProject -p --sarif $profileSarif --fail | Out-Null
     if ($LASTEXITCODE -ne 1) { throw 'CLI max profile failed.' }
     $profileRun = (Get-Content $profileSarif -Raw | ConvertFrom-Json).runs[0]
     if (@($profileRun.results | Where-Object ruleId -eq 'DNA0002').Count -ne 3) {
         throw 'CLI did not honor the configured max profile.'
     }
-    & $tool $profileProject -nb --sarif $profileSarif --fail | Out-Null
+    & $tool $profileProject --sarif $profileSarif --fail | Out-Null
     if ($LASTEXITCODE -ne 1 -or
         @((Get-Content $profileSarif -Raw | ConvertFrom-Json).runs[0].results | Where-Object ruleId -eq 'DNA0002').Count -ne 3) {
         throw 'No-build CLI did not honor the configured max profile.'

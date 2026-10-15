@@ -40,8 +40,8 @@ public class EntryController : Controller {
 }
 '@
     $source | Set-Content -LiteralPath (Join-Path $graph 'App/Entry.cs')
-    $direct = Scan $app @('-nb')
-    AssertMode $direct 'no-build' 'partial'
+    $direct = Scan $app @()
+    AssertMode $direct 'no-build' 'available'
     if (-not (HasNotice $direct 'generation')) { throw 'Skipped analyzer-only reference must remain a coverage warning.' }
     if (@($direct.results).Count -ne 1 -or $direct.results[0].ruleId -ne 'DNA0004' -or
         -not @($direct.results[0].codeFlows).Count -or (HasNotice $direct 'compiler-error')) {
@@ -58,8 +58,8 @@ public class EntryController : Controller {
     $conventional | Set-Content -LiteralPath $app
     & dotnet restore $app --nologo -v quiet > (Join-Path $graph 'restore.log') 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Reference fixture restore failed: $graph/restore.log" }
-    $sdk = Scan $app @()
-    AssertMode $sdk 'project' 'complete'
+    $sdk = Scan $app @('-p')
+    AssertMode $sdk 'project' 'available'
     if (($direct.results | ConvertTo-Json -Depth 40 -Compress) -ne ($sdk.results | ConvertTo-Json -Depth 40 -Compress)) {
         throw "Project/no-build transitive findings and flows differ for $framework."
     }
@@ -70,13 +70,13 @@ public class EntryController : Controller {
         $source.Replace('Other.Get()', 'Bridge.Get()') | Set-Content -LiteralPath (Join-Path $graph 'App/Entry.cs')
         $bridgeXml.Replace('<ProjectReference Include="../Data/Data.csproj"/>', "<ProjectReference Include=`"../Data/Data.csproj`" $metadata/>") |
             Set-Content -LiteralPath $bridgeProject
-        $restricted = Scan $app @('-nb')
+        $restricted = Scan $app @()
         if (-not (HasNotice $restricted 'compiler-error') -or @($restricted.results).Count) {
             throw "Closure exposed compile assets hidden by $metadata."
         }
         & dotnet restore $app --nologo -v quiet > (Join-Path $graph 'restore.log') 2>&1
         if ($LASTEXITCODE -ne 0) { throw 'Restricted reference restore failed.' }
-        $restrictedSdk = Scan $app @() 2
+        $restrictedSdk = Scan $app @('-p')
         if (-not (HasNotice $restrictedSdk 'compiler-error') -or @($restrictedSdk.results).Count) {
             throw "Reference restriction differs from SDK behavior for $metadata."
         }
@@ -88,17 +88,17 @@ public class EntryController : Controller {
     $aliased | Set-Content -LiteralPath $app
     "extern alias domain;`n$source`npublic class AliasProbe { public domain::Transit.Root Value = new(); }" |
         Set-Content -LiteralPath (Join-Path $graph 'App/Entry.cs')
-    $alias = Scan $app @('-nb')
+    $alias = Scan $app @()
     if (HasNotice $alias 'compiler-error') { throw 'Direct project aliases were not preserved.' }
     "extern alias domain;`n$source`npublic class AliasProbe { public Transit.Root Value = new(); }" |
         Set-Content -LiteralPath (Join-Path $graph 'App/Entry.cs')
-    $hidden = Scan $app @('-nb')
+    $hidden = Scan $app @()
     if (-not (HasNotice $hidden 'compiler-error')) { throw 'Closure exposed an alias-only project globally.' }
     # The explicit SDK opt-out must remain effective, even when dependencies load.
     $conventional.Replace('</PropertyGroup>', '<DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences></PropertyGroup>') |
         Set-Content -LiteralPath $app
     $source | Set-Content -LiteralPath (Join-Path $graph 'App/Entry.cs')
-    $disabled = Scan $app @('-nb')
+    $disabled = Scan $app @()
     if (-not (HasNotice $disabled 'compiler-error')) { throw 'DisableTransitiveProjectReferences was ignored.' }
     # Two projects use the same actual assembly with different aliases. Sharing
     # its image must not share the caller's alias visibility.
@@ -118,8 +118,8 @@ public class EntryController : Controller {
     $externalSolution = Join-Path $graph 'External.slnx'
     '<Solution><Project Path="ExternalA/ExternalA.csproj"/><Project Path="ExternalB/ExternalB.csproj"/></Solution>' |
         Set-Content -LiteralPath $externalSolution
-    $external = Scan $externalSolution @('-nb')
-    AssertMode $external 'no-build' 'complete'
+    $external = Scan $externalSolution @()
+    AssertMode $external 'no-build' 'available'
     if (@($external.results).Count -or (HasNotice $external 'compiler-error')) { throw 'Shared metadata leaked aliases between projects.' }
     "PASS ${framework}: transitive/diamond bindings, SDK parity, aliases, output filters and transitive opt-out"
 }
@@ -134,5 +134,5 @@ foreach ($name in @('A', 'B')) {
         Set-Content -LiteralPath (Join-Path $directory "$name.csproj")
     "public class $name { }" | Set-Content -LiteralPath (Join-Path $directory 'Demo.cs')
 }
-$cyclic = Scan (Join-Path $cycle 'A/A.csproj') @('-nb')
+$cyclic = Scan (Join-Path $cycle 'A/A.csproj') @()
 if (-not (HasNotice $cyclic 'project-reference')) { throw 'Circular project graph was not reported.' }

@@ -68,7 +68,7 @@ internal static class ProjectLoader
         {
             var error = diagnostic.Diagnostic;
             if (error.Kind == WorkspaceDiagnosticKind.Failure)
-                report.Fail("workspace-error", "Workspace: " + error.Message);
+                report.Warn("workspace-error", "Workspace: " + error.Message);
             else report.Warn("workspace-warning", "Workspace: " + error.Message);
         });
         try

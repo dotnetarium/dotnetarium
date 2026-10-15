@@ -2,8 +2,8 @@
 
 `--sarif results.sarif` exports rule descriptions, security severity, precision
 and remediation guidance once in `tool.driver.rules`. Results reference those
-rules through `ruleId` and `ruleIndex`. NuGet analyzer diagnostics and compiler
-warning levels are unchanged.
+rules through `ruleId` and `ruleIndex`. Security-rule warning levels are unchanged. DNA9000 limit notices are
+informational in the NuGet analyzer and SARIF.
 
 ## Severity and precision
 
@@ -47,7 +47,10 @@ needs neither a checkout nor network access to include guidance in its SARIF.
 
 Existing engine witnesses use short labels: `Source`, `Step 1`, ..., `Sink`.
 Source regions are not expanded, paths are not inferred from neighboring code,
-and findings remain separate. Richer trace capture and grouping are future work.
+and findings remain separate. Hidden Razor binding setters are mapped to a matching
+`FormatValue` read on the same rendered element when that relationship is unique.
+An unmapped generated step retains its role and `dotnetarium.locationStatus`
+without inventing a repository path. Richer trace capture and grouping are future work.
 
 Upload with GitHub's `upload-sarif` action and a stable category for each intended
 analysis configuration. That action can generate `primaryLocationLineHash`
@@ -58,3 +61,14 @@ CLI coverage notices or an Actions summary.
 
 See [GitHub's SARIF support](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support)
 and [CodeQL metadata guidance](https://codeql.github.com/docs/writing-codeql-queries/metadata-for-codeql-queries/).
+
+## Scan status
+
+No-build loading is the default; `-p` / `--project` opts into MSBuild design-time
+loading. `executionSuccessful` describes execution, `dotnetarium.inputStatus`
+describes detected input issues, and `dotnetarium.analysisStatus` describes
+configured bounds. Budget notices have SARIF level `note` and do not fail a scan.
+Input warnings have level `warning`; operational failures have level `error`.
+Consumers should replace `dotnetarium.coverage` and `dotnetarium.experimental`
+with the separate input/analysis statuses and loading mode; the old fields are removed.
+See [scan modes](scan-modes.md) for meanings and exit codes.

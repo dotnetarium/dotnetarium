@@ -10,7 +10,7 @@ internal static class SarifWriter
     private const string SourceRootId = "%SRCROOT%";
 
     internal static async Task WriteAsync(string output, string target, IReadOnlyList<Diagnostic> diagnostics,
-        ScanReport? report = null, string loadingMode = "project", string? sourceRoot = null)
+        ScanReport? report = null, string loadingMode = "no-build", string? sourceRoot = null)
     {
         var root = sourceRoot ?? Path.GetDirectoryName(Path.GetFullPath(target))!;
         var descriptors = diagnostics.Select(diagnostic => diagnostic.Descriptor)
@@ -49,11 +49,11 @@ internal static class SarifWriter
     {
         json.WriteStartArray("invocations");
         json.WriteStartObject();
-        json.WriteBoolean("executionSuccessful", !report.HasExecutionFailures);
+        json.WriteBoolean("executionSuccessful", !report.HasFailures);
         json.WriteStartObject("properties");
         json.WriteString("dotnetarium.loadingMode", loadingMode);
-        json.WriteBoolean("dotnetarium.experimental", loadingMode == "no-build");
-        json.WriteString("dotnetarium.coverage", report.IsPartial ? "partial" : "complete");
+        json.WriteString("dotnetarium.inputStatus", report.InputStatus);
+        json.WriteString("dotnetarium.analysisStatus", report.AnalysisStatus);
         json.WriteString("dotnetarium.budgetAccounting", "logical-work");
         json.WriteStartArray("dotnetarium.analysisSettings");
         foreach (var settings in report.AnalysisSettings.OrderBy(settings => settings.Project, StringComparer.Ordinal))
@@ -111,7 +111,7 @@ internal static class SarifWriter
             json.WriteStartObject("descriptor");
             json.WriteString("id", notice.Id);
             json.WriteEndObject();
-            json.WriteString("level", notice.IsFailure ? "error" : "warning");
+            json.WriteString("level", notice.Kind switch { ScanNoticeKind.Error => "error", ScanNoticeKind.Warning => "warning", _ => "note" });
             WriteMessage(json, "message", notice.Message);
             json.WriteEndObject();
         }
@@ -249,7 +249,17 @@ internal static class SarifWriter
         json.WriteStartObject();
         if (id.HasValue)
             json.WriteNumber("id", id.Value);
-        if (message != null) WriteMessage(json, "message", message);
+        var unmapped = message != null && SourceLocationSpan.IsUnmappedGenerated(location);
+        if (message != null) WriteMessage(json, "message", unmapped ? message + " (unmapped generated code)" : message);
+        if (unmapped)
+        {
+            // Preserve the step without inventing a repository location.
+            json.WriteStartObject("properties");
+            json.WriteString("dotnetarium.locationStatus", "unmapped-generated");
+            json.WriteEndObject();
+            json.WriteEndObject();
+            return;
+        }
         json.WriteStartObject("physicalLocation");
         var span = SourceLocationSpan.GetDisplaySpan(location);
         var relativePath = (Path.IsPathRooted(span.Path) ? Path.GetRelativePath(root, span.Path) : span.Path).Replace('\\', '/');

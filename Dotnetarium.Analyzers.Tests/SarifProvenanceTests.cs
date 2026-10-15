@@ -10,7 +10,7 @@ public sealed class SarifProvenanceTests
     [InlineData(true)]
     public async Task Sarif_preserves_effective_settings_version_and_structured_cutoffs(bool noBuild)
     {
-        var report = new ScanReport(allowTaintCutoffs: noBuild);
+        var report = new ScanReport();
         report.AnalysisSettings.Add(new("Example.csproj", "max", 7, 6, 9000, ["local", "remote"]));
         report.Cutoffs.Add(new("Example.csproj", "DNA0003", "Example.Render", "dataflow", "work-limit", 9001, 9000, 10, 100, 8891, 1));
         report.Warn("analysis-budget", "Bounded analysis stopped.");
@@ -22,9 +22,11 @@ public sealed class SarifProvenanceTests
             var run = json.RootElement.GetProperty("runs")[0];
             Assert.False(string.IsNullOrWhiteSpace(run.GetProperty("tool").GetProperty("driver").GetProperty("semanticVersion").GetString()));
             var invocation = run.GetProperty("invocations")[0];
-            Assert.Equal(noBuild, invocation.GetProperty("executionSuccessful").GetBoolean());
+            Assert.True(invocation.GetProperty("executionSuccessful").GetBoolean());
             var properties = invocation.GetProperty("properties");
-            Assert.Equal("partial", properties.GetProperty("dotnetarium.coverage").GetString());
+            Assert.Equal("available", properties.GetProperty("dotnetarium.inputStatus").GetString());
+            Assert.Equal("limited", properties.GetProperty("dotnetarium.analysisStatus").GetString());
+            Assert.Equal("note", invocation.GetProperty("toolExecutionNotifications")[0].GetProperty("level").GetString());
             Assert.Equal("logical-work", properties.GetProperty("dotnetarium.budgetAccounting").GetString());
             var settings = properties.GetProperty("dotnetarium.analysisSettings")[0];
             Assert.Equal(7, settings.GetProperty("methodDepth").GetInt32());

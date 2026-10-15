@@ -12,7 +12,7 @@ This reference describes the verification contract and provider checks. For ever
 | Offline CLI | `dotnetarium src/App.sln --sarif findings.sarif` | Off |
 | CLI with validity checks | Add `--verify-secrets` | Supported credentials or signed requests go to fixed provider endpoints |
 
-Verification works with both project loading and `-nb`. It applies only to `DNA0022` configuration-file findings; it does not verify generic literal credentials reported by `DNA0009`.
+Verification works with both default no-build loading and explicit project loading. It applies only to `DNA0022` configuration-file findings; it does not verify generic literal credentials reported by `DNA0009`.
 
 ```sh
 dotnetarium src/App.sln --verify-secrets --sarif findings.sarif --fail

@@ -1,5 +1,8 @@
 # Taint cutoff families
 
+> Historical investigation: original coverage labels are retained below. Current configured limits are informational; input warnings and execution failures are separate. See [scan modes](scan-modes.md).
+
+
 For the final depth-3 comparison of 1,000, 2,000 and 2,500 work budgets in both
 loading modes, see the [budget matrix](performance-budget-matrix.md).
 
@@ -45,7 +48,7 @@ structural reuse, resumable sink/delegate indexing and scoped component
 dependencies. Further source-closure resumption, finer component recomputation,
 delegate indexes or symbolic helper summaries need a demonstrated real-project
 hotspot or missed flow before adding more caches and invalidation complexity.
-The wide-helper retry limitation remains: budget notices report partial coverage;
+The wide-helper retry limitation remains: informational budget notices identify bounded stops;
 an interrupted proof is never reported as a clean scan. Higher explicit budgets
 can help but do not guarantee complete coverage.
 

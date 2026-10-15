@@ -82,7 +82,7 @@ public sealed class AnalysisWorkBudgetTests
         Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "AD0001");
         var notice = Assert.Single(diagnostics.Where(diagnostic => diagnostic.Id == AnalysisDiagnostics.WorkLimitId));
         Assert.Contains("Demo.Expensive", notice.GetMessage());
-        Assert.Equal("partial", notice.Properties["dotnetarium.coverage"]);
+        Assert.Equal("limited", notice.Properties["dotnetarium.analysisStatus"]);
         Assert.Equal("DNA0002", notice.Properties["dotnetarium.rule"]);
         var finding = Assert.Single(diagnostics.Where(diagnostic => diagnostic.Id == "DNA0002"));
         Assert.Contains("Ordinary", finding.GetMessage());

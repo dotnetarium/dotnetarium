@@ -1,5 +1,8 @@
 # Bounded taint analysis and scanner performance
 
+> Benchmark sections retain their original status terminology. Current limits are informational, not scan failures. See [scan modes](scan-modes.md).
+
+
 Current defaults are **fast: 3 / 2,500** for the analyzer and **full: 5 / 5,000**
 for the CLI, including no-build mode. See the [final budget comparison](performance-budget-matrix.md)
 for both loading modes and [cutoff families](cutoff-families.md) for the completed
@@ -30,11 +33,10 @@ class happens to be named `Migration`.
 
 ## How the main scanner differs
 
-The main tool retains `MSBuildWorkspace`, SDK selection and its existing CLI
-options by default. It evaluates the target's project/build inputs and loads
-the target frameworks selected by the workspace. Opt-in `-nb` / `--no-build`
-can reconstruct inputs without custom MSBuild targets; configuration/framework
-selection is available in both modes. See [scan modes](scan-modes.md).
+The tool reconstructs SDK inputs by default, without executing custom targets.
+`-p` / `--project` selects `MSBuildWorkspace` design-time evaluation and available
+generators. Configuration/framework selection is supported in both modes.
+See [scan modes](scan-modes.md).
 
 The main tool analyzes a bounded number of project compilations concurrently,
 using half the available processors with a cap of **four**, and starting larger
@@ -43,12 +45,12 @@ concurrently. Findings and coverage notices are collected safely and ordered for
 output. Compiler diagnostics are limited to the first 20 per project on the
 console, with a total-count notice; failures remain explicit.
 
-Requested SARIF is now preserved when compilation errors or work cutoffs make a
-scan incomplete. Coverage notices are SARIF invocation notifications, not
-security results or rules. Default mode returns **2** for compiler errors or
-cutoffs, including with `--fail`. No-build mode accepts these as partial coverage
-and returns **0**, or **1** when findings are present with `--fail`. Genuine
-analyzer/tool failures still return **2** in both modes.
+Requested SARIF preserves findings alongside input warnings and configured
+analysis limits. Limits are informational in both modes, not execution failures.
+Compiler errors in usable compilations produce input warnings. Invalid inputs,
+unusable compilations and analyzer failures remain fatal. See
+[scan status and exit codes](scan-modes.md#output-and-exit-codes).
+
 
 ## No-build loader
 

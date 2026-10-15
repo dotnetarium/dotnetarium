@@ -46,7 +46,7 @@ jobs:
       - name: Check provider credentials in project and repository configuration
         shell: pwsh
         run: ./tests/ProviderCredentialSmoke/Test.ps1
-      - name: Check opt-in no-build mode through installed global tool
+      - name: Check default no-build and explicit project loading through installed tool
         shell: pwsh
         run: ./tests/NoBuildSmoke/Test.ps1 -ToolPackage (Get-ChildItem artifacts/*.nupkg | Where-Object Name -Match '^dotnetarium\.\d' | Select-Object -First 1).FullName
       - name: Check identifier and boundary precision on .NET 8 and 10
@@ -94,7 +94,7 @@ jobs:
       - name: Check provider credentials in project and repository configuration
         shell: pwsh
         run: ./tests/ProviderCredentialSmoke/Test.ps1
-      - name: Check opt-in no-build mode through installed global tool
+      - name: Check default no-build and explicit project loading through installed tool
         shell: pwsh
         run: ./tests/NoBuildSmoke/Test.ps1 -ToolPackage (Get-ChildItem artifacts/*.nupkg | Where-Object Name -Match '^dotnetarium\.\d' | Select-Object -First 1).FullName
       - name: Check identifier and boundary precision on .NET 8 and 10

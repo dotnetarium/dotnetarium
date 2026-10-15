@@ -40,11 +40,11 @@ internal static class Program
                 throw new FileNotFoundException("Project or solution was not found.", target);
             var root = Path.GetDirectoryName(target)!;
             var defaultConfig = Path.Combine(root, "dotnetarium.json");
-            var report = new ScanReport(allowTaintCutoffs: options.NoBuild);
+            var report = new ScanReport();
             var selection = new ScanSelection(options.Configuration, options.Framework);
             Console.WriteLine(options.NoBuild
-                ? "Scan mode: no-build (experimental). Targets and restore are not run; only official SDK Razor generation is enabled."
-                : "Scan mode: project (default).");
+                ? "Scan mode: no-build (default). Targets and restore are not run; only official SDK Razor generation is enabled."
+                : "Scan mode: project. MSBuild design-time loading; no application assembly is emitted.");
             var configRoot = ConfigurationFileScanner.FindRoot(target);
             var outputRoot = configRoot;
             using var verifier = options.VerifySecrets ? new ProviderSecretVerifier() : null;
@@ -171,16 +171,14 @@ internal static class Program
                         (int)(Number("cutoffCount") ?? 1)));
                 }
                 foreach (var error in projectErrors.Take(20))
-                    if (options.NoBuild && error.Id != "AD0001")
+                    if (error.Id != "AD0001")
                         report.Warn("compiler-error", $"{project.Name}: {error}");
                     else report.Fail(error.Id == "AD0001" ? "analyzer-failure" : "compiler-error", $"{project.Name}: {error}");
                 // Analyzer failures are fatal even when preceded by many compiler errors.
                 foreach (var error in projectErrors.Skip(20).Where(error => error.Id == "AD0001"))
                     report.Fail("analyzer-failure", $"{project.Name}: {error}");
                 if (projectErrors.Length > 20)
-                    if (options.NoBuild)
-                        report.Warn("compiler-error-summary", $"{project.Name}: {projectErrors.Length} compiler/analyzer errors; the first 20 are shown.");
-                    else report.Fail("compiler-error-summary", $"{project.Name}: {projectErrors.Length} compiler/analyzer errors; the first 20 are shown.");
+                    report.Warn("compiler-error-summary", $"{project.Name}: {projectErrors.Length} compiler/analyzer errors; the first 20 are shown.");
             });
             report.RecordElapsed("project-stages-wall", projectStagesStarted);
 
@@ -221,16 +219,22 @@ internal static class Program
                 Console.WriteLine($"{path}({line.StartLinePosition.Line + 1},{line.StartLinePosition.Character + 1}): {diagnostic.Id}{cwe}: {diagnostic.GetMessage()}{verification}");
             }
 
-            foreach (var notice in report.Notices.Distinct().OrderBy(notice => notice.Id, StringComparer.Ordinal).ThenBy(notice => notice.Message, StringComparer.Ordinal))
-                Console.Error.WriteLine($"{(notice.IsFailure ? "Error" : "Coverage")}: {notice.Message}");
-            Console.WriteLine($"{findings.Length} security finding(s){(report.IsPartial ? " (partial scan)" : string.Empty)}; {report.AnalyzedProjects.Count} project compilation(s) analyzed.");
+            foreach (var notice in report.Notices.Distinct().Where(notice => notice.Kind != ScanNoticeKind.Information)
+                .OrderBy(notice => notice.Id, StringComparer.Ordinal).ThenBy(notice => notice.Message, StringComparer.Ordinal))
+                Console.Error.WriteLine($"{(notice.IsFailure ? "Error" : "Input warning")}: {notice.Message}");
+            foreach (var group in report.Notices.Where(notice => notice.Kind == ScanNoticeKind.Information && notice.Id != "analysis-budget").GroupBy(notice => notice.Id).OrderBy(group => group.Key))
+                Console.WriteLine($"Info: {group.OrderBy(notice => notice.Message, StringComparer.Ordinal).First().Message} ({group.Count()} notice(s); details in SARIF.)");
+            Console.WriteLine($"Scan {(report.HasFailures ? "failed" : "completed")}: {findings.Length} security finding(s) across {report.AnalyzedProjects.Count} project compilation(s).");
+            foreach (var setting in report.AnalysisSettings.Select(setting => (setting.Profile, setting.MethodDepth, setting.LambdaDepth, setting.WorkBudget)).Distinct().OrderBy(setting => setting.Profile))
+                Console.WriteLine($"Analysis: {setting.Profile}; method/lambda depth {setting.MethodDepth}/{setting.LambdaDepth}; work budget {setting.WorkBudget}.");
+            Console.WriteLine($"Analysis limits: {report.Cutoffs.Sum(cutoff => cutoff.Count)} bounded stop(s). Input status: {report.InputStatus}.");
             if (!report.ExcludedTestProjects.IsEmpty)
                 Console.WriteLine($"{report.ExcludedTestProjects.Distinct().Count()} test project(s) excluded from analysis.");
             if (options.SarifPath != null)
                 await SarifWriter.WriteAsync(options.SarifPath, target, findings, report, options.NoBuild ? "no-build" : "project", outputRoot);
-            if (report.HasExecutionFailures)
+            if (report.HasFailures)
             {
-                Console.Error.WriteLine("Scan incomplete: see error and coverage notices.");
+                Console.Error.WriteLine("Scan failed: see errors above; available findings were preserved.");
                 return 2;
             }
             return options.Fail && findings.Length > 0 ? 1 : 0;
@@ -256,7 +260,7 @@ internal static class Program
         "  --verify-secrets           Check supported credentials online (opt-in)\n" +
         "  --config-include <glob>    Include matching config files (repeatable)\n" +
         "  --config-exclude <glob>    Exclude matching config files (repeatable)\n" +
-        "  -nb, --no-build            Experimental: no targets/restore; SDK Razor generation only\n" +
+        "  -p, --project             Use MSBuild design-time loading instead of the default no-build loader\n" +
         "  --configuration <name>     Select configuration (default: Debug)\n" +
         "  --framework <net8.0|net10.0> Select root target framework\n" +
         "  -h, --help                 Show this help");
@@ -280,7 +284,7 @@ internal static class Program
         internal static Options Parse(string[] args)
         {
             string? target = null, sarif = null, config = null, configuration = null, framework = null;
-            bool fail = false, noBuild = false, respectEditorConfig = false, verifySecrets = false;
+            bool fail = false, noBuild = true, respectEditorConfig = false, verifySecrets = false;
             var configIncludes = new List<string>();
             var configExcludes = new List<string>();
             for (int index = 0; index < args.Length; index++)
@@ -297,7 +301,7 @@ internal static class Program
                     case "--verify-secrets": verifySecrets = true; break;
                     case "--config-include": configIncludes.Add(NextValue()); break;
                     case "--config-exclude": configExcludes.Add(NextValue()); break;
-                    case "-nb": case "--no-build": noBuild = true; break;
+                    case "-p": case "--project": noBuild = false; break;
                     case "--configuration": configuration = NextValue(); break;
                     case "--framework": framework = NextValue(); break;
                     default:

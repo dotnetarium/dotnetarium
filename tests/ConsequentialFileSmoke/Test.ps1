@@ -68,7 +68,7 @@ public class FileController : ControllerBase {
         foreach ($mode in @('project', 'no-build')) {
             $report = Join-Path $directory "$mode.sarif"
             $arguments = @($ToolDll, $project, '--sarif', $report, '--fail')
-            if ($mode -eq 'no-build') { $arguments += '-nb' }
+            if ($mode -eq 'project') { $arguments += '-p' }
             & dotnet @arguments | Out-Null
             if ($LASTEXITCODE -ne 1) { throw "CLI exit mismatch: $framework/$mode" }
             $reports += $report

@@ -1,5 +1,10 @@
 # Validation and taint precision
 
+> Historical measurements below retain their original loader and exit policy.
+> Current scans default to no-build; `-p` selects project loading. Limits are
+> informational and input quality is reported separately. See [scan modes](scan-modes.md).
+
+
 Validation only protects a sink when its result controls the branch using the
 same stable value. Ignored checks, unrelated values, assignments between the
 check and the sink, ref/out escapes, and checks outside a deferred callback do
@@ -152,7 +157,7 @@ schema, source-selection logic and built-in source scopes.
 
 Remaining boundaries: no automatic cross-process taint, no privilege inference,
 no blanket local file/database/registry sources, and no verified debugger exploit.
-The experimental loader remains on its separate branch. Release/version changes
+That loader experiment was subsequently integrated and is now the default. Release/version changes
 are outside this implementation.
 
 ## Deferred review: LANCommander script debugger

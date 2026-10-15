@@ -7,9 +7,9 @@ namespace Dotnetarium.Analyzers
     {
         public const string WorkLimitId = "DNA9000";
         public static readonly DiagnosticDescriptor WorkLimit = new(
-            WorkLimitId, "Taint analysis work limit reached",
+            WorkLimitId, "Taint analysis reached configured limits",
             "{0}",
-            "Analysis coverage", DiagnosticSeverity.Warning, isEnabledByDefault: true,
+            "Analysis coverage", DiagnosticSeverity.Info, isEnabledByDefault: true,
             description: "A bounded per-method dataflow budget prevents recursive or branching call trees from blocking the scan. This notice is not a vulnerability finding.",
             customTags: new[] { WellKnownDiagnosticTags.NotConfigurable });
     }

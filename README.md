@@ -112,6 +112,7 @@ Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `d
 | Game engines | [Godot and Unity coverage](docs/game-engines.md) |
 | Coverage and performance | [Scan modes](docs/scan-modes.md), [engine limits](docs/scan-performance.md) |
 | SARIF and GitHub | [Severity, remediation guidance and paths](docs/sarif-reporting.md) |
+| GitHub Actions | [Standalone scans and integration with existing CI](docs/github-action.md) |
 | Development | [Architecture](docs/Architecture.md), [releasing](docs/Releasing.md) |
 
 Run from source with a .NET 10 SDK:

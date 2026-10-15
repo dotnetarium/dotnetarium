@@ -1,5 +1,8 @@
-name: Dotnetarium
-description: Scan modern C# without building and upload security findings to GitHub code scanning.
+name: Dotnetarium C# Security Scan
+description: Scan C# and .NET 8/10 without building, with SARIF security alerts, data flows and PR annotations.
+branding:
+  icon: shield
+  color: blue
 inputs:
   target:
     description: Repository-relative .sln, .slnx or .csproj path.

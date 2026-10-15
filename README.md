@@ -2,7 +2,7 @@
 
 Dotnetarium finds security problems in modern C# applications. It follows untrusted data to sensitive APIs and checks unsafe settings, reporting `DNA` rule IDs with CWE metadata.
 
-Use the **NuGet analyzer** for build and IDE warnings, or the **global tool** for independent scans and SARIF reports. Both share the same rules and taint engine.
+Use the **NuGet analyzer** for build and IDE warnings, the **global tool** for independent scans, or the [**GitHub Action**](action/README.md) for CI scans and GitHub code scanning results. They share the same rules and taint engine.
 
 ## Get started
 
@@ -19,6 +19,7 @@ Update the tool with `dotnet tool update --global dotnetarium`.
 | Projects | C# targeting .NET 8 or .NET 10 |
 | NuGet analyzer | Roslyn 5.0+ host, such as the .NET 10 SDK or Visual Studio 2026 |
 | Global tool | .NET 10 runtime; a compatible SDK for project loading or Razor generation |
+| GitHub Action | [Standalone workflow or existing CI](action/README.md); SDK setup and restore included by default |
 
 Version 2.x does not support VB.NET, .NET Framework or Visual Studio 2022.
 
@@ -113,7 +114,7 @@ Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `d
 | TLS and credentials | [Certificate validation](docs/tls-certificates.md), [credential scanning](docs/credential-scanning.md) |
 | Coverage and performance | [Scan modes](docs/scan-modes.md), [engine limits](docs/scan-performance.md) |
 | SARIF and GitHub | [Severity, remediation guidance and paths](docs/sarif-reporting.md) |
-| GitHub Actions | [Standalone scans and integration with existing CI](docs/github-action.md) |
+| GitHub Actions | [Setup, options and examples](action/README.md) |
 | Development | [Architecture](docs/Architecture.md), [releasing](docs/Releasing.md) |
 
 Run from source with a .NET 10 SDK:

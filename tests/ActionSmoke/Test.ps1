@@ -1,10 +1,10 @@
-param([string]$ToolPackage)
+param([string]$ToolPackage, [switch]$Published)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-if (-not $ToolPackage) {
+if (-not $Published -and -not $ToolPackage) {
     $ToolPackage = (Get-ChildItem (Join-Path $root 'artifacts/dotnetarium.*.nupkg') | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
 }
-$ToolPackage = (Resolve-Path -LiteralPath $ToolPackage).Path
+if (-not $Published) { $ToolPackage = (Resolve-Path -LiteralPath $ToolPackage).Path }
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('dotnetarium-action-smoke-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $variables = @('GITHUB_WORKSPACE', 'RUNNER_TEMP', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY',
@@ -45,11 +45,15 @@ public static class UnsafeCrypto {
     $env:DNA_TOOL = $outputs['tool-directory']
     $env:DNA_TARGET = $outputs['target']
     $env:DNA_SARIF = $outputs['sarif-file']
-    $packageVersion = ([IO.Path]::GetFileName($ToolPackage) -replace '^dotnetarium\.', '' -replace '\.nupkg$', '')
     Push-Location $scratch
     try {
-        & dotnet tool install dotnetarium --version $packageVersion --tool-path $env:DNA_TOOL --add-source ([IO.Path]::GetDirectoryName($ToolPackage)) | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw 'Could not install packed CLI.' }
+        if ($Published) {
+            & "$root/action/scripts/Install.ps1"
+        } else {
+            $packageVersion = ([IO.Path]::GetFileName($ToolPackage) -replace '^dotnetarium\.', '' -replace '\.nupkg$', '')
+            & dotnet tool install dotnetarium --version $packageVersion --tool-path $env:DNA_TOOL --add-source ([IO.Path]::GetDirectoryName($ToolPackage)) | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install packed CLI.' }
+        }
         & "$root/action/scripts/Restore.ps1"
         & "$root/action/scripts/Scan.ps1"
     } finally { Pop-Location }

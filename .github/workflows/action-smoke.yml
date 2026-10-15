@@ -1,0 +1,119 @@
+name: GitHub Action integration
+
+on:
+  push:
+    branches: [feature/github-action]
+  pull_request:
+    paths:
+      - 'action/**'
+      - 'tests/ActionSmoke/**'
+      - '.github/workflows/action-smoke.yml'
+      - '.github/workflows/scan.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  composite:
+    name: Composite (${{ matrix.os }}, ${{ matrix.framework }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        framework: [net8.0, net10.0]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Default no-build, SDK setup and restore
+        id: direct
+        uses: ./action
+        with:
+          target: tests/ActionSmoke/Fixture/ActionFixture.csproj
+          framework: ${{ matrix.framework }}
+          configuration: Release
+          sarif-file: action-default.sarif
+          upload-sarif: 'false'
+      - name: Project loading with prepared SDKs and dependencies
+        id: project
+        uses: ./action
+        with:
+          target: tests/ActionSmoke/Fixture/ActionFixture.csproj
+          framework: ${{ matrix.framework }}
+          configuration: Release
+          setup-dotnet: 'false'
+          restore: 'false'
+          project-mode: 'true'
+          sarif-file: action-project.sarif
+          upload-sarif: 'false'
+      - name: Check findings, flows and Action outputs
+        shell: pwsh
+        env:
+          DIRECT_COUNT: ${{ steps.direct.outputs.findings }}
+          DIRECT_INPUT: ${{ steps.direct.outputs.input-status }}
+          PROJECT_COUNT: ${{ steps.project.outputs.findings }}
+        run: |
+          if ([int]$env:DIRECT_COUNT -lt 2 -or [int]$env:PROJECT_COUNT -lt 2) {
+            throw 'Action output lost expected findings.'
+          }
+          if ($env:DIRECT_INPUT -ne 'available') { throw 'Unexpected degraded fixture inputs.' }
+          foreach ($file in 'action-default.sarif', 'action-project.sarif') {
+            $report = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+            $results = @($report.runs[0].results)
+            foreach ($rule in 'DNA0003', 'DNA0014') {
+              if ($rule -notin $results.ruleId) { throw "Missing $rule in $file" }
+            }
+            $xss = $results | Where-Object ruleId -eq 'DNA0003' | Select-Object -First 1
+            if (-not $xss.codeFlows) { throw "Missing source-to-sink flow in $file" }
+            foreach ($result in $results) {
+              foreach ($location in $result.locations) {
+                if ([IO.Path]::IsPathRooted($location.physicalLocation.artifactLocation.uri)) {
+                  throw 'Finding path is not repository-relative.'
+                }
+              }
+            }
+          }
+      - name: Prepare unusable project
+        shell: pwsh
+        run: "'<Project><broken' | Set-Content -LiteralPath broken.csproj"
+      - name: Fail after retaining a failure report
+        id: broken
+        continue-on-error: true
+        uses: ./action
+        with:
+          target: broken.csproj
+          setup-dotnet: 'false'
+          restore: 'false'
+          sarif-file: action-failed.sarif
+          upload-sarif: 'false'
+      - name: Check execution failure is propagated
+        if: ${{ !cancelled() && steps.broken.outcome != 'skipped' }}
+        shell: pwsh
+        env:
+          BROKEN_OUTCOME: ${{ steps.broken.outcome }}
+        run: |
+          if ($env:BROKEN_OUTCOME -ne 'failure') { throw 'Execution failure did not fail the composite.' }
+          $report = Get-Content -LiteralPath action-failed.sarif -Raw | ConvertFrom-Json
+          if ($report.runs[0].invocations[0].executionSuccessful) { throw 'Failure report incorrectly claims success.' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: action-${{ matrix.os }}-${{ matrix.framework }}
+          path: action-*.sarif
+          if-no-files-found: error
+          retention-days: 7
+
+  reusable:
+    name: Reusable workflow and SARIF upload
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    uses: ./.github/workflows/scan.yml
+    with:
+      target: tests/ActionSmoke/Fixture/ActionFixture.csproj
+      framework: net10.0
+      configuration: Release
+      category: dotnetarium-action-integration

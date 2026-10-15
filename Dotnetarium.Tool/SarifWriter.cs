@@ -140,14 +140,31 @@ internal static class SarifWriter
             WriteMessage(json, "fullDescription", descriptor.Description.ToString());
             if (!string.IsNullOrEmpty(descriptor.HelpLinkUri))
                 json.WriteString("helpUri", descriptor.HelpLinkUri);
+            if (SarifRuleMetadata.ReadHelp(descriptor.Id, descriptor.HelpLinkUri) is { } help)
+            {
+                json.WriteStartObject("help");
+                json.WriteString("text", SarifRuleMetadata.PlainText(help));
+                json.WriteString("markdown", help);
+                json.WriteEndObject();
+            }
             json.WriteStartObject("defaultConfiguration");
             json.WriteString("level", Level(descriptor.DefaultSeverity));
             json.WriteEndObject();
             if (DnaRuleCatalog.TryGetCwe(descriptor.Id, out var cwe))
             {
                 json.WriteStartObject("properties");
+                if (SarifRuleMetadata.Severities.TryGetValue(cwe, out var severity))
+                    json.WriteString("security-severity", severity.Score);
+                if (SarifRuleMetadata.Precisions.TryGetValue(descriptor.Id, out var precision))
+                    json.WriteString("precision", precision);
                 json.WriteStartArray("tags");
-                json.WriteStringValue($"CWE-{cwe}");
+                json.WriteStringValue("security");
+                foreach (var tag in descriptor.CustomTags.Where(tag => tag.StartsWith("CWE-", StringComparison.Ordinal))
+                    .Append($"CWE-{cwe}").Distinct(StringComparer.Ordinal))
+                {
+                    json.WriteStringValue(tag);
+                    json.WriteStringValue($"external/cwe/cwe-{int.Parse(tag.Substring(4), System.Globalization.CultureInfo.InvariantCulture):D3}");
+                }
                 json.WriteEndArray();
                 json.WriteEndObject();
             }
@@ -215,7 +232,8 @@ internal static class SarifWriter
         {
             json.WriteStartObject();
             json.WritePropertyName("location");
-            WriteLocation(json, locations[index], root, index + 1);
+            WriteLocation(json, locations[index], root, index + 1,
+                index == 0 ? "Source" : index == locations.Count - 1 ? "Sink" : $"Step {index}");
             json.WriteEndObject();
         }
         json.WriteEndArray();
@@ -226,11 +244,12 @@ internal static class SarifWriter
     }
 
     private static void WriteLocation(Utf8JsonWriter json, Location location, string root,
-        int? id = null)
+        int? id = null, string? message = null)
     {
         json.WriteStartObject();
         if (id.HasValue)
             json.WriteNumber("id", id.Value);
+        if (message != null) WriteMessage(json, "message", message);
         json.WriteStartObject("physicalLocation");
         var span = SourceLocationSpan.GetDisplaySpan(location);
         var relativePath = (Path.IsPathRooted(span.Path) ? Path.GetRelativePath(root, span.Path) : span.Path).Replace('\\', '/');

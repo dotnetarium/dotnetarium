@@ -240,10 +240,9 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             properties["MSBuildProjectName"] = Path.GetFileNameWithoutExtension(path);
             properties["MSBuildProjectFullPath"] = path;
             ReadProperties(documents, properties, path);
-            if (!properties.ContainsKey("IsTestProject") && documents.SelectMany(document => document.Document.Descendants())
+            if (!properties.ContainsKey("IsTestProject") && ReadItems(documents, properties, path)
                 .Any(item => item.Name.LocalName == "PackageReference" &&
-                    string.Equals(Expand((string?)item.Attribute("Include") ?? "", properties), "Microsoft.NET.Test.Sdk", StringComparison.OrdinalIgnoreCase) &&
-                    Condition(item, properties, path))) properties["IsTestProject"] = "true";
+                    string.Equals(Expand((string?)item.Attribute("Include") ?? "", properties), "Microsoft.NET.Test.Sdk", StringComparison.OrdinalIgnoreCase))) properties["IsTestProject"] = "true";
             if (!dependency && solutionTarget && rootProjects.Contains(path) && IsTrue(properties.GetValueOrDefault("IsTestProject")))
             {
                 visited.Remove(path); // A production dependency may still need its symbols.
@@ -317,9 +316,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 evaluated.TryAdd("BaseIntermediateOutputPath", "obj" + Path.DirectorySeparatorChar);
                 evaluated.TryAdd("IntermediateOutputPath", Path.Combine(evaluated["BaseIntermediateOutputPath"],
                     evaluated.GetValueOrDefault("Configuration", "Debug"), framework) + Path.DirectorySeparatorChar);
-                var items = documents.SelectMany(document => document.Document.Root!.Elements())
-                    .Where(group => group.Name.LocalName == "ItemGroup" && Condition(group, evaluated, path))
-                    .SelectMany(group => group.Elements()).Where(item => Condition(item, evaluated, path)).ToArray();
+                var items = ReadItems(documents, evaluated, path).ToArray();
                 if (godotVersion != null && !IsTrue(evaluated.GetValueOrDefault("EnableGodotDotNetPreview")))
                 {
                     var implicitItems = new List<XElement>();
@@ -339,6 +336,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 {
                     foreach (var import in document.Document.Descendants().Where(element => element.Name.LocalName == "Import"))
                         Warn(path, "import", $"Custom import was not evaluated: {(string?)import.Attribute("Project")}");
+                    if (document.Document.Root!.Elements().Any(element => element.Name.LocalName == "Choose"))
+                        Warn(path, "conditional-structure", "Choose/When/Otherwise inputs were not evaluated; source selection or compiler properties may differ.");
                     if (document.Document.Descendants().Any(element => element.Name.LocalName == "Target"))
                         Warn(path, "custom-targets", "Custom targets were not executed; generated inputs may be absent.");
                 }
@@ -415,6 +414,36 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                             Warn(project, "property", $"Unresolved property '{property.Name.LocalName}': {value}");
                         properties[property.Name.LocalName] = value;
                     }
+            }
+        }
+    }
+
+    private IEnumerable<XElement> ReadItems(IEnumerable<(string Path, XDocument Document)> documents,
+        Dictionary<string, string> properties, string project)
+    {
+        foreach (var document in documents)
+        {
+            var context = new Dictionary<string, string>(properties, StringComparer.OrdinalIgnoreCase)
+            {
+                ["MSBuildThisFileDirectory"] = Path.GetDirectoryName(document.Path)! + Path.DirectorySeparatorChar
+            };
+            foreach (var group in document.Document.Root!.Elements().Where(element => element.Name.LocalName == "ItemGroup"))
+            {
+                if (!Condition(group, context, project)) continue;
+                foreach (var item in group.Elements().Where(item => Condition(item, context, project)))
+                {
+                    // Freeze defining-file properties before consumers expand metadata.
+                    // Do not mutate the shared document across framework evaluations.
+                    var expanded = new XElement(item);
+                    string DefiningFile(string value) => value.Replace("$(MSBuildThisFileDirectory)",
+                        context["MSBuildThisFileDirectory"], StringComparison.OrdinalIgnoreCase);
+                    foreach (var element in expanded.DescendantsAndSelf())
+                    {
+                        foreach (var attribute in element.Attributes()) attribute.Value = DefiningFile(attribute.Value);
+                        if (!element.HasElements) element.Value = DefiningFile(element.Value);
+                    }
+                    yield return expanded;
+                }
             }
         }
     }

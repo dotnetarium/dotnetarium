@@ -52,6 +52,7 @@ function HasNotice($Run, [string]$Id) {
     return @($Run.invocations[0].toolExecutionNotifications | Where-Object { $_.descriptor.id -eq $Id }).Count -gt 0
 }
 . (Join-Path $PSScriptRoot 'Test-Conditions.ps1')
+. (Join-Path $PSScriptRoot 'Test-LoaderEdges.ps1')
 if ($ConditionsOnly) {
     "No-build condition checks passed. Reports: $scratch"
     exit 0

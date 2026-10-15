@@ -93,7 +93,10 @@ references produce coverage notices.
 
 Custom imports, `Directory.Build.targets`, package build inputs and unsupported
 conditions can change source selection or compiler options. No-build mode warns
-about these inputs. Missing, changed or unverified restore metadata is reported;
+about these inputs, including unevaluated `Choose`/`When`/`Otherwise` branches.
+Shared props items resolve `MSBuildThisFileDirectory` against their defining file;
+test SDK markers are recognized only in active item groups.
+Missing, changed or unverified restore metadata is reported;
 the loader omits package bindings it cannot validate instead of guessing.
 Restore separately, when appropriate for the project, to recover package API
 bindings. This is a separate user action, not part of a no-build scan.

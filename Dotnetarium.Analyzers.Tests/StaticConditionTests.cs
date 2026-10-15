@@ -45,5 +45,12 @@ public class StaticConditionTests
     public void RejectsExcessiveNesting()
     {
         Assert.False(StaticCondition.TryEvaluate(new string('(', 1000) + "true" + new string(')', 1000), out _));
+        Assert.False(StaticCondition.TryEvaluate(new string('!', 1000) + "true", out _));
+    }
+
+    [Fact]
+    public void RejectsOversizedExpressions()
+    {
+        Assert.False(StaticCondition.TryEvaluate("'" + new string('x', 65536) + "' == 'x'", out _));
     }
 }

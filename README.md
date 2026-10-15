@@ -1,8 +1,8 @@
 # Dotnetarium
 
-Dotnetarium finds security problems in modern C# applications. It follows untrusted data to sensitive APIs and checks unsafe settings, reporting `DNA` rule IDs with CWE metadata.
+Dotnetarium is an open-source security scanner built for modern C# and .NET. Its taint analysis follows untrusted data through method calls, lambdas and supported framework entry points to the APIs where it can cause trouble. From ASP.NET Core and Razor/Blazor to gRPC, SignalR and message consumers, it helps you understand how a security problem can take shape across your code.
 
-Use the **NuGet analyzer** for build and IDE warnings, or the **global tool** for independent scans and SARIF reports. Both share the same rules and taint engine.
+Bring it into your editor with the **NuGet analyzer**, scan a solution with the **command-line tool**, or review results in GitHub with the [Dotnetarium Action](https://github.com/dotnetarium/dotnetarium-action). The same rules and taint engine check for injection, unsafe file access, exposed credentials, risky cryptography and insecure settings, with coverage for the frameworks and libraries .NET developers use today. We're building Dotnetarium to make security review more approachable: useful findings, data-flow paths to investigate, and a quick way to get started without building your application.
 
 ## Get started
 

@@ -36,6 +36,8 @@ public sealed class SarifRuleMetadataTests
             var tags = properties.GetProperty("tags").EnumerateArray().Select(tag => tag.GetString()).ToArray();
             Assert.Contains("security", tags);
             Assert.Contains($"external/cwe/cwe-{cwe:D3}", tags);
+            Assert.DoesNotContain(tags, tag => tag!.StartsWith("CWE-", StringComparison.Ordinal));
+            Assert.Equal(tags.Length, tags.Distinct(StringComparer.Ordinal).Count());
             if (id == "DNA0010")
             {
                 Assert.Contains("external/cwe/cwe-1004", tags);
@@ -58,6 +60,18 @@ public sealed class SarifRuleMetadataTests
             Assert.Equal("https", reference.Scheme);
             Assert.Contains(reference.Host, new[] { "codeql.github.com", "github.com" });
         });
+    }
+
+    [Fact]
+    public async Task Cwe_aliases_are_normalized_before_deduplication()
+    {
+        var descriptor = new DiagnosticDescriptor("DNA0007", "XPath injection", "{0}", "Security",
+            DiagnosticSeverity.Warning, true, customTags: ["CWE-643", "CWE-0643"]);
+        using var report = await Write([Diagnostic.Create(descriptor, Location.None, "sink")]);
+        var tags = report.RootElement.GetProperty("runs")[0].GetProperty("tool").GetProperty("driver")
+            .GetProperty("rules")[0].GetProperty("properties").GetProperty("tags")
+            .EnumerateArray().Select(tag => tag.GetString()).ToArray();
+        Assert.Equal(new[] { "security", "external/cwe/cwe-643" }, tags);
     }
 
     [Fact]

@@ -159,12 +159,12 @@ internal static class SarifWriter
                     json.WriteString("precision", precision);
                 json.WriteStartArray("tags");
                 json.WriteStringValue("security");
-                foreach (var tag in descriptor.CustomTags.Where(tag => tag.StartsWith("CWE-", StringComparison.Ordinal))
-                    .Append($"CWE-{cwe}").Distinct(StringComparer.Ordinal))
-                {
-                    json.WriteStringValue(tag);
-                    json.WriteStringValue($"external/cwe/cwe-{int.Parse(tag.Substring(4), System.Globalization.CultureInfo.InvariantCulture):D3}");
-                }
+                // GitHub recognizes both CWE spellings as weaknesses. Emit only
+                // canonical tags, deduplicated by ID rather than source spelling.
+                foreach (var cweId in descriptor.CustomTags.Where(tag => tag.StartsWith("CWE-", StringComparison.Ordinal))
+                    .Select(tag => int.Parse(tag.Substring(4), System.Globalization.CultureInfo.InvariantCulture))
+                    .Append(cwe).Distinct())
+                    json.WriteStringValue($"external/cwe/cwe-{cweId:D3}");
                 json.WriteEndArray();
                 json.WriteEndObject();
             }

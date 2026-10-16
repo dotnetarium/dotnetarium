@@ -23,6 +23,8 @@ Investigate new or affected security findings in the code. Fix confirmed issues 
 
 For an evidenced false positive, keep the reason in the current task context or existing agent memory, or add a narrowly scoped EditorConfig suppression with a short explanation when appropriate. A separate triage database or checked-in review record is not required. Recheck the decision when the relevant code or assumptions change.
 
+Task context may be lost. If a decision must survive future tasks or rescans, save its fingerprint, reason and relevant assumptions in the repository's existing review notes or persistent agent memory, separate from the generated report. A new `--sarif` scan replaces the output file and does not import its previous annotations. Keep unmatched notes for review rather than applying them to another finding.
+
 When recording a finding, use its SARIF `partialFingerprints.primaryLocationLineHash` together with the tool, rule ID and repository-relative path. Do not substitute line numbers or an invented hash. A fingerprint matches a location across scans; it does not establish that the flow or a previous false-positive decision is still valid. If no fingerprint is available, keep the location and explanation without fabricating one.
 
 The analyzer honors EditorConfig. The CLI ignores that diagnostic policy by default; explicitly use `--respect-editorconfig` when you want the local CLI to follow it. A locally reviewed or suppressed finding may therefore still appear in the default CLI report. Do not describe that raw report as clean.
@@ -32,6 +34,8 @@ Prefer EditorConfig over adding source pragmas merely to hide a finding. Source-
 ## Review at the PR boundary
 
 Keep the PR scan's default independent policy. EditorConfig is a local convenience; do not use it as a shared finding identity or PR baseline. Review new/affected findings and new or broadened suppressions again during PR review. A local false-positive decision is useful context, not an automatic PR dismissal; explain its reason to the reviewer. Unchanged findings with an existing review do not need a fresh full investigation on every run.
+
+GitHub accepts SARIF suppression annotations but still creates open alerts. Do not add them expecting an upstream dismissal, remove results from the upload to hide them, or treat exported SARIF suppression fields as proof of a GitHub review. GHAS-approved decisions live in its alert state and dismissal metadata; the existing dismissal survives a matching rescan. See [tested behavior](../../../docs/sarif-reporting.md#fingerprints-and-review-decisions).
 
 Report what was checked, what was fixed, any false positives/suppressions and anything unresolved. Redact secrets. Do not enable online `--verify-secrets` unless online verification is requested.
 

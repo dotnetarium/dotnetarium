@@ -32,6 +32,8 @@ Either approach is fine:
 - Keep the reason in the agent's current context or existing memory while working.
 - Add a focused EditorConfig suppression with a short reason when it helps keep local diagnostics useful.
 
+Task context is temporary. For decisions that must survive another task or a rescan, save the finding identity, reason and safety assumptions in existing review notes or persistent agent memory. Keep those notes separate from generated SARIF: `--sarif` replaces its output, and scans do not import earlier annotations. Preserve unmatched notes for review rather than transferring them to another finding.
+
 Revisit the decision when the code or assumptions change. A real issue that is intentionally accepted is an accepted risk, not a false positive. If the agent cannot establish safety, it should say what remains uncertain.
 
 Identify a finding by its SARIF `partialFingerprints.primaryLocationLineHash`, tool, rule ID and repository-relative path. Dotnetarium emits the same line-hash format as GitHub's SARIF uploader when the primary source is readable. This lets local review notes refer to findings across scans. The hash alone does not prove that a flow or its safety assumptions are unchanged. EditorConfig remains a local convenience, not a shared finding baseline.
@@ -44,6 +46,6 @@ Yes: PR review is the second check. Review new or affected findings and newly ad
 
 A useful next improvement is to show findings and suppression counts together in the PR summary, with suppression changes easy to inspect. Count affected diagnostics rather than disable directives. **The Action does not report suppression counts yet**; this is a proposed reporting addition, not a scanner baseline or automatic dismissal system.
 
-SARIF can retain a finding with a `suppressions` entry and justification. GitHub does not list that field in its [supported SARIF properties](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support), so uploading it must not be treated as a GHAS dismissal. Keep the full findings available for PR review. The [code-scanning API](https://docs.github.com/en/rest/code-scanning/code-scanning) can export an analysis as SARIF and separately list dismissed alerts with their review metadata; join them using the exported GitHub alert number. An analysis export is not a complete repository-wide dismissal history. Dotnetarium does not currently apply fingerprint-based suppressions or synchronize GitHub dismissals.
+We tested SARIF suppression uploads against GHAS: accepted suppressions still created open alerts, while an actual GHAS dismissal survived a later scan with the same fingerprint. See [the results](sarif-reporting.md#fingerprints-and-review-decisions). Keep the full findings available for PR review, then record approved decisions in GHAS. Local notes and EditorConfig do not synchronize to GitHub. Dotnetarium does not currently apply fingerprint-based suppressions or synchronize GitHub dismissals.
 
 Dotnetarium's deliberately vulnerable regression fixtures are expected to produce findings. Keep their test purpose intact.

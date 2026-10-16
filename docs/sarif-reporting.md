@@ -66,6 +66,48 @@ CLI coverage notices or an Actions summary.
 See [GitHub's SARIF support](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support)
 and [CodeQL metadata guidance](https://codeql.github.com/docs/writing-codeql-queries/metadata-for-codeql-queries/).
 
+## Fingerprints and review decisions
+
+The uploader preserves an existing `primaryLocationLineHash`, fills in a missing
+one and warns on a mismatch. No second fingerprint is needed. A fingerprint
+identifies a finding; it does not store its review status.
+
+On 2026-10-16 we tested seven isolated results on a LANCommander fork using the
+same pinned `upload-sarif` action as the reusable Action:
+
+| Case | Observed GHAS behavior |
+|---|---|
+| Native fingerprint vs uploader-generated fingerprint | Identical hash; no mismatch warning |
+| Accepted `external` / `inSource` suppressions | Upload succeeded; alerts remained open |
+| Pending, rejected and status-free suppression variants | Upload succeeded; alerts remained open |
+| Rescan without suppression fields, after inserting a source line | Same seven alert numbers; no duplicates |
+| One test alert dismissed through GHAS before rescan | Still dismissed after rescan; reason and comment retained |
+
+Evidence: [initial upload](https://github.com/dbalikhin/LANCommander/actions/runs/38900739681)
+and [rescan](https://github.com/dbalikhin/LANCommander/actions/runs/38900895016).
+The test results use a separate tool name and category. These observations are
+from GitHub.com; GHES behavior was not tested. After recording the results, the
+remaining synthetic alerts were dismissed as used in tests.
+
+The analysis SARIF export was lossy: it dropped suppression kinds and reasons,
+and returned `state: accepted` even for pending/rejected input suppressions.
+The later export contained no suppressions at all, including for the alert that
+was still dismissed in GHAS. Do not infer approved reviews from these fields.
+Use the [code-scanning alerts API](https://docs.github.com/en/rest/code-scanning/code-scanning)
+with `state=dismissed` for current dismissal state, reason, comment, reviewer and
+time. An analysis can be exported with `Accept: application/sarif+json`; join its
+`github/alertNumber` to alert metadata. One analysis does not contain every
+historical repository alert.
+
+Keep full results in uploads and use GHAS review/dismissal for durable upstream
+decisions. Suppression annotations are useful only to local consumers that
+explicitly support them; they are not an end-to-end GHAS suppression mechanism.
+Dotnetarium currently emits fingerprints but does not apply fingerprint-based
+suppressions or synchronize dismissals. A new `--sarif` scan replaces the output
+and does not preserve manual annotations. Store lasting local review notes
+separately, keyed by tool, rule, path and fingerprint. Any future automatic reuse
+needs explicit opt-in and must preserve reasons and unmatched decisions for review.
+
 ## Scan status
 
 No-build loading is the default; `-p` / `--project` opts into MSBuild design-time

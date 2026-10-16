@@ -313,13 +313,20 @@ foreach ($result in $report.runs[0].results) {
 $ruleIds = @($report.runs[0].tool.driver.rules | ForEach-Object id)
 $tlsRules = @($report.runs[0].tool.driver.rules | Where-Object id -eq 'DNA0020')
 if ($tlsRules.Count -ne 1 -or $tlsRules[0].defaultConfiguration.level -ne 'warning' -or
-    $tlsRules[0].properties.tags -notcontains 'CWE-295') {
+    $tlsRules[0].properties.tags -notcontains 'external/cwe/cwe-295') {
     throw 'TLS configuration findings must reference one warning rule with CWE-295 metadata.'
 }
 $xmlRules = @($report.runs[0].tool.driver.rules | Where-Object id -eq 'DNA0021')
 if ($xmlRules.Count -ne 1 -or $xmlRules[0].defaultConfiguration.level -ne 'warning' -or
-    $xmlRules[0].properties.tags -notcontains 'CWE-611') {
+    $xmlRules[0].properties.tags -notcontains 'external/cwe/cwe-611') {
     throw 'XXE findings must reference one warning rule with CWE-611 metadata.'
+}
+foreach ($rule in $report.runs[0].tool.driver.rules) {
+    $tags = @($rule.properties.tags)
+    if (@($tags | Where-Object { $_ -cmatch '^CWE-' }).Count -gt 0 -or
+        @($tags | Sort-Object -Unique).Count -ne $tags.Count) {
+        throw "Rule $($rule.id) emits duplicate or noncanonical weakness tags."
+    }
 }
 foreach ($result in @($report.runs[0].results | Where-Object ruleId -eq 'DNA0020')) {
     if ($result.PSObject.Properties.Name -contains 'codeFlows') {

@@ -72,6 +72,11 @@ Existing CLI scripts should remove `-nb` / `--no-build`; those flags are no long
 | `--verify-secrets` | Check supported configuration credentials with their providers; detection is otherwise offline |
 | `--help` | Show all options, including configuration-file include/exclude globs |
 
+Local fingerprint decisions live in a separate, unversioned
+`.dotnetarium/suppressions.sarif` input file and survive rescans. The `--sarif`
+path is regenerated output; use different paths and preserve the input when
+adding decisions. See [local suppressions](docs/local-suppressions.md).
+
 Credential scanning starts at the nearest Git root, including root workflows when the solution is under `src/`. Outside Git it starts at the project/solution directory. The analyzer checks configuration supplied through `AdditionalFiles`. Secret values are omitted from output. See [credential detection, scope and verification](docs/credential-scanning.md).
 
 | Exit code | Meaning |

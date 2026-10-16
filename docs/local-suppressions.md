@@ -3,10 +3,25 @@
 Start with a complete scan, review each finding, then choose which local decisions
 to apply. Suppressions are off by default; they do not change GHAS dismissals.
 
+**Local decisions survive rescans because they are stored in a separate SARIF
+input file.** Keep that file in the local checkout, separate from generated
+reports and temporary files:
+
+| File | Purpose | What a rescan does |
+|---|---|---|
+| `.dotnetarium/suppressions.sarif` | Persistent local decisions, fingerprints and reasons | Reads it in `fingerprint`/`all` mode; never changes or deletes entries |
+| `artifacts/local.sarif` (chosen with `--sarif`) | Generated results for the current scan | Replaces it; includes annotations for matching local suppressions |
+
 ```sh
-dotnetarium App.slnx --suppress off --sarif /tmp/raw.sarif
-dotnetarium App.slnx --suppress fingerprint --sarif /tmp/local.sarif --fail
+dotnetarium App.slnx --suppress off --sarif artifacts/raw.sarif
+dotnetarium App.slnx --suppress fingerprint --sarif artifacts/local.sarif --fail
 ```
+
+After reviewing findings and saving decisions in `.dotnetarium/suppressions.sarif`,
+repeat the second command after each edit. It reloads those decisions, applies
+matching suppressions and regenerates only `artifacts/local.sarif`. Restarting the
+agent does not require recreating the local decision file. Running with `off` or
+`editorconfig` leaves that file intact too; those modes simply do not apply it.
 
 | `--suppress` value | Applies |
 |---|---|
@@ -27,9 +42,12 @@ Use `<repository-root>/.dotnetarium/suppressions.sarif`, or pass
 project/solution directory. Keep the file unversioned through an existing ignore
 rule or `.git/info/exclude`. No repository review database is required.
 
+Create the decision file only if it does not exist. To add a decision, merge the
+selected finding into the existing file; do not replace it with a new scan report.
 Copy the exact rule ID, primary relative URI and fingerprint from the raw report.
-Retain other decisions when adding one. This minimal example illustrates the
-format; replace the example values with the actual finding and evidenced reason:
+Retain other decisions and their reasons when adding one. This minimal example
+illustrates the format; replace the example values with the actual finding and
+evidenced reason:
 
 ```json
 {
@@ -64,8 +82,11 @@ unmatched records. Suppressed findings remain in output SARIF with their reasons
 console findings and `--fail` exclude them. EditorConfig may prevent findings from
 being produced, so its suppressed count is not included in that fingerprint count.
 
-Rescans read the local decisions without rewriting them. Use a different SARIF
-output path; overwriting the decision file is rejected. A missing default file
+Unmatched decisions remain in the input file and are reported for review; the CLI
+does not delete them or transfer them to another finding. Use a different SARIF
+output path; overwriting the decision file is rejected, including in `off` mode.
+Editing suppression annotations only in generated output does not persist a
+decision for the next scan. A missing default file
 means no decisions, while an explicitly missing or invalid file fails the scan.
 `off` and `editorconfig` do not read the fingerprint file.
 

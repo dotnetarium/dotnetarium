@@ -31,7 +31,9 @@ Start with `--suppress off` to review all findings. For each finding, explain th
 
 Use `--suppress fingerprint`, `editorconfig` or `all` to apply local decisions. Fingerprint decisions go into an unversioned `.dotnetarium/suppressions.sarif`, separate from generated reports, with a justification for each accepted finding. See [the modes and file format](local-suppressions.md). Rescans preserve this input and report unmatched records. There is no versioned review database.
 
-Task context or existing agent memory is fine for temporary reasoning, but the CLI cannot apply decisions from memory. Use the local file for fingerprint decisions that need to survive a later task. Recheck assumptions when the relevant code changes; a matching line hash does not prove a flow is still safe.
+**Local decisions survive rescans and later agent sessions in the same checkout.** `.dotnetarium/suppressions.sarif` is the persistent input; the file selected by `--sarif` is regenerated output. Keep these paths separate, initialize the input only if absent, and merge new decisions without replacing existing ones. Reuse it with `--suppress fingerprint` or `all`; other modes leave it unchanged. Annotations added only to generated output are lost when that output is replaced.
+
+Task context or existing agent memory is fine for temporary reasoning, but the CLI cannot apply decisions from memory. Save lasting suppressions in the local input file and keep it out of temporary/report cleanup. Unmatched entries remain there for review. Recheck assumptions when the relevant code changes; a matching line hash does not prove a flow is still safe.
 
 The agent should show the chosen suppression mode, each finding's disposition and reason, remaining findings, the locally suppressed fingerprint count and unmatched decisions. A filtered scan must not be described as an unfiltered clean scan. Fingerprint-suppressed findings remain in SARIF with reasons; console output and `--fail` use the remaining findings. EditorConfig can prevent findings from being generated, so its suppression count is not included in the fingerprint count.
 

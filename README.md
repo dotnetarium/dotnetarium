@@ -66,9 +66,16 @@ Existing CLI scripts should remove `-nb` / `--no-build`; those flags are no long
 | `--config <path>` | Select a JSON rules configuration |
 | `--configuration <name>` | Select configuration; default is `Debug` |
 | `--framework <net8.0\|net10.0>` | Select root target framework |
-| `--respect-editorconfig` | Honor project rule severity and suppression; CLI reports all rules by default |
+| `--suppress <off\|fingerprint\|editorconfig\|all>` | Apply local suppression policy; default `off`. See [local suppressions](docs/local-suppressions.md) |
+| `--suppression-file <path>` | Override the local `.dotnetarium/suppressions.sarif` file |
+| `--respect-editorconfig` | Compatibility alias enabling EditorConfig policy |
 | `--verify-secrets` | Check supported configuration credentials with their providers; detection is otherwise offline |
 | `--help` | Show all options, including configuration-file include/exclude globs |
+
+Local fingerprint decisions live in a separate, unversioned
+`.dotnetarium/suppressions.sarif` input file and survive rescans. The `--sarif`
+path is regenerated output; use different paths and preserve the input when
+adding decisions. See [local suppressions](docs/local-suppressions.md).
 
 Credential scanning starts at the nearest Git root, including root workflows when the solution is under `src/`. Outside Git it starts at the project/solution directory. The analyzer checks configuration supplied through `AdditionalFiles`. Secret values are omitted from output. See [credential detection, scope and verification](docs/credential-scanning.md).
 
@@ -102,7 +109,7 @@ Remote inputs are enabled by default. Add `local` to check console input, proces
 
 Profiles change analysis effort, not rules. Cutoffs retain other findings and report configured limits through informational `DNA9000`. See [configuration, numeric overrides and scope](docs/RuleConfiguration.md) and [performance comparisons](docs/performance-budget-matrix.md).
 
-Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `dotnet_diagnostic.DNAxxxx.severity` to change a rule's severity. The CLI requires `--respect-editorconfig` to apply that policy.
+Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `dotnet_diagnostic.DNAxxxx.severity` to change a rule's severity. The CLI applies that policy with `--suppress editorconfig` or `all`; `--respect-editorconfig` remains an alias.
 
 ## Guides
 
@@ -115,6 +122,7 @@ Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `d
 | Coverage and performance | [Scan modes](docs/scan-modes.md), [engine limits](docs/scan-performance.md) |
 | SARIF and GitHub | [Severity, remediation guidance and paths](docs/sarif-reporting.md) |
 | GitHub Actions | [Setup, options and examples](https://github.com/dotnetarium/dotnetarium-action) |
+| AI-assisted development | [Local checks, agent skill and finding review](docs/ai-development.md) |
 | Development | [Architecture](docs/Architecture.md), [releasing](docs/Releasing.md) |
 
 Run from source with a .NET 10 SDK:

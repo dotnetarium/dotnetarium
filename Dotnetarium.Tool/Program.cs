@@ -47,6 +47,13 @@ internal static class Program
                 : "Scan mode: project. MSBuild design-time loading; no application assembly is emitted.");
             var configRoot = ConfigurationFileScanner.FindRoot(target);
             var outputRoot = configRoot;
+            var suppressions = options.Suppress is "fingerprint" or "all"
+                ? new FingerprintSuppressions(outputRoot, options.SuppressionFile) : null;
+            if (options.SarifPath != null &&
+                Path.GetFullPath(options.SarifPath).Equals(Path.GetFullPath(options.SuppressionFile ??
+                    Path.Combine(outputRoot, ".dotnetarium", "suppressions.sarif")),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                throw new ArgumentException("SARIF output must differ from the local suppression file.");
             using var verifier = options.VerifySecrets ? new ProviderSecretVerifier() : null;
             var configScanner = new ConfigurationFileScanner(report, options.ConfigScope, verifier);
             var diagnostics = new ConcurrentBag<Diagnostic>(configScanner.Scan(configRoot));
@@ -152,7 +159,8 @@ internal static class Program
                     (effectiveConfig.ThreatModels ?? [SourceScope.Remote]).Select(scope => scope.ToString().ToLowerInvariant()).Order(StringComparer.Ordinal).ToArray(),
                     effectiveConfig.ExperimentalFilePersistence == true));
                 var analysisStarted = Stopwatch.GetTimestamp();
-                var result = await compilation.WithAnalyzers(analyzers, analyzerOptions).GetAllDiagnosticsAsync();
+                var driverOptions = new CompilationWithAnalyzersOptions(analyzerOptions, null, true, false, reportSuppressedDiagnostics: true);
+                var result = await compilation.WithAnalyzers(analyzers, driverOptions).GetAllDiagnosticsAsync();
                 report.RecordElapsed("analysis-total", analysisStarted);
                 report.AnalyzedProjects.Add(project.Name);
                 var projectErrors = result.Where(diagnostic =>
@@ -206,7 +214,10 @@ internal static class Program
 
             if (verifier != null) findings = await verifier.VerifyAsync(findings);
 
-            foreach (var diagnostic in findings)
+            if (suppressions != null) findings = suppressions.Apply(findings);
+            var visibleFindings = findings.Where(diagnostic => !diagnostic.Properties.ContainsKey(FingerprintSuppressions.JustificationProperty)).ToArray();
+
+            foreach (var diagnostic in visibleFindings)
             {
                 var line = SourceLocationSpan.GetDisplaySpan(diagnostic.Location);
                 var path = line.Path;
@@ -224,7 +235,9 @@ internal static class Program
                 Console.Error.WriteLine($"{(notice.IsFailure ? "Error" : "Input warning")}: {notice.Message}");
             foreach (var group in report.Notices.Where(notice => notice.Kind == ScanNoticeKind.Information && notice.Id != "analysis-budget").GroupBy(notice => notice.Id).OrderBy(group => group.Key))
                 Console.WriteLine($"Info: {group.OrderBy(notice => notice.Message, StringComparer.Ordinal).First().Message} ({group.Count()} notice(s); details in SARIF.)");
-            Console.WriteLine($"Scan {(report.HasFailures ? "failed" : "completed")}: {findings.Length} security finding(s) across {report.AnalyzedProjects.Count} project compilation(s).");
+            Console.WriteLine($"Scan {(report.HasFailures ? "failed" : "completed")}: {visibleFindings.Length} security finding(s) across {report.AnalyzedProjects.Count} project compilation(s).");
+            Console.WriteLine($"Suppressions: {options.Suppress}; {findings.Length - visibleFindings.Length} fingerprint finding(s) suppressed locally" +
+                (suppressions == null ? "." : $"; {suppressions.UnmatchedCount} unmatched record(s)."));
             foreach (var setting in report.AnalysisSettings.Select(setting => (setting.Profile, setting.MethodDepth, setting.LambdaDepth, setting.WorkBudget)).Distinct().OrderBy(setting => setting.Profile))
                 Console.WriteLine($"Analysis: {setting.Profile}; method/lambda depth {setting.MethodDepth}/{setting.LambdaDepth}; work budget {setting.WorkBudget}.");
             Console.WriteLine($"Analysis limits: {report.Cutoffs.Sum(cutoff => cutoff.Count)} bounded stop(s). Input status: {report.InputStatus}.");
@@ -237,7 +250,7 @@ internal static class Program
                 Console.Error.WriteLine("Scan failed: see errors above; available findings were preserved.");
                 return 2;
             }
-            return options.Fail && findings.Length > 0 ? 1 : 0;
+            return options.Fail && visibleFindings.Length > 0 ? 1 : 0;
         }
         catch (System.Text.Json.JsonException error)
         {
@@ -257,7 +270,9 @@ internal static class Program
         "  --config <path>            Override dotnetarium.json (version 2.0)\n" +
         "  --analysis-profile <fast|full|max> Override the configured profile; explicit numeric limits remain in effect\n" +
         "  --fail                     Return 1 when findings are present\n" +
-        "  --respect-editorconfig     Apply configured rule severity and suppression\n" +
+        "  --suppress <off|fingerprint|editorconfig|all> Local suppression policy (default: off)\n" +
+        "  --suppression-file <path>  Local SARIF decisions (default: <repo>/.dotnetarium/suppressions.sarif)\n" +
+        "  --respect-editorconfig     Compatibility alias enabling editorconfig suppression\n" +
         "  --verify-secrets           Check supported credentials online (opt-in)\n" +
         "  --config-include <glob>    Include matching config files (repeatable)\n" +
         "  --config-exclude <glob>    Exclude matching config files (repeatable)\n" +
@@ -279,12 +294,13 @@ internal static class Program
         string.Equals(Path.GetFileName(path), "dotnetarium.json", StringComparison.OrdinalIgnoreCase);
 
     private sealed record Options(string Target, string? SarifPath, string? ConfigPath,
-        bool Fail, bool NoBuild, string? Configuration, string? Framework, bool RespectEditorConfig,
+        bool Fail, bool NoBuild, string? Configuration, string? Framework, string Suppress, string? SuppressionFile,
         ConfigurationScanScope ConfigScope, bool VerifySecrets, AnalysisProfile? ProfileOverride)
     {
+        internal bool RespectEditorConfig => Suppress is "editorconfig" or "all";
         internal static Options Parse(string[] args)
         {
-            string? target = null, sarif = null, config = null, configuration = null, framework = null;
+            string? target = null, sarif = null, config = null, configuration = null, framework = null, suppress = null, suppressionFile = null;
             bool fail = false, noBuild = true, respectEditorConfig = false, verifySecrets = false;
             AnalysisProfile? analysisProfile = null;
             var configIncludes = new List<string>();
@@ -308,6 +324,12 @@ internal static class Program
                         break;
                     case "--fail": fail = true; break;
                     case "--respect-editorconfig": respectEditorConfig = true; break;
+                    case "--suppress":
+                        suppress = NextValue();
+                        if (suppress is not ("off" or "fingerprint" or "editorconfig" or "all"))
+                            throw new ArgumentException("--suppress must be off, fingerprint, editorconfig or all.");
+                        break;
+                    case "--suppression-file": suppressionFile = NextValue(); break;
                     case "--verify-secrets": verifySecrets = true; break;
                     case "--config-include": configIncludes.Add(NextValue()); break;
                     case "--config-exclude": configExcludes.Add(NextValue()); break;
@@ -329,7 +351,10 @@ internal static class Program
                 throw new ArgumentException("Provide a nonempty configuration name.");
             if (framework != null && framework is not ("net8.0" or "net10.0"))
                 throw new ArgumentException("--framework must be net8.0 or net10.0.");
-            return new Options(target, sarif, config, fail, noBuild, configuration, framework, respectEditorConfig,
+            if (respectEditorConfig && suppress is "off" or "fingerprint")
+                throw new ArgumentException("--respect-editorconfig conflicts with the selected --suppress mode.");
+            suppress ??= respectEditorConfig ? "editorconfig" : "off";
+            return new Options(target, sarif, config, fail, noBuild, configuration, framework, suppress, suppressionFile,
                 new ConfigurationScanScope(configIncludes, configExcludes), verifySecrets, analysisProfile);
         }
     }

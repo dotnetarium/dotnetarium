@@ -35,9 +35,10 @@ internal static class SarifWriter
         WriteTool(json, descriptors);
         WriteSourceRoot(json, root);
         if (report != null) WriteInvocation(json, report, loadingMode);
+        var fingerprints = new SarifFingerprints(root, diagnostics.Select(diagnostic => diagnostic.Location));
         json.WriteStartArray("results");
         foreach (var diagnostic in diagnostics)
-            WriteResult(json, diagnostic, root, ruleIndexes[diagnostic.Id]);
+            WriteResult(json, diagnostic, root, ruleIndexes[diagnostic.Id], fingerprints);
         json.WriteEndArray();
         json.WriteEndObject();
         json.WriteEndArray();
@@ -190,13 +191,23 @@ internal static class SarifWriter
     }
 
     private static void WriteResult(Utf8JsonWriter json, Diagnostic diagnostic, string root,
-        int ruleIndex)
+        int ruleIndex, SarifFingerprints fingerprints)
     {
         json.WriteStartObject();
         json.WriteString("ruleId", diagnostic.Id);
         json.WriteNumber("ruleIndex", ruleIndex);
         json.WriteString("level", Level(diagnostic.Severity));
         WriteMessage(json, "message", diagnostic.GetMessage());
+        if (diagnostic.Properties.TryGetValue(FingerprintSuppressions.JustificationProperty, out var justification))
+        {
+            json.WriteStartArray("suppressions");
+            json.WriteStartObject();
+            json.WriteString("kind", "external");
+            json.WriteString("status", "accepted");
+            json.WriteString("justification", justification);
+            json.WriteEndObject();
+            json.WriteEndArray();
+        }
         if (diagnostic.Properties.TryGetValue(ProviderSecretVerifier.StatusProperty, out var verification))
         {
             json.WriteStartObject("properties");
@@ -209,6 +220,12 @@ internal static class SarifWriter
             json.WriteStartArray("locations");
             WriteLocation(json, diagnostic.Location, root);
             json.WriteEndArray();
+            if (fingerprints.Get(diagnostic.Location) is { } fingerprint)
+            {
+                json.WriteStartObject("partialFingerprints");
+                json.WriteString("primaryLocationLineHash", fingerprint);
+                json.WriteEndObject();
+            }
         }
 
         var flowLocations = diagnostic.AdditionalLocations.Where(IsSourceLocation).ToArray();

@@ -25,6 +25,9 @@ jobs:
         run: dotnet run --project tests/ModernSinkSmoke/ModernSinkSmoke.csproj -c Release -p:RunAnalyzers=false
       - name: Build CLI for project and no-build smoke tests
         run: dotnet build Dotnetarium.Tool/Dotnetarium.Tool.csproj -c Release -p:RunAnalyzers=false
+      - name: Check local suppression modes and persistence
+        shell: pwsh
+        run: ./tests/SuppressionSmoke/Test.ps1
       - name: Test Razor and Blazor flows
         shell: pwsh
         run: ./tests/RazorSmoke/Test.ps1
@@ -83,6 +86,9 @@ jobs:
       - name: Scan with lowercase project config
         shell: pwsh
         run: ./tests/CliSmoke/Test.ps1
+      - name: Check local suppression modes and persistence
+        shell: pwsh
+        run: ./tests/SuppressionSmoke/Test.ps1
       - name: Check no-build Razor generation and default test exclusion
         shell: pwsh
         run: |

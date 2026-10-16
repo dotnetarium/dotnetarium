@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dotnetarium Security"
+  short_description: "Scan, review and fix C# security findings"
+  default_prompt: "Use $dotnetarium-security to review every finding, recommend a fix or justified local suppression, and verify the result."

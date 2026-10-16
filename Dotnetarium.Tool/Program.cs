@@ -136,7 +136,7 @@ internal static class Program
                     !configOptions.GlobalOptions.TryGetValue("build_property.UsingMicrosoftNETSdkBlazorWebAssembly", out _)) && inputs.MSBuildPath != null)
                     configOptions = await ProjectAnalysisOptions.WithTestProjectMetadataAsync(configOptions, project.FilePath!, inputs.MSBuildPath,
                         selection.Configuration, ScanSelection.FrameworkOf(project));
-                var analyzerOptions = new AnalyzerOptions(additionalFiles, new AnalysisProfileOptions(configOptions));
+                var analyzerOptions = new AnalyzerOptions(additionalFiles, new AnalysisProfileOptions(configOptions, options.ProfileOverride));
                 ConfigData effectiveConfig;
                 try { effectiveConfig = ConfigurationManager.GetProjectConfiguration(additionalFiles); }
                 catch (System.Text.Json.JsonException error)
@@ -255,6 +255,7 @@ internal static class Program
         "Usage: dotnetarium <project.csproj|solution.sln|solution.slnx> [options]\n" +
         "  --sarif <path>             Write SARIF 2.1.0\n" +
         "  --config <path>            Override dotnetarium.json (version 2.0)\n" +
+        "  --analysis-profile <fast|full|max> Override the configured profile; explicit numeric limits remain in effect\n" +
         "  --fail                     Return 1 when findings are present\n" +
         "  --respect-editorconfig     Apply configured rule severity and suppression\n" +
         "  --verify-secrets           Check supported credentials online (opt-in)\n" +
@@ -279,12 +280,13 @@ internal static class Program
 
     private sealed record Options(string Target, string? SarifPath, string? ConfigPath,
         bool Fail, bool NoBuild, string? Configuration, string? Framework, bool RespectEditorConfig,
-        ConfigurationScanScope ConfigScope, bool VerifySecrets)
+        ConfigurationScanScope ConfigScope, bool VerifySecrets, AnalysisProfile? ProfileOverride)
     {
         internal static Options Parse(string[] args)
         {
             string? target = null, sarif = null, config = null, configuration = null, framework = null;
             bool fail = false, noBuild = true, respectEditorConfig = false, verifySecrets = false;
+            AnalysisProfile? analysisProfile = null;
             var configIncludes = new List<string>();
             var configExcludes = new List<string>();
             for (int index = 0; index < args.Length; index++)
@@ -296,6 +298,14 @@ internal static class Program
                 {
                     case "--sarif": sarif = NextValue(); break;
                     case "--config": config = NextValue(); break;
+                    case "--analysis-profile":
+                        analysisProfile = NextValue() switch {
+                            "fast" => AnalysisProfile.Fast,
+                            "full" => AnalysisProfile.Full,
+                            "max" => AnalysisProfile.Max,
+                            _ => throw new ArgumentException("--analysis-profile must be fast, full or max.")
+                        };
+                        break;
                     case "--fail": fail = true; break;
                     case "--respect-editorconfig": respectEditorConfig = true; break;
                     case "--verify-secrets": verifySecrets = true; break;
@@ -320,7 +330,7 @@ internal static class Program
             if (framework != null && framework is not ("net8.0" or "net10.0"))
                 throw new ArgumentException("--framework must be net8.0 or net10.0.");
             return new Options(target, sarif, config, fail, noBuild, configuration, framework, respectEditorConfig,
-                new ConfigurationScanScope(configIncludes, configExcludes), verifySecrets);
+                new ConfigurationScanScope(configIncludes, configExcludes), verifySecrets, analysisProfile);
         }
     }
 }

@@ -39,6 +39,7 @@ evaluation. The old no-build flags are removed; omit them to use the default.
 | --- | --- |
 | `--sarif <path>` | Write SARIF 2.1.0 with relative paths and available data flows |
 | `--config <path>` | Override discovered `dotnetarium.json` |
+| `--analysis-profile <fast\|full\|max>` | Override the configured profile without replacing custom models, threat models or explicit numeric limits |
 | `--fail` | Return 1 for findings when there is no fatal scan failure |
 | `-p`, `--project` | Select MSBuild design-time project loading |
 | `--configuration <name>` | Select configuration; default is `Debug` |
@@ -48,6 +49,12 @@ evaluation. The old no-build flags are removed; omit them to use the default.
 | `--config-include <glob>` | Limit credential files to matching paths; repeatable |
 | `--config-exclude <glob>` | Exclude matching credential files; repeatable |
 | `-h`, `--help` | Print usage |
+
+An omitted `--analysis-profile` preserves each project's configured profile;
+otherwise the CLI defaults to `full`. An explicit flag selects `fast`, `full` or
+`max` without rewriting `dotnetarium.json`. Custom models, threat models and
+explicit numeric depth/work limits are preserved. Profiles select analysis
+effort, not a different security rule catalog.
 
 For example, limit credential scanning while retaining the C# scan:
 

@@ -1,4 +1,5 @@
 using Dotnetarium.Config;
+using Dotnetarium.Tool;
 using Dotnetarium.Analyzers.Taint;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
@@ -7,6 +8,24 @@ namespace Dotnetarium.Analyzers.Tests;
 
 public sealed class AnalysisProfileTests
 {
+    [Theory]
+    [InlineData("Fast", 3u)]
+    [InlineData("Full", 5u)]
+    [InlineData("Max", 10u)]
+    public void Cli_profile_override_preserves_explicit_limits(string selected, uint depth)
+    {
+        var profile = Enum.Parse<AnalysisProfile>(selected);
+        var data = new ConfigData { AnalysisProfile = AnalysisProfile.Max,
+            MaxTaintAnalysisWork = 1234, ThreatModels = [SourceScope.Local] };
+        var settings = new TaintAnalysisSettings(data,
+            new AnalyzerOptions([], new AnalysisProfileOptions(new HostOptions(null), profile)));
+        Assert.Equal(profile, settings.Profile);
+        Assert.Equal(depth, settings.MethodDepth);
+        Assert.Equal(1234u, settings.Work);
+        Assert.Equal(AnalysisProfile.Max, data.AnalysisProfile);
+        Assert.Equal(new[] { SourceScope.Local }, data.ThreatModels);
+    }
+
     [Theory]
     [InlineData("fast", false)]
     [InlineData("full", false)]

@@ -48,6 +48,7 @@
     <Compile Include="../Dotnetarium.Tool/SecretTokenValidation.cs" Link="Tool/SecretTokenValidation.cs" />
     <Compile Include="../Dotnetarium.Tool/ProviderSecretVerifier.cs" Link="Tool/ProviderSecretVerifier.cs" />
     <Compile Include="../Dotnetarium.Tool/ScanReport.cs" Link="Tool/ScanReport.cs" />
+    <Compile Include="../Dotnetarium.Tool/AnalysisProfileOptions.cs" Link="Tool/AnalysisProfileOptions.cs" />
     <Compile Include="../Dotnetarium.Tool/SarifWriter.cs" Link="Tool/SarifWriter.cs" />
     <Compile Include="../Dotnetarium.Tool/SarifRuleMetadata.cs" Link="Tool/SarifRuleMetadata.cs" />
     <EmbeddedResource Include="../Dotnetarium.Tool/SarifMetadata.json" LogicalName="Dotnetarium.SarifMetadata.json" />

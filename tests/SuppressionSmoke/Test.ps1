@@ -88,3 +88,5 @@ $null = Scan 'ignored-invalid-file' 1 @('--suppress','off')
 $null = Scan 'pragma-off' 1 @('--suppress','off')
 $null = Scan 'pragma-editorconfig' 1 @('--suppress','editorconfig')
 Write-Output "Suppression smoke passed: $script:checks checks. Evidence: $scratch"
+# Expected --fail scans return 1. Do not leak that native status to the host shell.
+$global:LASTEXITCODE = 0

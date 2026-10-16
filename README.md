@@ -115,6 +115,7 @@ Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `d
 | Coverage and performance | [Scan modes](docs/scan-modes.md), [engine limits](docs/scan-performance.md) |
 | SARIF and GitHub | [Severity, remediation guidance and paths](docs/sarif-reporting.md) |
 | GitHub Actions | [Setup, options and examples](https://github.com/dotnetarium/dotnetarium-action) |
+| AI-assisted development | [Local checks, agent skill and finding review](docs/ai-development.md) |
 | Development | [Architecture](docs/Architecture.md), [releasing](docs/Releasing.md) |
 
 Run from source with a .NET 10 SDK:

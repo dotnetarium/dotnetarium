@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dotnetarium Security"
+  short_description: "Scan, review and fix C# security findings"
+  default_prompt: "Use $dotnetarium-security to validate my C# changes, investigate findings and verify fixes."

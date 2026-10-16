@@ -53,9 +53,13 @@ An unmapped generated step retains its role and `dotnetarium.locationStatus`
 without inventing a repository path. Richer trace capture and grouping are future work.
 
 Upload with GitHub's `upload-sarif` action and a stable category for each intended
-analysis configuration. That action can generate `primaryLocationLineHash`
-fingerprints from the checked-out source; the writer does not manufacture custom
-fingerprints. Keep the checkout and scan revisions aligned. Custom coverage
+analysis configuration. The writer emits `partialFingerprints.primaryLocationLineHash`
+using GitHub's uploader algorithm for readable primary source files inside the
+source root, including mapped Razor locations. Missing or unreadable files retain
+their findings without a fabricated fingerprint. Keep the checkout and scan
+revisions aligned. Match local review notes using the tool, rule ID, repository-relative
+path and fingerprint; a match does not prove that a flow's safety assumptions are
+unchanged. Custom coverage
 properties remain available in the file but are not a substitute for reviewing
 CLI coverage notices or an Actions summary.
 

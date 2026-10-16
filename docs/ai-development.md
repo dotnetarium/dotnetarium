@@ -1,63 +1,49 @@
 # Local development with AI agents
 
-Dotnetarium fits naturally into the edit–build–test loop. The NuGet analyzer gives immediate IDE/build warnings, and the CLI provides a separate security scan before a change is finished. Agents should investigate the warnings and verify fixes, just as a developer would.
+Use Dotnetarium in the normal edit–build–test loop: investigate security warnings, fix real issues and verify the result. Build/IDE diagnostics come from the NuGet analyzer; the CLI adds a separate scan of the relevant project graph.
 
-## Make the check explicit
+## Give the agent a clear default
 
-There is no universal agent equivalent of always running Clippy. The repository's instructions and configured tools determine which checks an agent runs. A skill supplies the workflow; a short `AGENTS.md` instruction makes the expectation clear. CI remains the deterministic enforcement point.
+For C# changes, run the affected build/tests, inspect new diagnostics, then scan with Dotnetarium. Fix confirmed issues and rerun the checks. Formatting and lint checks should follow the repository's existing setup.
 
-A useful default for C# work is:
-
-1. Build the affected projects and inspect compiler/analyzer diagnostics.
-2. Run the relevant tests and any formatter/linter checks already configured by the repository.
-3. Scan the relevant project or solution with Dotnetarium. Keep the project graph so cross-file and cross-project flows remain visible.
-4. Review newly introduced or affected security findings, fix confirmed issues and rerun the checks.
-
-A successful build is not a security verdict. Diagnostics need review even when they are warnings, and a CLI scan without `--fail` can return zero with findings present. Expected analysis-budget limits are informational.
-
-## Use the skill
-
-The repository includes [dotnetarium-security](../.agents/skills/dotnetarium-security/SKILL.md), a portable, instruction-only skill. It covers scan selection, evidence-based review, fixes, false positives and verification.
-
-For Codex, keep the folder under `.agents/skills/` in the application repository, then invoke it with:
+The repository includes the [dotnetarium-security skill](../.agents/skills/dotnetarium-security/SKILL.md). Keep its folder under `.agents/skills/` in a Codex application repository and invoke it with:
 
 ```text
 Use $dotnetarium-security to review my C# changes, fix confirmed findings and verify the result.
 ```
 
-Other agents can use the same `SKILL.md` through their supported skill location or an explicit instruction to read it. A discoverable skill may be selected automatically; that is not a guarantee that every code change triggers it. Codex's [skill documentation](https://learn.chatgpt.com/docs/build-skills) describes discovery and invocation.
-
-For an application that already uses Dotnetarium, adapt this short snippet into its existing `AGENTS.md`:
+Other agents can use the same instructions through their supported skill location. A short entry in the application's existing `AGENTS.md` makes the expected workflow explicit:
 
 ```markdown
 When changing C# or security-relevant configuration:
-- Run the affected build/tests and inspect new compiler/analyzer warnings.
-- Use the dotnetarium-security skill for a CLI scan of the relevant project graph.
-- Address confirmed findings introduced or affected by the change, then rerun the checks.
-- Record evidence for false positives and report unresolved findings. Do not add broad suppressions to make a scan clean.
+- Run the affected build/tests and inspect new diagnostics.
+- Use the dotnetarium-security skill to scan the relevant project graph.
+- Fix confirmed issues, then rerun the checks.
+- Explain false positives; keep the reason in task context/memory or use a narrow EditorConfig suppression.
+- At PR review, revisit new/affected findings and suppression changes.
 ```
 
-Use the application's existing tool manifest/version and analyzer setup. The CLI needs .NET 10. The analyzer needs a Roslyn 5.0+ host; see [requirements](../README.md#get-started). This skill does not automatically add package references or change CI policy.
+Use the application's existing tool version and configuration. The CLI needs .NET 10; see [requirements](../README.md#get-started). Codex's [skill documentation](https://learn.chatgpt.com/docs/build-skills) explains discovery and invocation.
 
-## Give false-positive decisions a durable home
+## Keep local false-positive handling simple
 
-Use a small, version-controlled review note or the repository's existing security-review system. Record the rule, relative path, containing symbol/source/sink, evidence, review date or commit and assumptions that would invalidate the decision. That lets the next agent recheck the reasoning instead of guessing from chat history.
+Either approach is fine:
 
-Keep these dispositions distinct:
+- Keep the reason in the agent's current context or existing memory while working.
+- Add a focused EditorConfig suppression with a short reason when it helps keep local diagnostics useful.
 
-| Disposition | What happens next |
-| --- | --- |
-| Confirmed issue | Fix it within scope and verify the security property. |
-| False positive | Record concrete evidence that the reported unsafe behavior does not occur. |
-| Accepted risk | Refer to an explicit acceptance decision; the issue is still real. |
-| Unresolved | Keep it visible and state what information is missing. |
+Revisit the decision when the code or assumptions change. A real issue that is intentionally accepted is an accepted risk, not a false positive. If the agent cannot establish safety, it should say what remains uncertain.
 
-The CLI does **not** currently read review notes or provide an implemented per-finding triage baseline. A documented false positive can therefore remain in raw SARIF and still cause `--fail` to return `1`. A future reviewed-findings feature should track code context, invalidate stale decisions and report reviewed findings separately instead of silently dropping them.
+Identify a finding by its SARIF `partialFingerprints.primaryLocationLineHash`, tool, rule ID and repository-relative path. Dotnetarium emits the same line-hash format as GitHub's SARIF uploader when the primary source is readable. This lets local review notes refer to findings across scans. The hash alone does not prove that a flow or its safety assumptions are unchanged. EditorConfig remains a local convenience, not a shared finding baseline.
 
-## Suppressions are explicit policy
+The analyzer follows EditorConfig. The CLI ignores that diagnostic policy by default; `--respect-editorconfig` opts into it for local use. PR scanning keeps the independent default, so locally suppressed findings remain available for review. Source pragmas can still hide CLI findings; review changes to those separately. See [configuration](RuleConfiguration.md).
 
-Prefer a precise model correction when the scanner cannot express a genuine validation boundary. Avoid adding code attributes or pragmas merely to get an agent's task to pass. When a suppression is needed, use the narrowest existing repository mechanism and document the reason; a file-wide exclusion can hide future issues too.
+## Review again at the PR boundary
 
-The CLI's default independence is specifically about EditorConfig diagnostic policy: it reports findings despite that policy unless `--respect-editorconfig` is passed. It does **not** bypass every source-level suppression. A local check with CLI 2.7.2 confirmed that `#pragma warning disable DNA0014` still hides the corresponding finding. Agents should inspect suppression changes in the diff as well as scanner output. See [configuration](RuleConfiguration.md) for supported policy.
+Yes: PR review is the second check. Review new or affected findings and newly added or broadened suppressions, using the local explanation as context. Previously reviewed, unchanged findings do not need repeated full investigations.
 
-For Dotnetarium's own development, deliberately vulnerable test fixtures are part of the scanner's regression suite. Validate their expected findings rather than removing the vulnerable examples.
+A useful next improvement is to show findings and suppression counts together in the PR summary, with suppression changes easy to inspect. Count affected diagnostics rather than disable directives. **The Action does not report suppression counts yet**; this is a proposed reporting addition, not a scanner baseline or automatic dismissal system.
+
+SARIF can retain a finding with a `suppressions` entry and justification. GitHub does not list that field in its [supported SARIF properties](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support), so uploading it must not be treated as a GHAS dismissal. Keep the full findings available for PR review. The [code-scanning API](https://docs.github.com/en/rest/code-scanning/code-scanning) can export an analysis as SARIF and separately list dismissed alerts with their review metadata; join them using the exported GitHub alert number. An analysis export is not a complete repository-wide dismissal history. Dotnetarium does not currently apply fingerprint-based suppressions or synchronize GitHub dismissals.
+
+Dotnetarium's deliberately vulnerable regression fixtures are expected to produce findings. Keep their test purpose intact.

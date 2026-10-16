@@ -35,9 +35,10 @@ internal static class SarifWriter
         WriteTool(json, descriptors);
         WriteSourceRoot(json, root);
         if (report != null) WriteInvocation(json, report, loadingMode);
+        var fingerprints = new SarifFingerprints(root, diagnostics.Select(diagnostic => diagnostic.Location));
         json.WriteStartArray("results");
         foreach (var diagnostic in diagnostics)
-            WriteResult(json, diagnostic, root, ruleIndexes[diagnostic.Id]);
+            WriteResult(json, diagnostic, root, ruleIndexes[diagnostic.Id], fingerprints);
         json.WriteEndArray();
         json.WriteEndObject();
         json.WriteEndArray();
@@ -190,7 +191,7 @@ internal static class SarifWriter
     }
 
     private static void WriteResult(Utf8JsonWriter json, Diagnostic diagnostic, string root,
-        int ruleIndex)
+        int ruleIndex, SarifFingerprints fingerprints)
     {
         json.WriteStartObject();
         json.WriteString("ruleId", diagnostic.Id);
@@ -209,6 +210,12 @@ internal static class SarifWriter
             json.WriteStartArray("locations");
             WriteLocation(json, diagnostic.Location, root);
             json.WriteEndArray();
+            if (fingerprints.Get(diagnostic.Location) is { } fingerprint)
+            {
+                json.WriteStartObject("partialFingerprints");
+                json.WriteString("primaryLocationLineHash", fingerprint);
+                json.WriteEndObject();
+            }
         }
 
         var flowLocations = diagnostic.AdditionalLocations.Where(IsSourceLocation).ToArray();

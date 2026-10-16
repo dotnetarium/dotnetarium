@@ -17,23 +17,25 @@ dotnetarium App.slnx --sarif /temporary/path/dotnetarium.sarif
 
 Replace the report path with an actual temporary or ignored location. Restore dependencies through the repository's normal setup when needed. Read findings, rule guidance and available data flows. Exit `0` permits findings; `--fail` returns `1` for findings, while `2` means an execution/input failure. Expected analysis-budget limits are informational.
 
-Investigate new or affected security findings in the code. Fix confirmed issues within the task's scope, then rerun the relevant build/tests and scan. Explain uncertain findings or intentionally accepted risks instead of calling them false positives. Existing unrelated findings do not require expanding the task into a repository-wide cleanup.
+Review every reported finding and present its rule/location, evidence and recommendation: fix a real issue, or suppress an evidenced false positive. When safety is uncertain, recommend investigation/fix and leave it visible. An intentionally accepted real risk is not a false positive. Fix confirmed issues within scope, then rerun build/tests and the scan; identify unrelated findings that need a separate fix rather than silently ignoring them.
 
 ## Handle false positives locally
 
-For an evidenced false positive, keep the reason in the current task context or existing agent memory, or add a narrowly scoped EditorConfig suppression with a short explanation when appropriate. A separate triage database or checked-in review record is not required. Recheck the decision when the relevant code or assumptions change.
+Begin with `--suppress off` (the default) to see all findings. For an evidenced false positive, recommend a fingerprint suppression or a narrowly scoped EditorConfig suppression and explain why. Apply it when within the user's requested scope. Do not bulk-suppress findings merely to produce a clean result.
 
-Task context may be lost. If a decision must survive future tasks or rescans, save its fingerprint, reason and relevant assumptions in the repository's existing review notes or persistent agent memory, separate from the generated report. A new `--sarif` scan replaces the output file and does not import its previous annotations. Keep unmatched notes for review rather than applying them to another finding.
+Use `--suppress fingerprint`, `editorconfig` or `all` only when intentionally validating local decisions. `--respect-editorconfig` remains a compatibility alias. Check `--help` before using these options with an older installed CLI; if unsupported, retain the raw scan and explain the limitation.
+
+For fingerprint decisions, use the local `.dotnetarium/suppressions.sarif`. To initialize it, copy the raw SARIF, keep its tool metadata and only the selected results, and add `"suppressions": [{"kind":"external","status":"accepted","justification":"the evidenced reason"}]` to each selected result. Copy the actual identities; preserve existing entries when adding decisions. Keep this file unversioned using an existing ignore rule or `.git/info/exclude`. A custom local path uses `--suppression-file`. No versioned review records or upstream synchronization are needed.
 
 When recording a finding, use its SARIF `partialFingerprints.primaryLocationLineHash` together with the tool, rule ID and repository-relative path. Do not substitute line numbers or an invented hash. A fingerprint matches a location across scans; it does not establish that the flow or a previous false-positive decision is still valid. If no fingerprint is available, keep the location and explanation without fabricating one.
 
-The analyzer honors EditorConfig. The CLI ignores that diagnostic policy by default; explicitly use `--respect-editorconfig` when you want the local CLI to follow it. A locally reviewed or suppressed finding may therefore still appear in the default CLI report. Do not describe that raw report as clean.
+Task context or existing agent memory is also fine for a temporary decision, but the CLI cannot read that memory. Local fingerprint files survive rescans; never use them as the scan's SARIF output. Revisit decisions when relevant code or assumptions change and inspect unmatched records. The CLI retains fingerprint-suppressed findings and their reasons in output SARIF, but removes them from console findings and `--fail` counts. EditorConfig filtering can prevent findings from being generated.
 
-Prefer EditorConfig over adding source pragmas merely to hide a finding. Source-level pragmas can still suppress CLI diagnostics, so inspect suppression changes in the diff. Keep suppressions precise; do not disable a whole rule or broaden exclusions to finish the task.
+Report the chosen mode, remaining findings, suppressed fingerprint count and reasons, unmatched decisions and unresolved concerns. Distinguish an unfiltered clean scan from a locally filtered scan. Source pragmas do not hide findings from the CLI; do not disable a whole rule or broaden exclusions to finish the task.
 
 ## Review at the PR boundary
 
-Keep the PR scan's default independent policy. EditorConfig is a local convenience; do not use it as a shared finding identity or PR baseline. Review new/affected findings and new or broadened suppressions again during PR review. A local false-positive decision is useful context, not an automatic PR dismissal; explain its reason to the reviewer. Unchanged findings with an existing review do not need a fresh full investigation on every run.
+Keep PR scans at `--suppress off`. Local suppressions and memory are conveniences for local agents, not a shared PR baseline or GHAS dismissal. Summarize local decisions when relevant to the task; no versioned review process is required.
 
 GitHub accepts SARIF suppression annotations but still creates open alerts. Do not add them expecting an upstream dismissal, remove results from the upload to hide them, or treat exported SARIF suppression fields as proof of a GitHub review. GHAS-approved decisions live in its alert state and dismissal metadata; the existing dismissal survives a matching rescan. See [tested behavior](../../../docs/sarif-reporting.md#fingerprints-and-review-decisions).
 

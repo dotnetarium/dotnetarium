@@ -198,6 +198,16 @@ internal static class SarifWriter
         json.WriteNumber("ruleIndex", ruleIndex);
         json.WriteString("level", Level(diagnostic.Severity));
         WriteMessage(json, "message", diagnostic.GetMessage());
+        if (diagnostic.Properties.TryGetValue(FingerprintSuppressions.JustificationProperty, out var justification))
+        {
+            json.WriteStartArray("suppressions");
+            json.WriteStartObject();
+            json.WriteString("kind", "external");
+            json.WriteString("status", "accepted");
+            json.WriteString("justification", justification);
+            json.WriteEndObject();
+            json.WriteEndArray();
+        }
         if (diagnostic.Properties.TryGetValue(ProviderSecretVerifier.StatusProperty, out var verification))
         {
             json.WriteStartObject("properties");

@@ -102,11 +102,12 @@ historical repository alert.
 Keep full results in uploads and use GHAS review/dismissal for durable upstream
 decisions. Suppression annotations are useful only to local consumers that
 explicitly support them; they are not an end-to-end GHAS suppression mechanism.
-Dotnetarium currently emits fingerprints but does not apply fingerprint-based
-suppressions or synchronize dismissals. A new `--sarif` scan replaces the output
-and does not preserve manual annotations. Store lasting local review notes
-separately, keyed by tool, rule, path and fingerprint. Any future automatic reuse
-needs explicit opt-in and must preserve reasons and unmatched decisions for review.
+Dotnetarium can apply [local fingerprint suppressions](local-suppressions.md)
+with `--suppress fingerprint` or `all`, preserving matching findings and their
+justifications in SARIF. Decisions live in a separate unversioned local file;
+rescans retain that file and report unmatched records. This does not synchronize
+GHAS dismissals. Use `--suppress off` for full PR scans. A new `--sarif` scan
+replaces its output, so manual annotations in that generated report are temporary.
 
 ## Scan status
 

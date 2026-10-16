@@ -19,33 +19,28 @@ When changing C# or security-relevant configuration:
 - Run the affected build/tests and inspect new diagnostics.
 - Use the dotnetarium-security skill to scan the relevant project graph.
 - Fix confirmed issues, then rerun the checks.
-- Explain false positives; keep the reason in task context/memory or use a narrow EditorConfig suppression.
-- At PR review, revisit new/affected findings and suppression changes.
+- For every finding, recommend a fix or an evidenced local suppression; leave uncertain findings visible.
+- Report local suppression mode, reasons and remaining findings. Keep PR scans at --suppress off.
 ```
 
 Use the application's existing tool version and configuration. The CLI needs .NET 10; see [requirements](../README.md#get-started). Codex's [skill documentation](https://learn.chatgpt.com/docs/build-skills) explains discovery and invocation.
 
 ## Keep local false-positive handling simple
 
-Either approach is fine:
+Start with `--suppress off` to review all findings. For each finding, explain the evidence and recommend a fix or a local suppression. Confirmed vulnerabilities should be fixed; uncertainty is a reason to investigate, not suppress. An accepted real risk is different from a false positive.
 
-- Keep the reason in the agent's current context or existing memory while working.
-- Add a focused EditorConfig suppression with a short reason when it helps keep local diagnostics useful.
+Use `--suppress fingerprint`, `editorconfig` or `all` to apply local decisions. Fingerprint decisions go into an unversioned `.dotnetarium/suppressions.sarif`, separate from generated reports, with a justification for each accepted finding. See [the modes and file format](local-suppressions.md). Rescans preserve this input and report unmatched records. There is no versioned review database.
 
-Task context is temporary. For decisions that must survive another task or a rescan, save the finding identity, reason and safety assumptions in existing review notes or persistent agent memory. Keep those notes separate from generated SARIF: `--sarif` replaces its output, and scans do not import earlier annotations. Preserve unmatched notes for review rather than transferring them to another finding.
+Task context or existing agent memory is fine for temporary reasoning, but the CLI cannot apply decisions from memory. Use the local file for fingerprint decisions that need to survive a later task. Recheck assumptions when the relevant code changes; a matching line hash does not prove a flow is still safe.
 
-Revisit the decision when the code or assumptions change. A real issue that is intentionally accepted is an accepted risk, not a false positive. If the agent cannot establish safety, it should say what remains uncertain.
+The agent should show the chosen suppression mode, each finding's disposition and reason, remaining findings, the locally suppressed fingerprint count and unmatched decisions. A filtered scan must not be described as an unfiltered clean scan. Fingerprint-suppressed findings remain in SARIF with reasons; console output and `--fail` use the remaining findings. EditorConfig can prevent findings from being generated, so its suppression count is not included in the fingerprint count.
 
-Identify a finding by its SARIF `partialFingerprints.primaryLocationLineHash`, tool, rule ID and repository-relative path. Dotnetarium emits the same line-hash format as GitHub's SARIF uploader when the primary source is readable. This lets local review notes refer to findings across scans. The hash alone does not prove that a flow or its safety assumptions are unchanged. EditorConfig remains a local convenience, not a shared finding baseline.
+The NuGet analyzer follows normal compiler/IDE policy. The CLI defaults to `off`, including reporting diagnostics hidden by source pragmas. `--respect-editorconfig` remains a compatibility alias for EditorConfig policy. See [configuration](RuleConfiguration.md).
 
-The analyzer follows EditorConfig. The CLI ignores that diagnostic policy by default; `--respect-editorconfig` opts into it for local use. PR scanning keeps the independent default, so locally suppressed findings remain available for review. Source pragmas can still hide CLI findings; review changes to those separately. See [configuration](RuleConfiguration.md).
+## Keep local decisions local
 
-## Review again at the PR boundary
+PR scanning uses `--suppress off` and uploads the full findings. Local decisions do not automatically dismiss GHAS alerts, and no versioned review workflow or synchronization is required.
 
-Yes: PR review is the second check. Review new or affected findings and newly added or broadened suppressions, using the local explanation as context. Previously reviewed, unchanged findings do not need repeated full investigations.
-
-A useful next improvement is to show findings and suppression counts together in the PR summary, with suppression changes easy to inspect. Count affected diagnostics rather than disable directives. **The Action does not report suppression counts yet**; this is a proposed reporting addition, not a scanner baseline or automatic dismissal system.
-
-We tested SARIF suppression uploads against GHAS: accepted suppressions still created open alerts, while an actual GHAS dismissal survived a later scan with the same fingerprint. See [the results](sarif-reporting.md#fingerprints-and-review-decisions). Keep the full findings available for PR review, then record approved decisions in GHAS. Local notes and EditorConfig do not synchronize to GitHub. Dotnetarium does not currently apply fingerprint-based suppressions or synchronize GitHub dismissals.
+We tested SARIF suppression uploads against GHAS: accepted suppressions still created open alerts, while an actual GHAS dismissal survived a later scan with the same fingerprint. See [the results](sarif-reporting.md#fingerprints-and-review-decisions). Manage upstream dismissals in GHAS.
 
 Dotnetarium's deliberately vulnerable regression fixtures are expected to produce findings. Keep their test purpose intact.

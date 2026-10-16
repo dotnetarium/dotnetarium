@@ -387,6 +387,9 @@ FodyWeavers.xsd
 # Local History for Visual Studio Code
 .history/
 
+# Local agent suppression decisions (never a repository baseline)
+.dotnetarium/suppressions.sarif
+
 # Windows Installer files from build outputs
 *.cab
 *.msi

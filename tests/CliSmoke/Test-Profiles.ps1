@@ -99,5 +99,19 @@ foreach ($framework in @('net8.0', 'net10.0')) {
         @((Get-Content $profileSarif -Raw | ConvertFrom-Json).runs[0].results | Where-Object ruleId -eq 'DNA0002').Count -ne 3) {
         throw 'No-build CLI did not honor the configured max profile.'
     }
+    foreach ($mode in @(@(), @('-p'))) {
+        foreach ($profile in @('fast', 'full', 'max')) {
+            & $tool $profileProject @mode --analysis-profile $profile --sarif $profileSarif --fail | Out-Null
+            $run = (Get-Content $profileSarif -Raw | ConvertFrom-Json).runs[0]
+            $settings = @($run.invocations[0].properties.'dotnetarium.analysisSettings')[0]
+            $expected = @{ fast = 1; full = 2; max = 3 }[$profile]
+            if ($LASTEXITCODE -ne 1 -or $settings.profile -ne $profile -or
+                @($run.results | Where-Object ruleId -eq 'DNA0002').Count -ne $expected) {
+                throw "CLI profile override failed: $profile ($mode)."
+            }
+        }
+    }
 }
+& $tool $profileProject --analysis-profile invalid *> $null
+if ($LASTEXITCODE -ne 2) { throw 'Invalid CLI profile was accepted.' }
 'PASS analysis profiles: fast/full/max through package and CLI, bounded summaries and safe deeper helpers on .NET 8/10'

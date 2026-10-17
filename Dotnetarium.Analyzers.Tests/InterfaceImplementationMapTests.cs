@@ -242,6 +242,30 @@ public sealed class InterfaceImplementationMapTests
         Assert.Equal(expected, map.GetTargets(member, receiver).Length);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Constructed_generic_method_preserves_source_dispatch(bool missingParameterType)
+    {
+        var parameterType = missingParameterType ? "MissingDelegate" : "System.Action";
+        var source = $$"""
+            public interface IService { void Go<T>({{parameterType}} callback); }
+            public class Service : IService { public void Go<T>({{parameterType}} callback) {} }
+            """;
+        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+            .Select(path => MetadataReference.CreateFromFile(path));
+        var compilation = CSharpCompilation.Create("GenericMethod", [CSharpSyntaxTree.ParseText(source)], references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var contract = compilation.GetTypeByMetadataName("IService")!;
+        var member = ((IMethodSymbol)contract.GetMembers("Go").Single())
+            .Construct(compilation.GetSpecialType(SpecialType.System_String));
+        var map = SourceInterfaceImplementationMap.GetOrCreate(compilation);
+        var unconstrained = Assert.Single(map.GetTargets(member));
+        var constrained = Assert.Single(map.GetTargets(member, contract));
+        Assert.Equal(SpecialType.System_String, Assert.Single(unconstrained.TypeArguments).SpecialType);
+        Assert.Equal(SpecialType.System_String, Assert.Single(constrained.TypeArguments).SpecialType);
+    }
+
     private static CSharpCompilation Compile(string name, string source, params MetadataReference[] dependencies)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)

@@ -29,8 +29,39 @@ dotnetarium MyApp.csproj --project --configuration Release --framework net10.0
 | Taint limits | Informational; retain other findings | Informational; retain other findings |
 | Unusable compilation or analyzer failure | Exit 2 | Exit 2 |
 
+Projects without C# source, such as documentation projects, are noted and skipped
+without failing other projects. A scan with no usable C# projects still exits 2.
+
+Solution scans exclude test projects identified by `IsTestProject`, the
+`IsTestingPlatformApplication` marker, or known test runner packages. This includes
+xUnit v3 runners and MSTest/NUnit runners with their enabled runner settings.
+No-build loading also recognizes `MSTest.Sdk` test roots before SDK validation;
+explicitly scanning that custom SDK still requires project mode. An explicit
+`IsTestProject=false` takes precedence. Assertion libraries, project names and
+folder names alone do not exclude projects. Referenced projects remain available
+for semantic binding, and explicitly selected test projects can still be scanned.
+
+For explicit CLI project exclusions, set `ExcludeProjects` in the configuration
+beside the scan target, or select it with `--config`:
+
+```json
+{
+  "Version": "2.0",
+  "ExcludeProjects": ["test/**", "tools/Generator/Generator.csproj"]
+}
+```
+
+Patterns match project paths relative to the configuration directory, using
+`*`, `**` and `?`. Required dependency projects remain available for symbols but
+are excluded from analysis. No-build loading avoids opening unreferenced excluded
+roots; project mode applies analysis exclusions after workspace loading.
+Configuration credential scanning has its own scope and is unaffected. The NuGet
+analyzer accepts this setting but does not control its host's project selection.
+Intentional exclusions are informational and recorded in SARIF as
+`dotnetarium.excludedProjects`. Excluding every usable project still exits 2.
+
 There is no automatic fallback that executes project targets. Choose `-p` when
-custom imports, conditional source selection or non-Razor generators need project
+unsupported imports, conditional source selection or non-Razor generators need project
 evaluation. The old no-build flags are removed; omit them to use the default.
 
 ## CLI options
@@ -43,7 +74,7 @@ evaluation. The old no-build flags are removed; omit them to use the default.
 | `--fail` | Return 1 for findings when there is no fatal scan failure |
 | `-p`, `--project` | Select MSBuild design-time project loading |
 | `--configuration <name>` | Select configuration; default is `Debug` |
-| `--framework <net8.0\|net10.0>` | Select root target framework and compatible dependencies |
+| `--framework <TFM>` | Select `net8.0`, `net10.0`, `netstandard2.0` or `netstandard2.1` and compatible dependencies |
 | `--respect-editorconfig` | Apply configured rule severity/suppression; off by default in the CLI |
 | `--verify-secrets` | Verify supported configuration credentials online; off by default |
 | `--config-include <glob>` | Limit credential files to matching paths; repeatable |
@@ -73,8 +104,15 @@ The tool needs the .NET 10 runtime. Default loading also needs a compatible SDK
 selected from the target directory, respecting `global.json`.
 
 No-build loading supports conventional `Microsoft.NET.Sdk`, Web, Razor and Blazor
-WebAssembly projects targeting .NET 8 or 10. Install the corresponding reference
-packs, normally supplied by the SDK. Razor generation selects the installed SDK
+WebAssembly projects targeting .NET 8 or 10, plus conventional .NET Standard 2.0/2.1
+library projects. Install the corresponding reference packs, normally supplied by
+the SDK or a separate restore. Standard 2.0 uses the cached `NETStandard.Library`
+reference contract (2.0.3 by default); Standard 2.1 uses `NETStandard.Library.Ref`.
+Implicit Standard 2.0 requests such as `2.0.0-*` require a saved restore matching
+the project and request before its resolved stable reference version is used.
+Neither is replaced by the tool's .NET 10 runtime assemblies. Standard compiler
+defaults are C# 7.3/8.0 respectively, unless `LangVersion` overrides them.
+Razor generation selects the installed SDK
 from the project directory and respects `global.json`. Other direct-loader inputs
 remain reconstructed; host runtime assemblies are not substituted for missing packs. Reference
 packs are discovered under the .NET installation, `DOTNET_ROOT`, installations
@@ -84,7 +122,8 @@ The loader reads common properties, static string equality/inequality conditions
 combined with `And`, `Or`, `!` and parentheses, and literal
 `$(Property.Contains('text'))` checks using case-sensitive ordinal string matching.
 These checks are parsed as data; arbitrary methods, overloads, nested property
-functions and escaped arguments remain unsupported. The loader reads nearest
+functions and escaped arguments remain unsupported. Literal `Exists(...)` file
+and directory conditions are supported. The loader reads nearest
 `Directory.Build.props` and `Directory.Packages.props`, compile includes/removes,
 project references, explicit assembly references, implicit usings, JSON rules
 and editor configuration. By default it uses Debug and scans supported target
@@ -93,6 +132,11 @@ and logging namespaces are included when `ImplicitUsings` is enabled; explicit
 `Using Remove` items are respected. `--configuration` and `--framework` work in
 both modes; framework selection retains compatible source dependencies of the
 selected root projects.
+No-build dependency selection prefers an exact target, then compatible lower
+targets: .NET 10 can reference .NET 8, and both can reference Standard 2.1/2.0.
+Standard 2.1 can reference Standard 2.0; the reverse is not compatible. Project
+mode uses the workspace's selected dependency targets; a multi-target library
+may resolve differently from no-build mode.
 SDK-style transitive project outputs are included, so types exposed through
 service/repository dependencies can bind correctly. Direct reference aliases,
 `EmbedInteropTypes`, analyzer-only references, `ReferenceOutputAssembly=false`
@@ -100,8 +144,20 @@ and `DisableTransitiveProjectReferences=true` are respected. Transitive referenc
 respect compile-asset visibility (`PrivateAssets`, `IncludeAssets` and
 `ExcludeAssets`) and use the SDK's default reference metadata. Circular or unavailable
 references produce coverage notices.
+ASP.NET framework references also propagate through compatible source dependencies,
+respecting `PrivateAssets=all`. Analyzer-only references participate in restore
+validation without exposing their types or becoming extra analyzed projects.
 
-Custom imports, `Directory.Build.targets`, package build inputs and unsupported
+Local static imports, including `.props` and `.csproj` files, are read in declaration
+order with their conditions. Nested imports retain their defining-file paths;
+cycles and traversal limits produce coverage notices. Matching unconditional
+official `Sdk.props` / `Sdk.targets` imports can also identify conventional SDK
+projects. Targets and tasks in imported files are not executed.
+The conventional `[MSBuild]::GetPathOfFileAbove('filename', 'directory')`
+parent import is supported when both arguments resolve to literals. Arbitrary
+property functions still produce notices.
+
+Unresolved or wildcard imports, custom SDKs, `Directory.Build.targets`, package build inputs and unsupported
 conditions can change source selection or compiler options. No-build mode warns
 about these inputs, including unevaluated `Choose`/`When`/`Otherwise` branches.
 Shared props items resolve `MSBuildThisFileDirectory` against their defining file;

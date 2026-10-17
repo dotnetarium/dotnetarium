@@ -16,7 +16,7 @@ Update the tool with `dotnet tool update --global dotnetarium`.
 
 | Component | Requirements |
 | --- | --- |
-| Projects | C# targeting .NET 8 or .NET 10 |
+| Projects | C# targeting .NET 8/10 or .NET Standard 2.0/2.1 libraries |
 | NuGet analyzer | Roslyn 5.0+ host, such as the .NET 10 SDK or Visual Studio 2026 |
 | Global tool | .NET 10 runtime; a compatible SDK for project loading or Razor generation |
 | GitHub Action | [Standalone workflow or existing CI](https://github.com/dotnetarium/dotnetarium-action#standalone-scan); SDK setup and restore included by default |
@@ -65,7 +65,7 @@ Existing CLI scripts should remove `-nb` / `--no-build`; those flags are no long
 | `--fail` | Fail the command when security findings are present |
 | `--config <path>` | Select a JSON rules configuration |
 | `--configuration <name>` | Select configuration; default is `Debug` |
-| `--framework <net8.0\|net10.0>` | Select root target framework |
+| `--framework <TFM>` | Select `net8.0`, `net10.0`, `netstandard2.0` or `netstandard2.1` |
 | `--suppress <off\|fingerprint\|editorconfig\|all>` | Apply local suppression policy; default `off`. See [local suppressions](docs/local-suppressions.md) |
 | `--suppression-file <path>` | Override the local `.dotnetarium/suppressions.sarif` file |
 | `--respect-editorconfig` | Compatibility alias enabling EditorConfig policy |
@@ -90,6 +90,10 @@ Configured depth/work limits are normal and informational. Missing references, c
 ## Configure
 
 Place lowercase `dotnetarium.json` beside a project or solution. The analyzer package includes project configuration automatically; the tool discovers it or uses `--config`. JSON models extend built-in sources, sinks and sanitizers.
+
+The CLI also accepts `"ExcludeProjects": ["test/**", "tools/**"]` to exclude
+project analysis while preserving required dependency symbols. Patterns are
+relative to that configuration file; credential-file scanning keeps its own scope.
 
 ```json
 {

@@ -138,6 +138,7 @@ namespace Dotnetarium.Config
                                                    target.TaintFlowVisualizationEnabled;
             target.ExperimentalFilePersistence = overlay.ExperimentalFilePersistence ?? target.ExperimentalFilePersistence;
             target.AnalysisProfile = overlay.AnalysisProfile ?? target.AnalysisProfile;
+            target.ExcludeProjects = overlay.ExcludeProjects != null ? new List<string>(overlay.ExcludeProjects) : target.ExcludeProjects;
             target.MaxInterproceduralMethodCallChain = overlay.MaxInterproceduralMethodCallChain ??
                                                         target.MaxInterproceduralMethodCallChain;
             target.MaxInterproceduralLambdaOrLocalFunctionCallChain =

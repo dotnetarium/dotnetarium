@@ -19,6 +19,7 @@ internal sealed class ScanReport
     internal ConcurrentBag<string> AnalyzedProjects { get; } = [];
     internal ConcurrentBag<string> SkippedProjects { get; } = [];
     internal ConcurrentBag<string> ExcludedTestProjects { get; } = [];
+    internal ConcurrentBag<string> ExcludedProjects { get; } = [];
     internal ConcurrentBag<ScanAnalysisSettings> AnalysisSettings { get; } = [];
     internal ConcurrentBag<ScanCutoff> Cutoffs { get; } = [];
     // Parallel project stages are accumulated elapsed time, not scan wall time.

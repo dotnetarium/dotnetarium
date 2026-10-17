@@ -72,6 +72,28 @@ public class StaticConditionTests
     }
 
     [Fact]
+    public void EvaluatesExistsOnlyWithAnExplicitFilesystemContext()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "dotnetarium-exists-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "input.props"), "<Project />");
+            foreach (var expression in new[] { "Exists('input.props')", "Exists('.')", "!Exists('missing.props')", "!Exists('')" })
+            {
+                Assert.True(StaticCondition.TryEvaluate(expression, out var value, directory));
+                Assert.True(value);
+            }
+            Assert.True(StaticCondition.TryEvaluate("Exists('missing.props')", out var missing, directory));
+            Assert.False(missing);
+            Assert.False(StaticCondition.TryEvaluate("true Or UnknownFunction('input.props')", out _, directory));
+            Assert.False(StaticCondition.TryEvaluate("false And Exists('unterminated)", out _, directory));
+            Assert.False(StaticCondition.TryEvaluate("Exists('$(Missing)')", out _, directory));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
     public void RejectsExcessiveNesting()
     {
         Assert.False(StaticCondition.TryEvaluate(new string('(', 1000) + "true" + new string(')', 1000), out _));

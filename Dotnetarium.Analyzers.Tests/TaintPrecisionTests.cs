@@ -5,6 +5,28 @@ namespace Dotnetarium.Analyzers.Tests;
 public sealed class TaintPrecisionTests
 {
     [Theory]
+    [InlineData("input", 1)]
+    [InlineData("\"fixed\"", 0)]
+    public async Task Constructed_generic_interface_call_keeps_taint_and_constant_boundaries(string argument, int expected)
+    {
+        var findings = await FrameworkProbe.Analyze($$"""
+            using System.Diagnostics;
+            using Microsoft.AspNetCore.Mvc;
+            public interface IRunner { void Go<T>(string command); }
+            public sealed class Runner : IRunner {
+                public void Go<T>(string command) => Process.Start(command);
+            }
+            [ApiController]
+            public sealed class DemoController : ControllerBase {
+                private readonly IRunner runner;
+                public DemoController(IRunner runner) => this.runner = runner;
+                public void Run(string input) => runner.Go<string>({{argument}});
+            }
+            """, new CommandInjectionTaintAnalyzer());
+        Assert.Equal(expected, findings.Length);
+    }
+
+    [Theory]
     [InlineData("Redirect($\"{options.Value.Address.TrimEnd('/')}/items/{input}\")", 0)]
     [InlineData("Redirect(options.Value.Address + \"/items/\" + input)", 0)]
     [InlineData("Redirect(options.Value.Address + input)", 1)]

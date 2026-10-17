@@ -42,6 +42,8 @@ internal static class Program
             var defaultConfig = Path.Combine(root, "dotnetarium.json");
             var report = new ScanReport();
             var selection = new ScanSelection(options.Configuration, options.Framework);
+            var scopeConfig = options.ConfigPath ?? defaultConfig;
+            ProjectExclusions? exclusions = null;
             Console.WriteLine(options.NoBuild
                 ? "Scan mode: no-build (default). Targets and restore are not run; only official SDK Razor generation is enabled."
                 : "Scan mode: project. MSBuild design-time loading; no application assembly is emitted.");
@@ -61,10 +63,22 @@ internal static class Program
             var loadingStarted = Stopwatch.GetTimestamp();
             try
             {
+                if (File.Exists(scopeConfig))
+                {
+                    var settings = new ConfigurationReader().GetProjectConfiguration(
+                        ImmutableArray.Create<AdditionalText>(new FileAdditionalText(scopeConfig)));
+                    if (settings?.ExcludeProjects is { Count: > 0 } patterns)
+                        exclusions = new ProjectExclusions(Path.GetDirectoryName(Path.GetFullPath(scopeConfig))!, patterns);
+                }
                 loadedInputs = options.NoBuild
-                    ? await new DirectProjectLoader(report, selection).LoadAsync(target)
+                    ? await new DirectProjectLoader(report, selection, exclusions).LoadAsync(target)
                     : await ProjectLoader.LoadProjectAwareAsync(target, report, selection);
+                exclusions?.Apply(loadedInputs, report);
                 selection.Apply(loadedInputs, target, report);
+            }
+            catch (System.Text.Json.JsonException error)
+            {
+                report.Fail("configuration-error", $"Invalid dotnetarium.json: {error.Message}");
             }
             catch (Exception error)
             {
@@ -74,8 +88,9 @@ internal static class Program
             finally { report.RecordElapsed("loading", loadingStarted); }
             using var inputs = loadedInputs;
             var projects = inputs?.Projects.ToArray() ?? Array.Empty<Project>();
-            foreach (var projectRoot in projects.Where(project => project.FilePath != null)
-                .Select(project => Path.GetDirectoryName(project.FilePath!)!).Distinct(ProjectLoader.PathComparer))
+            var credentialProjects = (inputs?.Workspace.CurrentSolution.Projects.Select(project => project.FilePath).OfType<string>() ?? [])
+                .Concat(report.ExcludedProjects);
+            foreach (var projectRoot in credentialProjects.Select(path => Path.GetDirectoryName(path)!).Distinct(ProjectLoader.PathComparer))
             {
                 var relative = Path.GetRelativePath(configRoot, projectRoot);
                 if (relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(relative))
@@ -113,6 +128,12 @@ internal static class Program
                 var compilationStarted = Stopwatch.GetTimestamp();
                 var compilation = await project.GetCompilationAsync();
                 report.RecordElapsed("compilation-total", compilationStarted);
+                if (compilation != null && !compilation.SyntaxTrees.Any() && project.DocumentIds.Count == 0 &&
+                    !inputs!.RazorProjects.Contains(project.Id))
+                {
+                    report.Info("no-source", $"{project.Name}: no C# source inputs; no code analysis is required.");
+                    return;
+                }
                 if (compilation == null || !compilation.SyntaxTrees.Any() ||
                     compilation.GetSpecialType(SpecialType.System_Object).TypeKind == TypeKind.Error)
                 {
@@ -243,6 +264,8 @@ internal static class Program
             Console.WriteLine($"Analysis limits: {report.Cutoffs.Sum(cutoff => cutoff.Count)} bounded stop(s). Input status: {report.InputStatus}.");
             if (!report.ExcludedTestProjects.IsEmpty)
                 Console.WriteLine($"{report.ExcludedTestProjects.Distinct().Count()} test project(s) excluded from analysis.");
+            if (!report.ExcludedProjects.IsEmpty)
+                Console.WriteLine($"{report.ExcludedProjects.Distinct().Count()} project(s) excluded by configuration.");
             if (options.SarifPath != null)
                 await SarifWriter.WriteAsync(options.SarifPath, target, findings, report, options.NoBuild ? "no-build" : "project", outputRoot);
             if (report.HasFailures)
@@ -278,7 +301,7 @@ internal static class Program
         "  --config-exclude <glob>    Exclude matching config files (repeatable)\n" +
         "  -p, --project             Use MSBuild design-time loading instead of the default no-build loader\n" +
         "  --configuration <name>     Select configuration (default: Debug)\n" +
-        "  --framework <net8.0|net10.0> Select root target framework\n" +
+        "  --framework <net8.0|net10.0|netstandard2.0|netstandard2.1> Select root target framework\n" +
         "  -h, --help                 Show this help");
 
     private sealed class FileAdditionalText(string path) : AdditionalText
@@ -349,8 +372,8 @@ internal static class Program
             if (config != null && !File.Exists(config)) throw new ArgumentException($"Configuration not found: {config}");
             if (configuration != null && (string.IsNullOrWhiteSpace(configuration) || configuration.StartsWith('-')))
                 throw new ArgumentException("Provide a nonempty configuration name.");
-            if (framework != null && framework is not ("net8.0" or "net10.0"))
-                throw new ArgumentException("--framework must be net8.0 or net10.0.");
+            if (framework != null && !TargetFrameworkInputs.Supported(framework))
+                throw new ArgumentException("--framework must be net8.0, net10.0, netstandard2.0 or netstandard2.1.");
             if (respectEditorConfig && suppress is "off" or "fingerprint")
                 throw new ArgumentException("--respect-editorconfig conflicts with the selected --suppress mode.");
             suppress ??= respectEditorConfig ? "editorconfig" : "off";

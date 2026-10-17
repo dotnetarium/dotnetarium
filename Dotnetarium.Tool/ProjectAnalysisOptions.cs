@@ -30,7 +30,7 @@ internal sealed class ProjectAnalysisOptions(AnalyzerConfigOptionsProvider origi
             CreateNoWindow = true
         };
         foreach (var argument in new[] { "exec", Path.Combine(msbuildPath, "MSBuild.dll"), projectPath,
-                     "-getProperty:IsTestProject,UsingMicrosoftNETSdkBlazorWebAssembly,TargetFramework,TargetFrameworks",
+                     "-getProperty:IsTestProject,IsTestingPlatformApplication,IsTestApplication,EnableMSTestRunner,EnableNUnitRunner,UsingMicrosoftNETSdkBlazorWebAssembly,TargetFramework,TargetFrameworks",
                      "-getItem:PackageReference", "-nologo", "-verbosity:quiet" }) start.ArgumentList.Add(argument);
         if (configuration != null) start.ArgumentList.Add("-property:Configuration=" + configuration);
         if (framework != null) start.ArgumentList.Add("-property:TargetFramework=" + framework);
@@ -49,10 +49,8 @@ internal sealed class ProjectAnalysisOptions(AnalyzerConfigOptionsProvider origi
         using var properties = System.Text.Json.JsonDocument.Parse(await output);
         var values = properties.RootElement.GetProperty("Properties");
         var result = values.EnumerateObject().ToDictionary(value => value.Name, value => value.Value.GetString() ?? "", StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(result.GetValueOrDefault("IsTestProject")) &&
-            properties.RootElement.GetProperty("Items").GetProperty("PackageReference").EnumerateArray()
-                .Any(item => string.Equals(item.GetProperty("Identity").GetString(), "Microsoft.NET.Test.Sdk", StringComparison.OrdinalIgnoreCase)))
-            result["IsTestProject"] = "true";
+        TestProjectDetection.Apply(result, properties.RootElement.GetProperty("Items").GetProperty("PackageReference")
+            .EnumerateArray().Select(item => item.GetProperty("Identity").GetString() ?? ""));
         return result;
     }
 

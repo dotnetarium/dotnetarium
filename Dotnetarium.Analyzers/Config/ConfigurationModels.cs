@@ -18,6 +18,8 @@ namespace Dotnetarium.Config
         public uint? MaxTaintAnalysisWork { get; set; }
         public bool? TaintFlowVisualizationEnabled { get; set; }
         public bool? ExperimentalFilePersistence { get; set; }
+        // CLI project selection; analyzer hosts own their compilation scope.
+        public List<string>? ExcludeProjects { get; set; }
         public Dictionary<string, TaintEntryPointData> TaintEntryPoints { get; set; }
         public List<TaintSource> TaintSources { get; set; }
         public List<Sink> Sinks { get; set; }

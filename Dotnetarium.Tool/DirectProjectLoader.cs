@@ -13,7 +13,7 @@ namespace Dotnetarium.Tool;
 // Experimental input reconstruction. This deliberately does not evaluate
 // MSBuild tasks, execute targets or restore packages. Only the selected SDK's
 // official Razor generator runs, in memory; project/package generators do not.
-internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? selection = null)
+internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? selection = null, ProjectExclusions? exclusions = null)
 {
     private readonly Dictionary<string, List<ProjectSpec>> specs = new(ProjectLoader.PathComparer);
     private readonly HashSet<string> visited = new(ProjectLoader.PathComparer);
@@ -23,6 +23,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     private readonly Dictionary<string, string[]> sourceInventories = new(ProjectLoader.PathComparer);
     private readonly Dictionary<string, string[]> explicitInventories = new(ProjectLoader.PathComparer);
     private readonly Dictionary<string, SourceText> texts = new(ProjectLoader.PathComparer);
+    private readonly LoaderInputCache inputCache = new();
     private bool solutionTarget;
     private HashSet<string> rootProjects = new(ProjectLoader.PathComparer);
 
@@ -35,6 +36,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
 
     internal async Task<ScanInputs> LoadAsync(string target)
     {
+        using var cacheLifetime = inputCache;
         var workspace = new AdhocWorkspace();
         var inputs = new ScanInputs(workspace);
         try
@@ -42,20 +44,32 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var roots = ProjectLoader.FindProjects(target);
             solutionTarget = Path.GetExtension(target).ToLowerInvariant() is ".sln" or ".slnx";
             rootProjects = roots.ToHashSet(ProjectLoader.PathComparer);
-            foreach (var path in roots) ReadProject(path);
-            var activeSpecs = SelectSpecs(roots);
+            var includedRoots = roots.Where(path =>
+            {
+                if (exclusions?.Excludes(path) != true) return true;
+                report.ExcludedProjects.Add(path);
+                return false;
+            }).ToArray();
+            foreach (var path in includedRoots) ReadProject(path);
+            var activeSpecs = SelectSpecs(includedRoots);
+            var metadataQueue = new Queue<ProjectSpec>(activeSpecs);
+            var metadataSeen = new HashSet<ProjectId>();
+            while (metadataQueue.TryDequeue(out var parent))
+            {
+                if (!metadataSeen.Add(parent.Id)) continue;
+                foreach (var path in parent.RestoreReferences)
+                {
+                    if (File.Exists(path)) ReadProject(path, dependency: true);
+                    if (specs.TryGetValue(path, out var candidates) && CompatibleDependency(parent, candidates) is { } child)
+                        metadataQueue.Enqueue(child);
+                }
+            }
             var razorRequests = new Dictionary<ProjectId, RazorRequest>();
             var solution = workspace.CurrentSolution;
             foreach (var spec in activeSpecs)
             {
-                var major = spec.Framework == "net8.0" ? 8 : 10;
-                var symbols = new HashSet<string>(StringComparer.Ordinal)
-                {
-                    "TRACE", "NET", "NETCOREAPP", $"NET{major}_0", $"NET{major}_0_OR_GREATER",
-                    "NETCOREAPP1_0_OR_GREATER", "NETCOREAPP1_1_OR_GREATER", "NETCOREAPP2_0_OR_GREATER",
-                    "NETCOREAPP2_1_OR_GREATER", "NETCOREAPP2_2_OR_GREATER", "NETCOREAPP3_0_OR_GREATER", "NETCOREAPP3_1_OR_GREATER"
-                };
-                for (var version = 5; version <= major; version++) symbols.Add($"NET{version}_0_OR_GREATER");
+                var major = spec.Framework == "net8.0" ? 8 : spec.Framework == "net10.0" ? 10 : 4;
+                var symbols = TargetFrameworkInputs.Symbols(spec.Framework);
                 if (!IsTrue(spec.Properties.GetValueOrDefault("DisableImplicitConfigurationDefines")))
                 {
                     var configurationSymbol = spec.Properties.GetValueOrDefault("Configuration", "Debug").ToUpperInvariant()
@@ -65,11 +79,11 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 }
                 foreach (var symbol in spec.Properties.GetValueOrDefault("DefineConstants", "").Split(';', StringSplitOptions.RemoveEmptyEntries))
                     symbols.Add(symbol.Trim());
-                var language = major == 8 ? LanguageVersion.CSharp12 : LanguageVersion.CSharp14;
+                var language = TargetFrameworkInputs.Language(spec.Framework);
                 if (spec.Properties.TryGetValue("LangVersion", out var requested) && !LanguageVersionFacts.TryParse(requested, out language))
                 {
                     Warn(spec.Path, "language-version", $"Unsupported LangVersion '{requested}'; using the framework default.");
-                    language = major == 8 ? LanguageVersion.CSharp12 : LanguageVersion.CSharp14;
+                    language = TargetFrameworkInputs.Language(spec.Framework);
                 }
                 var nullable = spec.Properties.GetValueOrDefault("Nullable", "disable") switch
                 {
@@ -161,8 +175,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         Warn(spec.Path, "project-reference", $"Project reference is unavailable: {reference}");
                         continue;
                     }
-                    var dependency = candidates.FirstOrDefault(candidate => candidate.Framework == spec.Framework) ??
-                        (spec.Framework == "net10.0" ? candidates.FirstOrDefault(candidate => candidate.Framework == "net8.0") : null);
+                    var dependency = CompatibleDependency(spec, candidates);
                     if (dependency == null)
                     {
                         Warn(spec.Path, "project-reference", $"No compatible framework for project reference: {reference}");
@@ -223,39 +236,52 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         try
         {
             var root = Path.GetDirectoryName(path)!;
-            var project = XDocument.Load(path);
+            var project = inputCache.Xml(path);
             var sdk = (string?)project.Root?.Attribute("Sdk") ?? "";
+            // Equivalent explicit SDK imports are used by some Razor projects.
+            // Only recognize an unconditional, matching official props/targets pair.
+            if (sdk.Length == 0)
+            {
+                var sdkImports = project.Root!.Elements().Where(element => element.Name.LocalName == "Import" &&
+                    element.Attribute("Condition") == null && element.Attribute("Version") == null).ToArray();
+                sdk = sdkImports.Where(element => (string?)element.Attribute("Project") == "Sdk.props")
+                    .Select(element => (string?)element.Attribute("Sdk") ?? "")
+                    .FirstOrDefault(candidate => IsConventionalSdk(candidate) && sdkImports.Any(element =>
+                        (string?)element.Attribute("Project") == "Sdk.targets" && (string?)element.Attribute("Sdk") == candidate)) ?? "";
+            }
             var godotVersion = sdk.StartsWith("Godot.NET.Sdk/", StringComparison.Ordinal) ? sdk["Godot.NET.Sdk/".Length..] : null;
             if (godotVersion != null && (!Version.TryParse(godotVersion, out var version) || version.Major != 4 || version.Minor > 100 || version.Build > 100))
                 throw new NotSupportedException($"Unsupported Godot SDK version '{godotVersion}'.");
-            if (godotVersion == null && sdk is not ("Microsoft.NET.Sdk" or "Microsoft.NET.Sdk.Web" or "Microsoft.NET.Sdk.Razor" or "Microsoft.NET.Sdk.BlazorWebAssembly"))
-                throw new NotSupportedException($"Unsupported SDK '{sdk}'. Direct loading supports conventional .NET SDK projects.");
             var documents = new List<(string Path, XDocument Document)>();
             var props = FindNearest(root, "Directory.Build.props");
-            if (props != null) documents.Add((props, XDocument.Load(props)));
+            if (props != null) documents.Add((props, inputCache.Xml(props)));
             var central = FindNearest(root, "Directory.Packages.props");
-            if (central != null) documents.Add((central, XDocument.Load(central)));
+            if (central != null) documents.Add((central, inputCache.Xml(central)));
             documents.Add((path, project));
             var properties = ProjectProperties(root);
             properties["MSBuildProjectName"] = Path.GetFileNameWithoutExtension(path);
             properties["MSBuildProjectFullPath"] = path;
-            ReadProperties(documents, properties, path);
-            if (!properties.ContainsKey("IsTestProject") && ReadItems(documents, properties, path)
-                .Any(item => item.Name.LocalName == "PackageReference" &&
-                    string.Equals(Expand((string?)item.Attribute("Include") ?? "", properties), "Microsoft.NET.Test.Sdk", StringComparison.OrdinalIgnoreCase))) properties["IsTestProject"] = "true";
+            var initialDocuments = ReadProperties(documents, properties, path);
+            TestProjectDetection.Apply(properties, ReadItems(initialDocuments, properties, path)
+                .Where(item => item.Name.LocalName == "PackageReference")
+                .Select(item => Expand((string?)item.Attribute("Include") ?? "", properties)), sdk);
             if (!dependency && solutionTarget && rootProjects.Contains(path) && IsTrue(properties.GetValueOrDefault("IsTestProject")))
             {
                 visited.Remove(path); // A production dependency may still need its symbols.
                 report.ExcludedTestProjects.Add(path);
                 return;
             }
+            if (godotVersion == null && !IsConventionalSdk(sdk))
+                throw new NotSupportedException($"Unsupported SDK '{sdk}'. Direct loading supports conventional .NET SDK projects.");
             var frameworks = properties.GetValueOrDefault("TargetFramework", "");
             if (frameworks.Length == 0) frameworks = properties.GetValueOrDefault("TargetFrameworks", "");
             if (frameworks.Length == 0) throw new NotSupportedException("No statically readable TargetFramework/TargetFrameworks.");
+            if (frameworks.Contains("$(", StringComparison.Ordinal))
+                throw new NotSupportedException($"Unresolved TargetFramework/TargetFrameworks: {frameworks}. Supply the missing static project properties or use project mode (-p).");
             specs[path] = [];
             foreach (var framework in frameworks.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                if (framework is not ("net8.0" or "net10.0"))
+                if (!TargetFrameworkInputs.Supported(framework))
                 {
                     if (selection.Framework == null)
                     {
@@ -268,7 +294,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 evaluated["TargetFramework"] = framework;
                 evaluated["MSBuildProjectName"] = Path.GetFileNameWithoutExtension(path);
                 evaluated["MSBuildProjectFullPath"] = path;
-                ReadProperties(documents, evaluated, path, preserveFramework: true);
+                var evaluatedDocuments = ReadProperties(documents, evaluated, path, preserveFramework: true);
                 if (properties.TryGetValue("IsTestProject", out var testProject)) evaluated.TryAdd("IsTestProject", testProject);
                 if (godotVersion != null)
                 {
@@ -316,7 +342,9 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 evaluated.TryAdd("BaseIntermediateOutputPath", "obj" + Path.DirectorySeparatorChar);
                 evaluated.TryAdd("IntermediateOutputPath", Path.Combine(evaluated["BaseIntermediateOutputPath"],
                     evaluated.GetValueOrDefault("Configuration", "Debug"), framework) + Path.DirectorySeparatorChar);
-                var items = ReadItems(documents, evaluated, path).ToArray();
+                var items = ReadItems(evaluatedDocuments, evaluated, path).ToArray();
+                TestProjectDetection.Apply(evaluated, items.Where(item => item.Name.LocalName == "PackageReference")
+                    .Select(item => Expand((string?)item.Attribute("Include") ?? "", evaluated)), sdk);
                 if (godotVersion != null && !IsTrue(evaluated.GetValueOrDefault("EnableGodotDotNetPreview")))
                 {
                     var implicitItems = new List<XElement>();
@@ -332,10 +360,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         string.Equals((string?)existing.Attribute("Include"), (string?)item.Attribute("Include"), StringComparison.OrdinalIgnoreCase)))).ToArray();
                     Warn(path, "generation", "Godot source generators were not executed. RPC declarations and ordinary C# bodies can be analyzed; generated signal/property/method helpers may be absent.");
                 }
-                foreach (var document in documents)
+                foreach (var document in evaluatedDocuments)
                 {
-                    foreach (var import in document.Document.Descendants().Where(element => element.Name.LocalName == "Import"))
-                        Warn(path, "import", $"Custom import was not evaluated: {(string?)import.Attribute("Project")}");
                     if (document.Document.Root!.Elements().Any(element => element.Name.LocalName == "Choose"))
                         Warn(path, "conditional-structure", "Choose/When/Otherwise inputs were not evaluated; source selection or compiler properties may differ.");
                     if (document.Document.Descendants().Any(element => element.Name.LocalName == "Target"))
@@ -343,13 +369,13 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 }
                 if (FindNearest(root, "Directory.Build.targets") is { } targets)
                     Warn(path, "import", $"Directory.Build.targets was not evaluated: {targets}");
-                var references = items.Where(item => IsCompilationReference(item, evaluated))
+                string[] ProjectPaths(Func<XElement, bool> predicate) => items.Where(item => item.Name.LocalName == "ProjectReference" && predicate(item))
                     .Select(item => Expand((string?)item.Attribute("Include") ?? "", evaluated))
-                    .Where(value => value.Length > 0).Select(value => Resolve(root, value)).ToArray();
-                specs[path].Add(new(ProjectId.CreateNewId(), path, root, framework, sdk, evaluated, items, references));
+                    .Where(value => value.Length > 0).Select(value => Resolve(root, value)).Distinct(ProjectLoader.PathComparer).ToArray();
+                var restoreReferences = ProjectPaths(item => !IsFalse(Expand(ItemMetadata(item, "ReferenceOutputAssembly") ?? "true", evaluated)));
+                var references = ProjectPaths(item => IsCompilationReference(item, evaluated));
+                specs[path].Add(new(ProjectId.CreateNewId(), path, root, framework, sdk, evaluated, items, references, restoreReferences));
             }
-            if (selection.Framework == null)
-                foreach (var reference in specs[path].SelectMany(spec => spec.References).Distinct()) ReadProject(reference, dependency: true);
         }
         catch (Exception error) when (error is IOException or System.Xml.XmlException or NotSupportedException or UnauthorizedAccessException)
         {
@@ -375,9 +401,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
 
     private ProjectSpec[] SelectSpecs(string[] roots)
     {
-        if (selection.Framework == null) return specs.Values.SelectMany(value => value).ToArray();
         var chosen = roots.Where(specs.ContainsKey).SelectMany(path => specs[path])
-            .Where(spec => spec.Framework == selection.Framework).ToArray();
+            .Where(spec => selection.Framework == null || spec.Framework == selection.Framework).ToArray();
         var selected = new Dictionary<ProjectId, ProjectSpec>();
         var pending = new Queue<ProjectSpec>(chosen);
         while (pending.TryDequeue(out var spec))
@@ -387,36 +412,102 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             {
                 ReadProject(reference, dependency: true);
                 if (specs.TryGetValue(reference, out var candidates) &&
-                    (candidates.FirstOrDefault(candidate => candidate.Framework == spec.Framework) ??
-                     (spec.Framework == "net10.0" ? candidates.FirstOrDefault(candidate => candidate.Framework == "net8.0") : null)) is { } dependency)
+                    CompatibleDependency(spec, candidates) is { } dependency)
                     pending.Enqueue(dependency);
             }
         }
         return selected.Values.ToArray();
     }
 
-    private void ReadProperties(IEnumerable<(string Path, XDocument Document)> documents,
+    private List<(string Path, XDocument Document)> ReadProperties(IEnumerable<(string Path, XDocument Document)> documents,
         Dictionary<string, string> properties, string project, bool preserveFramework = false)
     {
-        foreach (var document in documents)
+        var expanded = new List<(string Path, XDocument Document)>();
+        var active = new HashSet<string>(ProjectLoader.PathComparer);
+        var importCount = 0;
+        foreach (var document in documents) Visit(document.Path, document.Document, 0);
+        return expanded;
+
+        void Visit(string file, XDocument document, int depth)
         {
-            properties["MSBuildThisFileDirectory"] = Path.GetDirectoryName(document.Path)! + Path.DirectorySeparatorChar;
-            foreach (var group in document.Document.Root!.Elements().Where(element => element.Name.LocalName == "PropertyGroup"))
+            if (depth > 32 || ++importCount > 4096 || !active.Add(file))
             {
-                if (!Condition(group, properties, project)) continue;
-                foreach (var property in group.Elements())
-                    if (!(preserveFramework && property.Name.LocalName == "TargetFramework") &&
-                        !(selection.Configuration != null && property.Name.LocalName.Equals("Configuration", StringComparison.OrdinalIgnoreCase)) &&
-                        Condition(property, properties, project))
+                Warn(project, "import", $"Static import cycle or traversal limit: {file}");
+                return;
+            }
+            var previousDirectory = properties.GetValueOrDefault("MSBuildThisFileDirectory", "");
+            var previousPath = properties.GetValueOrDefault("MSBuildThisFileFullPath", "");
+            properties["MSBuildThisFileDirectory"] = Path.GetDirectoryName(file)! + Path.DirectorySeparatorChar;
+            properties["MSBuildThisFileFullPath"] = file;
+            try
+            {
+                foreach (var element in document.Root!.Elements())
+                {
+                    if (element.Name.LocalName == "ImportGroup")
                     {
-                        var value = Expand(property.Value, properties);
-                        if (value.Contains("$(", StringComparison.Ordinal))
-                            Warn(project, "property", $"Unresolved property '{property.Name.LocalName}': {value}");
-                        properties[property.Name.LocalName] = value;
+                        if (Condition(element, properties, project))
+                            foreach (var import in element.Elements().Where(child => child.Name.LocalName == "Import")) Import(import);
+                        continue;
                     }
+                    if (element.Name.LocalName == "Import") { Import(element); continue; }
+                    // Preserve item order and defining-file context. Items are evaluated
+                    // after properties, as in MSBuild; import conditions are frozen here.
+                    expanded.Add((file, new XDocument(new XElement("Project", new XElement(element)))));
+                    if (element.Name.LocalName != "PropertyGroup" || !Condition(element, properties, project)) continue;
+                    foreach (var property in element.Elements())
+                        if (!(preserveFramework && property.Name.LocalName == "TargetFramework") &&
+                            !(selection.Configuration != null && property.Name.LocalName.Equals("Configuration", StringComparison.OrdinalIgnoreCase)) &&
+                            (IsUnsetDefault(property) || Condition(property, properties, project)))
+                        {
+                            // Self-appending properties start empty on first assignment.
+                            // Other unknown properties remain unresolved, not guessed.
+                            var self = "$(" + property.Name.LocalName + ")";
+                            var source = properties.ContainsKey(property.Name.LocalName) ? property.Value :
+                                property.Value.Replace(self, "", StringComparison.OrdinalIgnoreCase);
+                            var value = Expand(source, properties);
+                            if (value.Contains("$(", StringComparison.Ordinal))
+                                Warn(project, "property", $"Unresolved property '{property.Name.LocalName}': {value}");
+                            properties[property.Name.LocalName] = value;
+                        }
+                }
+            }
+            finally
+            {
+                properties["MSBuildThisFileDirectory"] = previousDirectory;
+                properties["MSBuildThisFileFullPath"] = previousPath;
+                active.Remove(file);
+            }
+
+            bool IsUnsetDefault(XElement property) => !properties.ContainsKey(property.Name.LocalName) &&
+                Regex.IsMatch((string?)property.Attribute("Condition") ?? "", "^\\s*'\\$\\(" + Regex.Escape(property.Name.LocalName) + "\\)'\\s*==\\s*''\\s*$", RegexOptions.IgnoreCase);
+
+            void Import(XElement import)
+            {
+                if (!Condition(import, properties, project)) return;
+                var value = Expand((string?)import.Attribute("Project") ?? "", properties);
+                value = StaticImportPath.ResolveParentLookup(value, Path.GetDirectoryName(file)!);
+                if (IsConventionalSdk((string?)import.Attribute("Sdk") ?? "") &&
+                    (value is "Sdk.props" or "Sdk.targets") && import.Attribute("Version") == null) return;
+                if (import.Attribute("Sdk") != null || value.Length == 0 || value.Contains("$(", StringComparison.Ordinal) || value.IndexOfAny(['*', '?', ';']) >= 0)
+                {
+                    Warn(project, "import", $"Unsupported static import in {file}: {value}");
+                    return;
+                }
+                try
+                {
+                    var target = Resolve(Path.GetDirectoryName(file)!, value);
+                    Visit(target, inputCache.Xml(target), depth + 1);
+                }
+                catch (Exception error) when (error is IOException or System.Xml.XmlException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                    Warn(project, "import", $"Unable to read static import {value} in {file}: {error.Message}");
+                }
             }
         }
     }
+
+    private static bool IsConventionalSdk(string sdk) => sdk is "Microsoft.NET.Sdk" or "Microsoft.NET.Sdk.Web" or
+        "Microsoft.NET.Sdk.Razor" or "Microsoft.NET.Sdk.BlazorWebAssembly";
 
     private IEnumerable<XElement> ReadItems(IEnumerable<(string Path, XDocument Document)> documents,
         Dictionary<string, string> properties, string project)
@@ -425,7 +516,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         {
             var context = new Dictionary<string, string>(properties, StringComparer.OrdinalIgnoreCase)
             {
-                ["MSBuildThisFileDirectory"] = Path.GetDirectoryName(document.Path)! + Path.DirectorySeparatorChar
+                ["MSBuildThisFileDirectory"] = Path.GetDirectoryName(document.Path)! + Path.DirectorySeparatorChar,
+                ["MSBuildThisFileFullPath"] = document.Path
             };
             foreach (var group in document.Document.Root!.Elements().Where(element => element.Name.LocalName == "ItemGroup"))
             {
@@ -436,7 +528,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     // Do not mutate the shared document across framework evaluations.
                     var expanded = new XElement(item);
                     string DefiningFile(string value) => value.Replace("$(MSBuildThisFileDirectory)",
-                        context["MSBuildThisFileDirectory"], StringComparison.OrdinalIgnoreCase);
+                        context["MSBuildThisFileDirectory"], StringComparison.OrdinalIgnoreCase)
+                        .Replace("$(MSBuildThisFileFullPath)", document.Path, StringComparison.OrdinalIgnoreCase);
                     foreach (var element in expanded.DescendantsAndSelf())
                     {
                         foreach (var attribute in element.Attributes()) attribute.Value = DefiningFile(attribute.Value);
@@ -454,7 +547,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         if (string.IsNullOrWhiteSpace(condition)) return true;
         var expression = Expand(condition, properties).Trim();
         if (StaticCondition.TryExpandFunctions(expression, properties, out var expanded) &&
-            StaticCondition.TryEvaluate(expanded, out var result)) return result;
+            StaticCondition.TryEvaluate(expanded, out var result, Path.GetDirectoryName(project))) return result;
         Warn(project, "condition", $"Unsupported condition; skipped {element.Name.LocalName}: {condition}");
         return false;
     }
@@ -469,9 +562,17 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         var paths = new HashSet<string>(ProjectLoader.PathComparer);
         var hints = new Dictionary<string, MetadataReferenceProperties>(ProjectLoader.PathComparer);
         var packageReferences = new Dictionary<string, MetadataReferenceProperties>(ProjectLoader.PathComparer);
-        AddPack("Microsoft.NETCore.App.Ref", spec.Framework, spec.Path, paths);
-        if (spec.Sdk == "Microsoft.NET.Sdk.Web" || spec.Items.Any(item => item.Name.LocalName == "FrameworkReference" &&
-            (string?)item.Attribute("Include") == "Microsoft.AspNetCore.App"))
+        if (spec.Framework == "netstandard2.0")
+        {
+            var request = spec.Properties.GetValueOrDefault("NETStandardImplicitPackageVersion", "2.0.3");
+            var version = StandardReferenceVersion(spec, request);
+            var reference = version == null ? null : packRoots.Select(root => Path.Combine(root, "netstandard.library", version, "build", "netstandard2.0", "ref"))
+                .FirstOrDefault(Directory.Exists);
+            if (reference == null) Warn(spec.Path, "reference-pack", $"Missing or unverified NETStandard.Library {request} reference assemblies for netstandard2.0; restore separately. Host runtime assemblies are not substituted.");
+            else foreach (var file in Directory.EnumerateFiles(reference, "*.dll")) paths.Add(file);
+        }
+        else AddPack(spec.Framework == "netstandard2.1" ? "NETStandard.Library.Ref" : "Microsoft.NETCore.App.Ref", spec.Framework, spec.Path, paths);
+        if (HasAspNetReference(spec))
             AddPack("Microsoft.AspNetCore.App.Ref", spec.Framework, spec.Path, paths);
         foreach (var item in spec.Items.Where(item => item.Name.LocalName == "FrameworkReference" &&
             (string?)item.Attribute("Include") != "Microsoft.AspNetCore.App"))
@@ -493,10 +594,10 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         {
             try
             {
-                using var assets = JsonDocument.Parse(File.ReadAllText(assetsPath));
+                var assets = inputCache.Assets(assetsPath);
                 var (declaredPackages, incomplete) = PackageInputs(spec);
                 var validation = RestoredAssetsValidator.Validate(assetsPath, assets.RootElement, spec.Path, spec.Framework,
-                    declaredPackages, spec.References, incomplete);
+                    declaredPackages, spec.RestoreReferences, incomplete);
                 if (validation.Status == "matched") validation = FrameworkPackagePruning.ValidatePolicy(assetsPath, assets.RootElement,
                     spec.Framework, spec.Properties.GetValueOrDefault("RestoreEnablePackagePruning"));
                 if (validation.Status == "matched")
@@ -513,7 +614,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         $"{validation.Reason} Cached package bindings were omitted; restore separately or supply explicit references to improve coverage.");
                 var targets = assets.RootElement.GetProperty("targets");
                 if ((targets.TryGetProperty(spec.Framework, out var target) ||
-                    targets.TryGetProperty($".NETCoreApp,Version=v{spec.Framework[3..]}", out target)) && validation.Status == "matched")
+                    targets.TryGetProperty(TargetFrameworkInputs.Moniker(spec.Framework), out target)) && validation.Status == "matched")
                 {
                     var libraries = assets.RootElement.GetProperty("libraries");
                     var folders = assets.RootElement.GetProperty("packageFolders").EnumerateObject().Select(folder => folder.Name).ToArray();
@@ -594,6 +695,40 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         !string.Equals(Expand(ItemMetadata(item, "OutputItemType") ?? "", properties), "Analyzer", StringComparison.OrdinalIgnoreCase) &&
         !IsFalse(Expand(ItemMetadata(item, "ReferenceOutputAssembly") ?? "true", properties));
 
+    private static bool IsPrivateAsset(XElement item, Dictionary<string, string> properties) =>
+        Expand(ItemMetadata(item, "PrivateAssets") ?? "", properties)
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(asset => asset.Equals("all", StringComparison.OrdinalIgnoreCase));
+
+    private static IEnumerable<string> ExportedProjectAssets(ProjectSpec spec) => spec.Items
+        .Where(item => item.Name.LocalName == "ProjectReference" &&
+            !IsFalse(Expand(ItemMetadata(item, "ReferenceOutputAssembly") ?? "true", spec.Properties)) &&
+            !IsPrivateAsset(item, spec.Properties))
+        .Select(item => Expand((string?)item.Attribute("Include") ?? "", spec.Properties))
+        .Where(value => value.Length > 0).Select(value => Resolve(spec.Root, value));
+
+    private bool HasAspNetReference(ProjectSpec root)
+    {
+        if (root.Framework is not ("net8.0" or "net10.0")) return false;
+        var pending = new Queue<ProjectSpec>();
+        var seen = new HashSet<ProjectId>();
+        pending.Enqueue(root);
+        while (pending.TryDequeue(out var spec))
+        {
+            if (!seen.Add(spec.Id)) continue;
+            if (spec.Sdk == "Microsoft.NET.Sdk.Web" || spec.Items.Any(item =>
+                item.Name.LocalName == "FrameworkReference" &&
+                Expand((string?)item.Attribute("Include") ?? "", spec.Properties) == "Microsoft.AspNetCore.App" &&
+                (spec.Id == root.Id || !IsPrivateAsset(item, spec.Properties)))) return true;
+            // NuGet framework dependencies propagate independently of compiler
+            // output roles. PrivateAssets=all blocks export to the next consumer.
+            foreach (var path in spec.Id == root.Id ? spec.RestoreReferences : ExportedProjectAssets(spec))
+                if (specs.TryGetValue(path, out var candidates) && CompatibleDependency(spec, candidates) is { } child)
+                    pending.Enqueue(child);
+        }
+        return false;
+    }
+
     private static bool ExportsCompileAssets(XElement item, Dictionary<string, string> properties)
     {
         bool HasCompile(string value) => Expand(value, properties)
@@ -609,6 +744,37 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     private static string AssetsPath(ProjectSpec spec) => Resolve(spec.Root, spec.Properties.GetValueOrDefault("ProjectAssetsFile",
         Path.Combine(spec.Properties.GetValueOrDefault("MSBuildProjectExtensionsPath",
             spec.Properties.GetValueOrDefault("BaseIntermediateOutputPath", "obj")), "project.assets.json")));
+
+    private string? StandardReferenceVersion(ProjectSpec spec, string request)
+    {
+        if (Version.TryParse(request, out var version)) return version.Major == 2 && version.Minor == 0 ? request : null;
+        if (!request.EndsWith("-*", StringComparison.Ordinal) || !Version.TryParse(request[..^2], out var requestedVersion) ||
+            requestedVersion.Major != 2 || requestedVersion.Minor != 0) return null;
+        // Resolve only the implicit framework contract, from a restore for this
+        // exact request. General package and project-graph validation is separate.
+        var path = AssetsPath(spec);
+        if (!File.Exists(path)) return null;
+        try
+        {
+            var assets = inputCache.Assets(path).RootElement;
+            if (assets.TryGetProperty("logs", out var logs) && logs.EnumerateArray().Any(log =>
+                log.TryGetProperty("level", out var level) && level.GetString() == "Error")) return null;
+            var project = assets.GetProperty("project");
+            if (!ProjectLoader.PathComparer.Equals(Path.GetFullPath(project.GetProperty("restore").GetProperty("projectPath").GetString()!), spec.Path)) return null;
+            var package = project.GetProperty("frameworks").GetProperty(spec.Framework).GetProperty("dependencies").GetProperty("NETStandard.Library");
+            if (!package.TryGetProperty("autoReferenced", out var automatic) || automatic.ValueKind != JsonValueKind.True) return null;
+            var savedRequest = package.GetProperty("version").GetString();
+            if (savedRequest != request && savedRequest != $"[{request}, )") return null;
+            var candidates = assets.GetProperty("targets").GetProperty(spec.Framework).EnumerateObject()
+                .Where(item => item.Name.StartsWith("NETStandard.Library/", StringComparison.OrdinalIgnoreCase) &&
+                    item.Value.GetProperty("type").GetString() == "package").ToArray();
+            if (candidates.Length != 1) return null;
+            var resolved = candidates[0].Name["NETStandard.Library/".Length..];
+            return Version.TryParse(resolved, out version) && version == requestedVersion ? resolved : null;
+        }
+        catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or
+            ArgumentException or IOException or UnauthorizedAccessException) { return null; }
+    }
 
     private (Dictionary<string, PackageInput> Packages, bool Incomplete) PackageInputs(ProjectSpec spec)
     {
@@ -659,7 +825,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         if (assets.TryGetProperty("logs", out var logs) && logs.EnumerateArray().Any(log =>
             log.TryGetProperty("level", out var level) && level.GetString() == "Error"))
             return Unknown("The saved restore contains errors; its resolved graph cannot be accepted.");
-        if (root.References.Length == 0) return new(assetsPath, "matched");
+        if (root.RestoreReferences.Length == 0) return new(assetsPath, "matched");
         if (!assets.TryGetProperty("targets", out var targets) || !targets.TryGetProperty(root.Framework, out var target) ||
             !assets.TryGetProperty("libraries", out var libraries)) return Unknown("Resolved source project graph is absent.");
         var pending = new Queue<ProjectSpec>();
@@ -668,25 +834,24 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         while (pending.TryDequeue(out var parent))
         {
             if (!seen.Add(parent.Id)) continue;
-            foreach (var path in parent.References)
+            foreach (var path in parent.Id == root.Id ? parent.RestoreReferences : ExportedProjectAssets(parent))
             {
                 if (!specs.TryGetValue(path, out var candidates)) return Unknown($"Source dependency is unavailable: {path}");
-                var child = candidates.FirstOrDefault(candidate => candidate.Framework == parent.Framework) ??
-                    (parent.Framework == "net10.0" ? candidates.FirstOrDefault(candidate => candidate.Framework == "net8.0") : null);
+                var child = CompatibleDependency(parent, candidates);
                 if (child == null) return Unknown($"No compatible source dependency framework: {path}");
                 var (packages, incomplete) = PackageInputs(child);
                 var childAssetsPath = AssetsPath(child);
                 var prunedByChild = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 if (!File.Exists(childAssetsPath))
                 {
-                    if (packages.Count > 0 || child.References.Length > 0 || incomplete)
+                    if (packages.Count > 0 || child.RestoreReferences.Length > 0 || incomplete)
                         return Unknown($"Source dependency restore metadata is absent: {path}");
                 }
                 else
                 {
-                    using var childAssets = JsonDocument.Parse(File.ReadAllText(childAssetsPath));
+                    var childAssets = inputCache.Assets(childAssetsPath);
                     var childState = RestoredAssetsValidator.Validate(childAssetsPath, childAssets.RootElement, child.Path, child.Framework,
-                        packages, child.References, incomplete);
+                        packages, child.RestoreReferences, incomplete);
                     if (childState.Status == "matched") childState = FrameworkPackagePruning.ValidatePolicy(childAssetsPath, childAssets.RootElement,
                         child.Framework, child.Properties.GetValueOrDefault("RestoreEnablePackagePruning"));
                     if (childState.Status != "matched") return new(assetsPath, childState.Status, $"Source dependency {path}: {childState.Reason}");
@@ -705,7 +870,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     library.Value.TryGetProperty("msbuildProject", out var projectPath) &&
                     ProjectLoader.PathComparer.Equals(Resolve(root.Root, projectPath.GetString()!), child.Path)).ToArray();
                 if (entries.Length != 1 || !target.TryGetProperty(entries[0].Name, out var edge) ||
-                    !edge.TryGetProperty("framework", out var framework) || framework.GetString() != $".NETCoreApp,Version=v{child.Framework[3..]}")
+                    !edge.TryGetProperty("framework", out var framework) || framework.GetString() != TargetFrameworkInputs.Moniker(child.Framework))
                     return Unknown($"Resolved source dependency identity/framework is unavailable or ambiguous: {path}");
                 // Compare edges inside the parent's actual assets, not a dgspec
                 // that a failed restore may have refreshed without updating them.
@@ -723,12 +888,11 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         return Unknown($"Unsupported dependency asset propagation in {path}: {package.Key}");
                     exported[package.Key] = package.Value.Version;
                 }
-                foreach (var reference in child.References)
+                foreach (var reference in ExportedProjectAssets(child))
                 {
                     if (!specs.TryGetValue(reference, out var grandchildren) || grandchildren.Count == 0)
                         return Unknown($"Source dependency is unavailable: {reference}");
-                    var grandchild = grandchildren.FirstOrDefault(candidate => candidate.Framework == child.Framework) ??
-                        (child.Framework == "net10.0" ? grandchildren.FirstOrDefault(candidate => candidate.Framework == "net8.0") : null);
+                    var grandchild = CompatibleDependency(child, grandchildren);
                     if (grandchild == null) return Unknown($"No compatible dependency: {reference}");
                     exported[ProjectPackageId(grandchild)] = ProjectVersion(grandchild);
                 }
@@ -768,12 +932,13 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
 
     private void AddPack(string name, string framework, string project, HashSet<string> paths)
     {
-        var major = framework == "net8.0" ? 8 : 10;
+        var major = framework == "net8.0" ? 8 : framework == "netstandard2.1" ? 2 : 10;
+        var minor = framework == "netstandard2.1" ? 1 : 0;
         var candidates = packRoots.SelectMany(root => new[] { Path.Combine(root, name), Path.Combine(root, name.ToLowerInvariant()) })
             .Distinct(StringComparer.Ordinal).Where(Directory.Exists)
             .SelectMany(root => Directory.EnumerateDirectories(root))
             .Select(path => (Path: path, Version: Version.TryParse(Path.GetFileName(path), out var version) ? version : null))
-            .Where(candidate => candidate.Version?.Major == major && candidate.Version.Minor == 0)
+            .Where(candidate => candidate.Version?.Major == major && candidate.Version.Minor == minor)
             .OrderByDescending(candidate => candidate.Version);
         var reference = candidates.Select(candidate => Path.Combine(candidate.Path, "ref", framework)).FirstOrDefault(Directory.Exists);
         if (reference == null) Warn(project, "reference-pack", $"Missing {name} reference pack for {framework}; host runtime assemblies are not substituted.");
@@ -964,5 +1129,12 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         return roots.Where(Directory.Exists).ToList();
     }
     private sealed record ProjectSpec(ProjectId Id, string Path, string Root, string Framework, string Sdk,
-        Dictionary<string, string> Properties, XElement[] Items, string[] References);
+        Dictionary<string, string> Properties, XElement[] Items, string[] References, string[] RestoreReferences);
+
+    private static ProjectSpec? CompatibleDependency(ProjectSpec parent, IEnumerable<ProjectSpec> candidates)
+    {
+        var available = candidates.ToArray();
+        var framework = TargetFrameworkInputs.Nearest(parent.Framework, available.Select(candidate => candidate.Framework));
+        return available.FirstOrDefault(candidate => candidate.Framework == framework);
+    }
 }

@@ -13,8 +13,8 @@ internal sealed record ScanSelection(string? Configuration = null, string? Frame
     private static string? FrameworkFromSymbols(ParseOptions? options)
     {
         var symbols = (options as CSharpParseOptions)?.PreprocessorSymbolNames
-            .Where(symbol => Regex.IsMatch(symbol, "^NET[0-9]+_[0-9]+$")).Distinct().ToArray();
-        return symbols?.Length == 1 ? symbols[0].Replace("NET", "net").Replace('_', '.') : null;
+            .Where(symbol => Regex.IsMatch(symbol, "^NET(?:STANDARD)?[0-9]+_[0-9]+$")).Distinct().ToArray();
+        return symbols?.Length == 1 ? symbols[0].ToLowerInvariant().Replace('_', '.') : null;
     }
 
     // Select root frameworks, then retain the actual source dependencies chosen
@@ -23,6 +23,7 @@ internal sealed record ScanSelection(string? Configuration = null, string? Frame
     {
         if (Framework == null) return;
         var roots = ProjectLoader.FindProjects(target).Where(path => !report.ExcludedTestProjects.Any(excluded =>
+            ProjectLoader.PathComparer.Equals(path, excluded)) && !report.ExcludedProjects.Any(excluded =>
             ProjectLoader.PathComparer.Equals(path, excluded))).ToHashSet(ProjectLoader.PathComparer);
         var all = inputs.Workspace.CurrentSolution.Projects.Where(project => project.Language == LanguageNames.CSharp).ToArray();
         var selected = all.Where(project => roots.Contains(project.FilePath ?? "") && FrameworkOf(project) == Framework).ToArray();

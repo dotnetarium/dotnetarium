@@ -3,6 +3,11 @@
 `ExperimentalFilePersistence` is an optional boolean, off by default. It enables
 bounded stored-file XSS correlation in both hosts; see [stored HTML](stored-html.md).
 
+`ExcludeProjects` is an optional list of CLI project-path globs, relative to this
+file. For example, `["test/**", "tools/**"]` excludes analysis of matching projects
+while preserving required dependency symbols. It does not exclude credential
+files or change NuGet analyzer host behavior. See [scan modes](scan-modes.md).
+
 The built-in models live in `Dotnetarium.Analyzers/Config/Main.json`. Place `dotnetarium.json` beside a project to extend them. The analyzer NuGet package adds it to `AdditionalFiles` automatically. The global tool finds the file beside a scanned project or solution; use `--config` to select another file. If you use the analyzer assembly without its NuGet package, include it manually:
 
 ```xml

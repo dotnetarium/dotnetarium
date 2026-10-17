@@ -80,6 +80,19 @@ public class Entry : Controller {
     $nearest = Scan $app @('--framework', $framework)
     if (-not ($nearest.invocations[0].properties.'dotnetarium.analyzedProjects' -match 'Bridge.*netstandard2.1') -or
         (HasNotice $nearest 'compiler-error')) { throw 'Static Standard selection used declaration order instead of compatibility.' }
+    # Orchard's implicit framework contract uses a floating package request.
+    $dataProject = Join-Path $standard 'Data/Data.csproj'
+    (Get-Content -LiteralPath $dataProject -Raw).Replace('</PropertyGroup>', '<NETStandardImplicitPackageVersion>2.0.0-*</NETStandardImplicitPackageVersion></PropertyGroup>') |
+        Set-Content -LiteralPath $dataProject
+    & dotnet restore $app --nologo -v quiet > (Join-Path $standard 'floating-restore.log') 2>&1
+    if ($LASTEXITCODE -ne 0) { throw 'Floating Standard reference restore failed.' }
+    $floating = Scan $app @('--framework', $framework)
+    if ((HasNotice $floating 'compiler-error') -or (HasNotice $floating 'reference-pack')) { throw 'The restored floating Standard reference contract was not resolved.' }
+    # A changed request cannot silently reuse the previous resolved version.
+    (Get-Content -LiteralPath $dataProject -Raw).Replace('2.0.0-*', '2.0.1-*') | Set-Content -LiteralPath $dataProject
+    $staleContract = Scan $dataProject @() 2
+    if (-not (HasNotice $staleContract 'reference-pack')) { throw 'A stale implicit Standard reference request was accepted.' }
+    (Get-Content -LiteralPath $dataProject -Raw).Replace('2.0.1-*', '2.0.0-*') | Set-Content -LiteralPath $dataProject
     # Standard 2.0 must not accidentally acquire Standard 2.1/Core APIs.
     Add-Content -LiteralPath (Join-Path $standard 'Data/Data.cs') -Value 'public static class InvalidContract { public static int Length(System.Span<char> value) { return value.Length; } }'
     $restricted = Scan (Join-Path $standard 'Data/Data.csproj') @()

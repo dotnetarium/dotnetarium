@@ -108,6 +108,8 @@ WebAssembly projects targeting .NET 8 or 10, plus conventional .NET Standard 2.0
 library projects. Install the corresponding reference packs, normally supplied by
 the SDK or a separate restore. Standard 2.0 uses the cached `NETStandard.Library`
 reference contract (2.0.3 by default); Standard 2.1 uses `NETStandard.Library.Ref`.
+Implicit Standard 2.0 requests such as `2.0.0-*` require a saved restore matching
+the project and request before its resolved stable reference version is used.
 Neither is replaced by the tool's .NET 10 runtime assemblies. Standard compiler
 defaults are C# 7.3/8.0 respectively, unless `LangVersion` overrides them.
 Razor generation selects the installed SDK

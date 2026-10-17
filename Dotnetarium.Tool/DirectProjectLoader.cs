@@ -552,10 +552,11 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         var packageReferences = new Dictionary<string, MetadataReferenceProperties>(ProjectLoader.PathComparer);
         if (spec.Framework == "netstandard2.0")
         {
-            var version = spec.Properties.GetValueOrDefault("NETStandardImplicitPackageVersion", "2.0.3");
-            var reference = packRoots.Select(root => Path.Combine(root, "netstandard.library", version, "build", "netstandard2.0", "ref"))
+            var request = spec.Properties.GetValueOrDefault("NETStandardImplicitPackageVersion", "2.0.3");
+            var version = StandardReferenceVersion(spec, request);
+            var reference = version == null ? null : packRoots.Select(root => Path.Combine(root, "netstandard.library", version, "build", "netstandard2.0", "ref"))
                 .FirstOrDefault(Directory.Exists);
-            if (reference == null) Warn(spec.Path, "reference-pack", $"Missing NETStandard.Library {version} reference assemblies for netstandard2.0; restore separately. Host runtime assemblies are not substituted.");
+            if (reference == null) Warn(spec.Path, "reference-pack", $"Missing or unverified NETStandard.Library {request} reference assemblies for netstandard2.0; restore separately. Host runtime assemblies are not substituted.");
             else foreach (var file in Directory.EnumerateFiles(reference, "*.dll")) paths.Add(file);
         }
         else AddPack(spec.Framework == "netstandard2.1" ? "NETStandard.Library.Ref" : "Microsoft.NETCore.App.Ref", spec.Framework, spec.Path, paths);
@@ -698,6 +699,37 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     private static string AssetsPath(ProjectSpec spec) => Resolve(spec.Root, spec.Properties.GetValueOrDefault("ProjectAssetsFile",
         Path.Combine(spec.Properties.GetValueOrDefault("MSBuildProjectExtensionsPath",
             spec.Properties.GetValueOrDefault("BaseIntermediateOutputPath", "obj")), "project.assets.json")));
+
+    private string? StandardReferenceVersion(ProjectSpec spec, string request)
+    {
+        if (Version.TryParse(request, out var version)) return version.Major == 2 && version.Minor == 0 ? request : null;
+        if (!request.EndsWith("-*", StringComparison.Ordinal) || !Version.TryParse(request[..^2], out var requestedVersion) ||
+            requestedVersion.Major != 2 || requestedVersion.Minor != 0) return null;
+        // Resolve only the implicit framework contract, from a restore for this
+        // exact request. General package and project-graph validation is separate.
+        var path = AssetsPath(spec);
+        if (!File.Exists(path)) return null;
+        try
+        {
+            var assets = inputCache.Assets(path).RootElement;
+            if (assets.TryGetProperty("logs", out var logs) && logs.EnumerateArray().Any(log =>
+                log.TryGetProperty("level", out var level) && level.GetString() == "Error")) return null;
+            var project = assets.GetProperty("project");
+            if (!ProjectLoader.PathComparer.Equals(Path.GetFullPath(project.GetProperty("restore").GetProperty("projectPath").GetString()!), spec.Path)) return null;
+            var package = project.GetProperty("frameworks").GetProperty(spec.Framework).GetProperty("dependencies").GetProperty("NETStandard.Library");
+            if (!package.TryGetProperty("autoReferenced", out var automatic) || automatic.ValueKind != JsonValueKind.True) return null;
+            var savedRequest = package.GetProperty("version").GetString();
+            if (savedRequest != request && savedRequest != $"[{request}, )") return null;
+            var candidates = assets.GetProperty("targets").GetProperty(spec.Framework).EnumerateObject()
+                .Where(item => item.Name.StartsWith("NETStandard.Library/", StringComparison.OrdinalIgnoreCase) &&
+                    item.Value.GetProperty("type").GetString() == "package").ToArray();
+            if (candidates.Length != 1) return null;
+            var resolved = candidates[0].Name["NETStandard.Library/".Length..];
+            return Version.TryParse(resolved, out version) && version == requestedVersion ? resolved : null;
+        }
+        catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or
+            ArgumentException or IOException or UnauthorizedAccessException) { return null; }
+    }
 
     private (Dictionary<string, PackageInput> Packages, bool Incomplete) PackageInputs(ProjectSpec spec)
     {

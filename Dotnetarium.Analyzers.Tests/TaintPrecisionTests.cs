@@ -232,6 +232,7 @@ public sealed class TaintPrecisionTests
 
     [Theory]
     [InlineData("Guid", 0)]
+    [InlineData("Version", 0)]
     [InlineData("string", 1)]
     public async Task Minimal_api_lookup_identifiers_are_distinct_from_string_inputs(string type, int expected)
     {

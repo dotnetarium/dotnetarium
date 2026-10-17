@@ -76,6 +76,10 @@ internal static class Program
                 exclusions?.Apply(loadedInputs, report);
                 selection.Apply(loadedInputs, target, report);
             }
+            catch (System.Text.Json.JsonException error)
+            {
+                report.Fail("configuration-error", $"Invalid dotnetarium.json: {error.Message}");
+            }
             catch (Exception error)
             {
                 // Preserve independent configuration findings even when project loading fails.

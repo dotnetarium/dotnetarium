@@ -52,6 +52,18 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             }).ToArray();
             foreach (var path in includedRoots) ReadProject(path);
             var activeSpecs = SelectSpecs(includedRoots);
+            var metadataQueue = new Queue<ProjectSpec>(activeSpecs);
+            var metadataSeen = new HashSet<ProjectId>();
+            while (metadataQueue.TryDequeue(out var parent))
+            {
+                if (!metadataSeen.Add(parent.Id)) continue;
+                foreach (var path in parent.RestoreReferences)
+                {
+                    if (File.Exists(path)) ReadProject(path, dependency: true);
+                    if (specs.TryGetValue(path, out var candidates) && CompatibleDependency(parent, candidates) is { } child)
+                        metadataQueue.Enqueue(child);
+                }
+            }
             var razorRequests = new Dictionary<ProjectId, RazorRequest>();
             var solution = workspace.CurrentSolution;
             foreach (var spec in activeSpecs)
@@ -357,13 +369,13 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 }
                 if (FindNearest(root, "Directory.Build.targets") is { } targets)
                     Warn(path, "import", $"Directory.Build.targets was not evaluated: {targets}");
-                var references = items.Where(item => IsCompilationReference(item, evaluated))
+                string[] ProjectPaths(Func<XElement, bool> predicate) => items.Where(item => item.Name.LocalName == "ProjectReference" && predicate(item))
                     .Select(item => Expand((string?)item.Attribute("Include") ?? "", evaluated))
-                    .Where(value => value.Length > 0).Select(value => Resolve(root, value)).ToArray();
-                specs[path].Add(new(ProjectId.CreateNewId(), path, root, framework, sdk, evaluated, items, references));
+                    .Where(value => value.Length > 0).Select(value => Resolve(root, value)).Distinct(ProjectLoader.PathComparer).ToArray();
+                var restoreReferences = ProjectPaths(item => !IsFalse(Expand(ItemMetadata(item, "ReferenceOutputAssembly") ?? "true", evaluated)));
+                var references = ProjectPaths(item => IsCompilationReference(item, evaluated));
+                specs[path].Add(new(ProjectId.CreateNewId(), path, root, framework, sdk, evaluated, items, references, restoreReferences));
             }
-            if (selection.Framework == null)
-                foreach (var reference in specs[path].SelectMany(spec => spec.References).Distinct()) ReadProject(reference, dependency: true);
         }
         catch (Exception error) when (error is IOException or System.Xml.XmlException or NotSupportedException or UnauthorizedAccessException)
         {
@@ -389,9 +401,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
 
     private ProjectSpec[] SelectSpecs(string[] roots)
     {
-        if (selection.Framework == null) return specs.Values.SelectMany(value => value).ToArray();
         var chosen = roots.Where(specs.ContainsKey).SelectMany(path => specs[path])
-            .Where(spec => spec.Framework == selection.Framework).ToArray();
+            .Where(spec => selection.Framework == null || spec.Framework == selection.Framework).ToArray();
         var selected = new Dictionary<ProjectId, ProjectSpec>();
         var pending = new Queue<ProjectSpec>(chosen);
         while (pending.TryDequeue(out var spec))
@@ -474,6 +485,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             {
                 if (!Condition(import, properties, project)) return;
                 var value = Expand((string?)import.Attribute("Project") ?? "", properties);
+                value = StaticImportPath.ResolveParentLookup(value, Path.GetDirectoryName(file)!);
                 if (IsConventionalSdk((string?)import.Attribute("Sdk") ?? "") &&
                     (value is "Sdk.props" or "Sdk.targets") && import.Attribute("Version") == null) return;
                 if (import.Attribute("Sdk") != null || value.Length == 0 || value.Contains("$(", StringComparison.Ordinal) || value.IndexOfAny(['*', '?', ';']) >= 0)
@@ -560,8 +572,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             else foreach (var file in Directory.EnumerateFiles(reference, "*.dll")) paths.Add(file);
         }
         else AddPack(spec.Framework == "netstandard2.1" ? "NETStandard.Library.Ref" : "Microsoft.NETCore.App.Ref", spec.Framework, spec.Path, paths);
-        if (spec.Sdk == "Microsoft.NET.Sdk.Web" || spec.Items.Any(item => item.Name.LocalName == "FrameworkReference" &&
-            (string?)item.Attribute("Include") == "Microsoft.AspNetCore.App"))
+        if (HasAspNetReference(spec))
             AddPack("Microsoft.AspNetCore.App.Ref", spec.Framework, spec.Path, paths);
         foreach (var item in spec.Items.Where(item => item.Name.LocalName == "FrameworkReference" &&
             (string?)item.Attribute("Include") != "Microsoft.AspNetCore.App"))
@@ -586,7 +597,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 var assets = inputCache.Assets(assetsPath);
                 var (declaredPackages, incomplete) = PackageInputs(spec);
                 var validation = RestoredAssetsValidator.Validate(assetsPath, assets.RootElement, spec.Path, spec.Framework,
-                    declaredPackages, spec.References, incomplete);
+                    declaredPackages, spec.RestoreReferences, incomplete);
                 if (validation.Status == "matched") validation = FrameworkPackagePruning.ValidatePolicy(assetsPath, assets.RootElement,
                     spec.Framework, spec.Properties.GetValueOrDefault("RestoreEnablePackagePruning"));
                 if (validation.Status == "matched")
@@ -684,6 +695,40 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         !string.Equals(Expand(ItemMetadata(item, "OutputItemType") ?? "", properties), "Analyzer", StringComparison.OrdinalIgnoreCase) &&
         !IsFalse(Expand(ItemMetadata(item, "ReferenceOutputAssembly") ?? "true", properties));
 
+    private static bool IsPrivateAsset(XElement item, Dictionary<string, string> properties) =>
+        Expand(ItemMetadata(item, "PrivateAssets") ?? "", properties)
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(asset => asset.Equals("all", StringComparison.OrdinalIgnoreCase));
+
+    private static IEnumerable<string> ExportedProjectAssets(ProjectSpec spec) => spec.Items
+        .Where(item => item.Name.LocalName == "ProjectReference" &&
+            !IsFalse(Expand(ItemMetadata(item, "ReferenceOutputAssembly") ?? "true", spec.Properties)) &&
+            !IsPrivateAsset(item, spec.Properties))
+        .Select(item => Expand((string?)item.Attribute("Include") ?? "", spec.Properties))
+        .Where(value => value.Length > 0).Select(value => Resolve(spec.Root, value));
+
+    private bool HasAspNetReference(ProjectSpec root)
+    {
+        if (root.Framework is not ("net8.0" or "net10.0")) return false;
+        var pending = new Queue<ProjectSpec>();
+        var seen = new HashSet<ProjectId>();
+        pending.Enqueue(root);
+        while (pending.TryDequeue(out var spec))
+        {
+            if (!seen.Add(spec.Id)) continue;
+            if (spec.Sdk == "Microsoft.NET.Sdk.Web" || spec.Items.Any(item =>
+                item.Name.LocalName == "FrameworkReference" &&
+                Expand((string?)item.Attribute("Include") ?? "", spec.Properties) == "Microsoft.AspNetCore.App" &&
+                (spec.Id == root.Id || !IsPrivateAsset(item, spec.Properties)))) return true;
+            // NuGet framework dependencies propagate independently of compiler
+            // output roles. PrivateAssets=all blocks export to the next consumer.
+            foreach (var path in spec.Id == root.Id ? spec.RestoreReferences : ExportedProjectAssets(spec))
+                if (specs.TryGetValue(path, out var candidates) && CompatibleDependency(spec, candidates) is { } child)
+                    pending.Enqueue(child);
+        }
+        return false;
+    }
+
     private static bool ExportsCompileAssets(XElement item, Dictionary<string, string> properties)
     {
         bool HasCompile(string value) => Expand(value, properties)
@@ -780,7 +825,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         if (assets.TryGetProperty("logs", out var logs) && logs.EnumerateArray().Any(log =>
             log.TryGetProperty("level", out var level) && level.GetString() == "Error"))
             return Unknown("The saved restore contains errors; its resolved graph cannot be accepted.");
-        if (root.References.Length == 0) return new(assetsPath, "matched");
+        if (root.RestoreReferences.Length == 0) return new(assetsPath, "matched");
         if (!assets.TryGetProperty("targets", out var targets) || !targets.TryGetProperty(root.Framework, out var target) ||
             !assets.TryGetProperty("libraries", out var libraries)) return Unknown("Resolved source project graph is absent.");
         var pending = new Queue<ProjectSpec>();
@@ -789,7 +834,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         while (pending.TryDequeue(out var parent))
         {
             if (!seen.Add(parent.Id)) continue;
-            foreach (var path in parent.References)
+            foreach (var path in parent.Id == root.Id ? parent.RestoreReferences : ExportedProjectAssets(parent))
             {
                 if (!specs.TryGetValue(path, out var candidates)) return Unknown($"Source dependency is unavailable: {path}");
                 var child = CompatibleDependency(parent, candidates);
@@ -799,14 +844,14 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 var prunedByChild = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 if (!File.Exists(childAssetsPath))
                 {
-                    if (packages.Count > 0 || child.References.Length > 0 || incomplete)
+                    if (packages.Count > 0 || child.RestoreReferences.Length > 0 || incomplete)
                         return Unknown($"Source dependency restore metadata is absent: {path}");
                 }
                 else
                 {
                     var childAssets = inputCache.Assets(childAssetsPath);
                     var childState = RestoredAssetsValidator.Validate(childAssetsPath, childAssets.RootElement, child.Path, child.Framework,
-                        packages, child.References, incomplete);
+                        packages, child.RestoreReferences, incomplete);
                     if (childState.Status == "matched") childState = FrameworkPackagePruning.ValidatePolicy(childAssetsPath, childAssets.RootElement,
                         child.Framework, child.Properties.GetValueOrDefault("RestoreEnablePackagePruning"));
                     if (childState.Status != "matched") return new(assetsPath, childState.Status, $"Source dependency {path}: {childState.Reason}");
@@ -843,7 +888,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         return Unknown($"Unsupported dependency asset propagation in {path}: {package.Key}");
                     exported[package.Key] = package.Value.Version;
                 }
-                foreach (var reference in child.References)
+                foreach (var reference in ExportedProjectAssets(child))
                 {
                     if (!specs.TryGetValue(reference, out var grandchildren) || grandchildren.Count == 0)
                         return Unknown($"Source dependency is unavailable: {reference}");
@@ -1084,7 +1129,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         return roots.Where(Directory.Exists).ToList();
     }
     private sealed record ProjectSpec(ProjectId Id, string Path, string Root, string Framework, string Sdk,
-        Dictionary<string, string> Properties, XElement[] Items, string[] References);
+        Dictionary<string, string> Properties, XElement[] Items, string[] References, string[] RestoreReferences);
 
     private static ProjectSpec? CompatibleDependency(ProjectSpec parent, IEnumerable<ProjectSpec> candidates)
     {

@@ -144,12 +144,18 @@ and `DisableTransitiveProjectReferences=true` are respected. Transitive referenc
 respect compile-asset visibility (`PrivateAssets`, `IncludeAssets` and
 `ExcludeAssets`) and use the SDK's default reference metadata. Circular or unavailable
 references produce coverage notices.
+ASP.NET framework references also propagate through compatible source dependencies,
+respecting `PrivateAssets=all`. Analyzer-only references participate in restore
+validation without exposing their types or becoming extra analyzed projects.
 
 Local static imports, including `.props` and `.csproj` files, are read in declaration
 order with their conditions. Nested imports retain their defining-file paths;
 cycles and traversal limits produce coverage notices. Matching unconditional
 official `Sdk.props` / `Sdk.targets` imports can also identify conventional SDK
 projects. Targets and tasks in imported files are not executed.
+The conventional `[MSBuild]::GetPathOfFileAbove('filename', 'directory')`
+parent import is supported when both arguments resolve to literals. Arbitrary
+property functions still produce notices.
 
 Unresolved or wildcard imports, custom SDKs, `Directory.Build.targets`, package build inputs and unsupported
 conditions can change source selection or compiler options. No-build mode warns

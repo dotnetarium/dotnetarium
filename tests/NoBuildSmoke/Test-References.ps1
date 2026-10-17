@@ -1,4 +1,5 @@
 # Uses the CLI invocation and SARIF assertions from Test.ps1.
+. (Join-Path $PSScriptRoot 'Test-NetStandard.ps1')
 # Each dependency exposes a type from the next project, just as an ORM/service
 # API does. Losing a transitive reference breaks overload binding at the sink.
 foreach ($framework in @('net8.0', 'net10.0')) {

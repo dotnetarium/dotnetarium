@@ -55,7 +55,7 @@ evaluation. The old no-build flags are removed; omit them to use the default.
 | `--fail` | Return 1 for findings when there is no fatal scan failure |
 | `-p`, `--project` | Select MSBuild design-time project loading |
 | `--configuration <name>` | Select configuration; default is `Debug` |
-| `--framework <net8.0\|net10.0>` | Select root target framework and compatible dependencies |
+| `--framework <TFM>` | Select `net8.0`, `net10.0`, `netstandard2.0` or `netstandard2.1` and compatible dependencies |
 | `--respect-editorconfig` | Apply configured rule severity/suppression; off by default in the CLI |
 | `--verify-secrets` | Verify supported configuration credentials online; off by default |
 | `--config-include <glob>` | Limit credential files to matching paths; repeatable |
@@ -85,8 +85,13 @@ The tool needs the .NET 10 runtime. Default loading also needs a compatible SDK
 selected from the target directory, respecting `global.json`.
 
 No-build loading supports conventional `Microsoft.NET.Sdk`, Web, Razor and Blazor
-WebAssembly projects targeting .NET 8 or 10. Install the corresponding reference
-packs, normally supplied by the SDK. Razor generation selects the installed SDK
+WebAssembly projects targeting .NET 8 or 10, plus conventional .NET Standard 2.0/2.1
+library projects. Install the corresponding reference packs, normally supplied by
+the SDK or a separate restore. Standard 2.0 uses the cached `NETStandard.Library`
+reference contract (2.0.3 by default); Standard 2.1 uses `NETStandard.Library.Ref`.
+Neither is replaced by the tool's .NET 10 runtime assemblies. Standard compiler
+defaults are C# 7.3/8.0 respectively, unless `LangVersion` overrides them.
+Razor generation selects the installed SDK
 from the project directory and respects `global.json`. Other direct-loader inputs
 remain reconstructed; host runtime assemblies are not substituted for missing packs. Reference
 packs are discovered under the .NET installation, `DOTNET_ROOT`, installations
@@ -106,6 +111,11 @@ and logging namespaces are included when `ImplicitUsings` is enabled; explicit
 `Using Remove` items are respected. `--configuration` and `--framework` work in
 both modes; framework selection retains compatible source dependencies of the
 selected root projects.
+No-build dependency selection prefers an exact target, then compatible lower
+targets: .NET 10 can reference .NET 8, and both can reference Standard 2.1/2.0.
+Standard 2.1 can reference Standard 2.0; the reverse is not compatible. Project
+mode uses the workspace's selected dependency targets; a multi-target library
+may resolve differently from no-build mode.
 SDK-style transitive project outputs are included, so types exposed through
 service/repository dependencies can bind correctly. Direct reference aliases,
 `EmbedInteropTypes`, analyzer-only references, `ReferenceOutputAssembly=false`

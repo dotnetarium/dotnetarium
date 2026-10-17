@@ -49,14 +49,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var solution = workspace.CurrentSolution;
             foreach (var spec in activeSpecs)
             {
-                var major = spec.Framework == "net8.0" ? 8 : 10;
-                var symbols = new HashSet<string>(StringComparer.Ordinal)
-                {
-                    "TRACE", "NET", "NETCOREAPP", $"NET{major}_0", $"NET{major}_0_OR_GREATER",
-                    "NETCOREAPP1_0_OR_GREATER", "NETCOREAPP1_1_OR_GREATER", "NETCOREAPP2_0_OR_GREATER",
-                    "NETCOREAPP2_1_OR_GREATER", "NETCOREAPP2_2_OR_GREATER", "NETCOREAPP3_0_OR_GREATER", "NETCOREAPP3_1_OR_GREATER"
-                };
-                for (var version = 5; version <= major; version++) symbols.Add($"NET{version}_0_OR_GREATER");
+                var major = spec.Framework == "net8.0" ? 8 : spec.Framework == "net10.0" ? 10 : 4;
+                var symbols = TargetFrameworkInputs.Symbols(spec.Framework);
                 if (!IsTrue(spec.Properties.GetValueOrDefault("DisableImplicitConfigurationDefines")))
                 {
                     var configurationSymbol = spec.Properties.GetValueOrDefault("Configuration", "Debug").ToUpperInvariant()
@@ -66,11 +60,11 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 }
                 foreach (var symbol in spec.Properties.GetValueOrDefault("DefineConstants", "").Split(';', StringSplitOptions.RemoveEmptyEntries))
                     symbols.Add(symbol.Trim());
-                var language = major == 8 ? LanguageVersion.CSharp12 : LanguageVersion.CSharp14;
+                var language = TargetFrameworkInputs.Language(spec.Framework);
                 if (spec.Properties.TryGetValue("LangVersion", out var requested) && !LanguageVersionFacts.TryParse(requested, out language))
                 {
                     Warn(spec.Path, "language-version", $"Unsupported LangVersion '{requested}'; using the framework default.");
-                    language = major == 8 ? LanguageVersion.CSharp12 : LanguageVersion.CSharp14;
+                    language = TargetFrameworkInputs.Language(spec.Framework);
                 }
                 var nullable = spec.Properties.GetValueOrDefault("Nullable", "disable") switch
                 {
@@ -162,8 +156,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         Warn(spec.Path, "project-reference", $"Project reference is unavailable: {reference}");
                         continue;
                     }
-                    var dependency = candidates.FirstOrDefault(candidate => candidate.Framework == spec.Framework) ??
-                        (spec.Framework == "net10.0" ? candidates.FirstOrDefault(candidate => candidate.Framework == "net8.0") : null);
+                    var dependency = CompatibleDependency(spec, candidates);
                     if (dependency == null)
                     {
                         Warn(spec.Path, "project-reference", $"No compatible framework for project reference: {reference}");
@@ -269,7 +262,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             specs[path] = [];
             foreach (var framework in frameworks.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                if (framework is not ("net8.0" or "net10.0"))
+                if (!TargetFrameworkInputs.Supported(framework))
                 {
                     if (selection.Framework == null)
                     {
@@ -401,8 +394,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             {
                 ReadProject(reference, dependency: true);
                 if (specs.TryGetValue(reference, out var candidates) &&
-                    (candidates.FirstOrDefault(candidate => candidate.Framework == spec.Framework) ??
-                     (spec.Framework == "net10.0" ? candidates.FirstOrDefault(candidate => candidate.Framework == "net8.0") : null)) is { } dependency)
+                    CompatibleDependency(spec, candidates) is { } dependency)
                     pending.Enqueue(dependency);
             }
         }
@@ -553,7 +545,15 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         var paths = new HashSet<string>(ProjectLoader.PathComparer);
         var hints = new Dictionary<string, MetadataReferenceProperties>(ProjectLoader.PathComparer);
         var packageReferences = new Dictionary<string, MetadataReferenceProperties>(ProjectLoader.PathComparer);
-        AddPack("Microsoft.NETCore.App.Ref", spec.Framework, spec.Path, paths);
+        if (spec.Framework == "netstandard2.0")
+        {
+            var version = spec.Properties.GetValueOrDefault("NETStandardImplicitPackageVersion", "2.0.3");
+            var reference = packRoots.Select(root => Path.Combine(root, "netstandard.library", version, "build", "netstandard2.0", "ref"))
+                .FirstOrDefault(Directory.Exists);
+            if (reference == null) Warn(spec.Path, "reference-pack", $"Missing NETStandard.Library {version} reference assemblies for netstandard2.0; restore separately. Host runtime assemblies are not substituted.");
+            else foreach (var file in Directory.EnumerateFiles(reference, "*.dll")) paths.Add(file);
+        }
+        else AddPack(spec.Framework == "netstandard2.1" ? "NETStandard.Library.Ref" : "Microsoft.NETCore.App.Ref", spec.Framework, spec.Path, paths);
         if (spec.Sdk == "Microsoft.NET.Sdk.Web" || spec.Items.Any(item => item.Name.LocalName == "FrameworkReference" &&
             (string?)item.Attribute("Include") == "Microsoft.AspNetCore.App"))
             AddPack("Microsoft.AspNetCore.App.Ref", spec.Framework, spec.Path, paths);
@@ -597,7 +597,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         $"{validation.Reason} Cached package bindings were omitted; restore separately or supply explicit references to improve coverage.");
                 var targets = assets.RootElement.GetProperty("targets");
                 if ((targets.TryGetProperty(spec.Framework, out var target) ||
-                    targets.TryGetProperty($".NETCoreApp,Version=v{spec.Framework[3..]}", out target)) && validation.Status == "matched")
+                    targets.TryGetProperty(TargetFrameworkInputs.Moniker(spec.Framework), out target)) && validation.Status == "matched")
                 {
                     var libraries = assets.RootElement.GetProperty("libraries");
                     var folders = assets.RootElement.GetProperty("packageFolders").EnumerateObject().Select(folder => folder.Name).ToArray();
@@ -755,8 +755,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             foreach (var path in parent.References)
             {
                 if (!specs.TryGetValue(path, out var candidates)) return Unknown($"Source dependency is unavailable: {path}");
-                var child = candidates.FirstOrDefault(candidate => candidate.Framework == parent.Framework) ??
-                    (parent.Framework == "net10.0" ? candidates.FirstOrDefault(candidate => candidate.Framework == "net8.0") : null);
+                var child = CompatibleDependency(parent, candidates);
                 if (child == null) return Unknown($"No compatible source dependency framework: {path}");
                 var (packages, incomplete) = PackageInputs(child);
                 var childAssetsPath = AssetsPath(child);
@@ -789,7 +788,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     library.Value.TryGetProperty("msbuildProject", out var projectPath) &&
                     ProjectLoader.PathComparer.Equals(Resolve(root.Root, projectPath.GetString()!), child.Path)).ToArray();
                 if (entries.Length != 1 || !target.TryGetProperty(entries[0].Name, out var edge) ||
-                    !edge.TryGetProperty("framework", out var framework) || framework.GetString() != $".NETCoreApp,Version=v{child.Framework[3..]}")
+                    !edge.TryGetProperty("framework", out var framework) || framework.GetString() != TargetFrameworkInputs.Moniker(child.Framework))
                     return Unknown($"Resolved source dependency identity/framework is unavailable or ambiguous: {path}");
                 // Compare edges inside the parent's actual assets, not a dgspec
                 // that a failed restore may have refreshed without updating them.
@@ -811,8 +810,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 {
                     if (!specs.TryGetValue(reference, out var grandchildren) || grandchildren.Count == 0)
                         return Unknown($"Source dependency is unavailable: {reference}");
-                    var grandchild = grandchildren.FirstOrDefault(candidate => candidate.Framework == child.Framework) ??
-                        (child.Framework == "net10.0" ? grandchildren.FirstOrDefault(candidate => candidate.Framework == "net8.0") : null);
+                    var grandchild = CompatibleDependency(child, grandchildren);
                     if (grandchild == null) return Unknown($"No compatible dependency: {reference}");
                     exported[ProjectPackageId(grandchild)] = ProjectVersion(grandchild);
                 }
@@ -852,12 +850,13 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
 
     private void AddPack(string name, string framework, string project, HashSet<string> paths)
     {
-        var major = framework == "net8.0" ? 8 : 10;
+        var major = framework == "net8.0" ? 8 : framework == "netstandard2.1" ? 2 : 10;
+        var minor = framework == "netstandard2.1" ? 1 : 0;
         var candidates = packRoots.SelectMany(root => new[] { Path.Combine(root, name), Path.Combine(root, name.ToLowerInvariant()) })
             .Distinct(StringComparer.Ordinal).Where(Directory.Exists)
             .SelectMany(root => Directory.EnumerateDirectories(root))
             .Select(path => (Path: path, Version: Version.TryParse(Path.GetFileName(path), out var version) ? version : null))
-            .Where(candidate => candidate.Version?.Major == major && candidate.Version.Minor == 0)
+            .Where(candidate => candidate.Version?.Major == major && candidate.Version.Minor == minor)
             .OrderByDescending(candidate => candidate.Version);
         var reference = candidates.Select(candidate => Path.Combine(candidate.Path, "ref", framework)).FirstOrDefault(Directory.Exists);
         if (reference == null) Warn(project, "reference-pack", $"Missing {name} reference pack for {framework}; host runtime assemblies are not substituted.");
@@ -1049,4 +1048,11 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     }
     private sealed record ProjectSpec(ProjectId Id, string Path, string Root, string Framework, string Sdk,
         Dictionary<string, string> Properties, XElement[] Items, string[] References);
+
+    private static ProjectSpec? CompatibleDependency(ProjectSpec parent, IEnumerable<ProjectSpec> candidates)
+    {
+        var available = candidates.ToArray();
+        var framework = TargetFrameworkInputs.Nearest(parent.Framework, available.Select(candidate => candidate.Framework));
+        return available.FirstOrDefault(candidate => candidate.Framework == framework);
+    }
 }

@@ -284,7 +284,7 @@ internal static class Program
         "  --config-exclude <glob>    Exclude matching config files (repeatable)\n" +
         "  -p, --project             Use MSBuild design-time loading instead of the default no-build loader\n" +
         "  --configuration <name>     Select configuration (default: Debug)\n" +
-        "  --framework <net8.0|net10.0> Select root target framework\n" +
+        "  --framework <net8.0|net10.0|netstandard2.0|netstandard2.1> Select root target framework\n" +
         "  -h, --help                 Show this help");
 
     private sealed class FileAdditionalText(string path) : AdditionalText
@@ -355,8 +355,8 @@ internal static class Program
             if (config != null && !File.Exists(config)) throw new ArgumentException($"Configuration not found: {config}");
             if (configuration != null && (string.IsNullOrWhiteSpace(configuration) || configuration.StartsWith('-')))
                 throw new ArgumentException("Provide a nonempty configuration name.");
-            if (framework != null && framework is not ("net8.0" or "net10.0"))
-                throw new ArgumentException("--framework must be net8.0 or net10.0.");
+            if (framework != null && !TargetFrameworkInputs.Supported(framework))
+                throw new ArgumentException("--framework must be net8.0, net10.0, netstandard2.0 or netstandard2.1.");
             if (respectEditorConfig && suppress is "off" or "fingerprint")
                 throw new ArgumentException("--respect-editorconfig conflicts with the selected --suppress mode.");
             suppress ??= respectEditorConfig ? "editorconfig" : "off";

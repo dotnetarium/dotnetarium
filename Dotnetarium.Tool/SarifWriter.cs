@@ -104,6 +104,9 @@ internal static class SarifWriter
         json.WriteStartArray("dotnetarium.excludedTestProjects");
         foreach (var project in report.ExcludedTestProjects.Distinct().Order(StringComparer.Ordinal)) json.WriteStringValue(project);
         json.WriteEndArray();
+        json.WriteStartArray("dotnetarium.excludedProjects");
+        foreach (var project in report.ExcludedProjects.Distinct().Order(StringComparer.Ordinal)) json.WriteStringValue(project);
+        json.WriteEndArray();
         json.WriteEndObject();
         json.WriteStartArray("toolExecutionNotifications");
         foreach (var notice in report.Notices.Distinct().OrderBy(notice => notice.Id, StringComparer.Ordinal).ThenBy(notice => notice.Message, StringComparer.Ordinal))

@@ -13,7 +13,7 @@ namespace Dotnetarium.Tool;
 // Experimental input reconstruction. This deliberately does not evaluate
 // MSBuild tasks, execute targets or restore packages. Only the selected SDK's
 // official Razor generator runs, in memory; project/package generators do not.
-internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? selection = null)
+internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? selection = null, ProjectExclusions? exclusions = null)
 {
     private readonly Dictionary<string, List<ProjectSpec>> specs = new(ProjectLoader.PathComparer);
     private readonly HashSet<string> visited = new(ProjectLoader.PathComparer);
@@ -23,7 +23,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     private readonly Dictionary<string, string[]> sourceInventories = new(ProjectLoader.PathComparer);
     private readonly Dictionary<string, string[]> explicitInventories = new(ProjectLoader.PathComparer);
     private readonly Dictionary<string, SourceText> texts = new(ProjectLoader.PathComparer);
-    private readonly Dictionary<string, XDocument> projectDocuments = new(ProjectLoader.PathComparer);
+    private readonly LoaderInputCache inputCache = new();
     private bool solutionTarget;
     private HashSet<string> rootProjects = new(ProjectLoader.PathComparer);
 
@@ -36,6 +36,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
 
     internal async Task<ScanInputs> LoadAsync(string target)
     {
+        using var cacheLifetime = inputCache;
         var workspace = new AdhocWorkspace();
         var inputs = new ScanInputs(workspace);
         try
@@ -43,8 +44,14 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var roots = ProjectLoader.FindProjects(target);
             solutionTarget = Path.GetExtension(target).ToLowerInvariant() is ".sln" or ".slnx";
             rootProjects = roots.ToHashSet(ProjectLoader.PathComparer);
-            foreach (var path in roots) ReadProject(path);
-            var activeSpecs = SelectSpecs(roots);
+            var includedRoots = roots.Where(path =>
+            {
+                if (exclusions?.Excludes(path) != true) return true;
+                report.ExcludedProjects.Add(path);
+                return false;
+            }).ToArray();
+            foreach (var path in includedRoots) ReadProject(path);
+            var activeSpecs = SelectSpecs(includedRoots);
             var razorRequests = new Dictionary<ProjectId, RazorRequest>();
             var solution = workspace.CurrentSolution;
             foreach (var spec in activeSpecs)
@@ -217,7 +224,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         try
         {
             var root = Path.GetDirectoryName(path)!;
-            var project = XDocument.Load(path);
+            var project = inputCache.Xml(path);
             var sdk = (string?)project.Root?.Attribute("Sdk") ?? "";
             // Equivalent explicit SDK imports are used by some Razor projects.
             // Only recognize an unconditional, matching official props/targets pair.
@@ -235,9 +242,9 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 throw new NotSupportedException($"Unsupported Godot SDK version '{godotVersion}'.");
             var documents = new List<(string Path, XDocument Document)>();
             var props = FindNearest(root, "Directory.Build.props");
-            if (props != null) documents.Add((props, XDocument.Load(props)));
+            if (props != null) documents.Add((props, inputCache.Xml(props)));
             var central = FindNearest(root, "Directory.Packages.props");
-            if (central != null) documents.Add((central, XDocument.Load(central)));
+            if (central != null) documents.Add((central, inputCache.Xml(central)));
             documents.Add((path, project));
             var properties = ProjectProperties(root);
             properties["MSBuildProjectName"] = Path.GetFileNameWithoutExtension(path);
@@ -477,9 +484,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 try
                 {
                     var target = Resolve(Path.GetDirectoryName(file)!, value);
-                    if (!projectDocuments.TryGetValue(target, out var parsed))
-                        projectDocuments[target] = parsed = XDocument.Load(target);
-                    Visit(target, parsed, depth + 1);
+                    Visit(target, inputCache.Xml(target), depth + 1);
                 }
                 catch (Exception error) when (error is IOException or System.Xml.XmlException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
                 {
@@ -577,7 +582,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         {
             try
             {
-                using var assets = JsonDocument.Parse(File.ReadAllText(assetsPath));
+                var assets = inputCache.Assets(assetsPath);
                 var (declaredPackages, incomplete) = PackageInputs(spec);
                 var validation = RestoredAssetsValidator.Validate(assetsPath, assets.RootElement, spec.Path, spec.Framework,
                     declaredPackages, spec.References, incomplete);
@@ -767,7 +772,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 }
                 else
                 {
-                    using var childAssets = JsonDocument.Parse(File.ReadAllText(childAssetsPath));
+                    var childAssets = inputCache.Assets(childAssetsPath);
                     var childState = RestoredAssetsValidator.Validate(childAssetsPath, childAssets.RootElement, child.Path, child.Framework,
                         packages, child.References, incomplete);
                     if (childState.Status == "matched") childState = FrameworkPackagePruning.ValidatePolicy(childAssetsPath, childAssets.RootElement,

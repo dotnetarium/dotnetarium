@@ -41,6 +41,25 @@ explicitly scanning that custom SDK still requires project mode. An explicit
 folder names alone do not exclude projects. Referenced projects remain available
 for semantic binding, and explicitly selected test projects can still be scanned.
 
+For explicit CLI project exclusions, set `ExcludeProjects` in the configuration
+beside the scan target, or select it with `--config`:
+
+```json
+{
+  "Version": "2.0",
+  "ExcludeProjects": ["test/**", "tools/Generator/Generator.csproj"]
+}
+```
+
+Patterns match project paths relative to the configuration directory, using
+`*`, `**` and `?`. Required dependency projects remain available for symbols but
+are excluded from analysis. No-build loading avoids opening unreferenced excluded
+roots; project mode applies analysis exclusions after workspace loading.
+Configuration credential scanning has its own scope and is unaffected. The NuGet
+analyzer accepts this setting but does not control its host's project selection.
+Intentional exclusions are informational and recorded in SARIF as
+`dotnetarium.excludedProjects`. Excluding every usable project still exits 2.
+
 There is no automatic fallback that executes project targets. Choose `-p` when
 unsupported imports, conditional source selection or non-Razor generators need project
 evaluation. The old no-build flags are removed; omit them to use the default.

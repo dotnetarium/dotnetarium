@@ -91,6 +91,10 @@ Configured depth/work limits are normal and informational. Missing references, c
 
 Place lowercase `dotnetarium.json` beside a project or solution. The analyzer package includes project configuration automatically; the tool discovers it or uses `--config`. JSON models extend built-in sources, sinks and sanitizers.
 
+The CLI also accepts `"ExcludeProjects": ["test/**", "tools/**"]` to exclude
+project analysis while preserving required dependency symbols. Patterns are
+relative to that configuration file; credential-file scanning keeps its own scope.
+
 ```json
 {
   "Version": "2.0",

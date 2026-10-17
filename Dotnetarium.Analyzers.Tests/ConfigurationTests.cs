@@ -10,6 +10,19 @@ namespace Dotnetarium.Analyzers.Tests;
 public sealed class ConfigurationTests
 {
     [Fact]
+    public void Explicit_project_exclusions_are_preserved_by_configuration_merge()
+    {
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes("{\"Version\":\"2.0\",\"ExcludeProjects\":[\"test/**\",\"tools/**\"]}"));
+        using var reader = new StreamReader(stream);
+        var overlay = new ConfigurationReader().DeserializeAndValidate<ConfigData>(reader, validate: true);
+        var config = new ConfigData();
+        config.Merge(overlay);
+        Assert.Equal(new[] { "test/**", "tools/**" }, config.ExcludeProjects);
+        overlay.ExcludeProjects!.Clear();
+        Assert.Equal(2, config.ExcludeProjects!.Count);
+    }
+
+    [Fact]
     public void Built_in_models_drop_web_forms_and_scope_restored_BinaryFormatter()
     {
         var config = new ConfigurationReader().GetBuiltinConfiguration();

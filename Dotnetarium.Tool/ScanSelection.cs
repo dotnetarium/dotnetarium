@@ -23,6 +23,7 @@ internal sealed record ScanSelection(string? Configuration = null, string? Frame
     {
         if (Framework == null) return;
         var roots = ProjectLoader.FindProjects(target).Where(path => !report.ExcludedTestProjects.Any(excluded =>
+            ProjectLoader.PathComparer.Equals(path, excluded)) && !report.ExcludedProjects.Any(excluded =>
             ProjectLoader.PathComparer.Equals(path, excluded))).ToHashSet(ProjectLoader.PathComparer);
         var all = inputs.Workspace.CurrentSolution.Projects.Where(project => project.Language == LanguageNames.CSharp).ToArray();
         var selected = all.Where(project => roots.Contains(project.FilePath ?? "") && FrameworkOf(project) == Framework).ToArray();

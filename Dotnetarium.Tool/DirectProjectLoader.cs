@@ -240,8 +240,6 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var godotVersion = sdk.StartsWith("Godot.NET.Sdk/", StringComparison.Ordinal) ? sdk["Godot.NET.Sdk/".Length..] : null;
             if (godotVersion != null && (!Version.TryParse(godotVersion, out var version) || version.Major != 4 || version.Minor > 100 || version.Build > 100))
                 throw new NotSupportedException($"Unsupported Godot SDK version '{godotVersion}'.");
-            if (godotVersion == null && !IsConventionalSdk(sdk))
-                throw new NotSupportedException($"Unsupported SDK '{sdk}'. Direct loading supports conventional .NET SDK projects.");
             var documents = new List<(string Path, XDocument Document)>();
             var props = FindNearest(root, "Directory.Build.props");
             if (props != null) documents.Add((props, XDocument.Load(props)));
@@ -252,15 +250,17 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             properties["MSBuildProjectName"] = Path.GetFileNameWithoutExtension(path);
             properties["MSBuildProjectFullPath"] = path;
             var initialDocuments = ReadProperties(documents, properties, path);
-            if (!properties.ContainsKey("IsTestProject") && ReadItems(initialDocuments, properties, path)
-                .Any(item => item.Name.LocalName == "PackageReference" &&
-                    string.Equals(Expand((string?)item.Attribute("Include") ?? "", properties), "Microsoft.NET.Test.Sdk", StringComparison.OrdinalIgnoreCase))) properties["IsTestProject"] = "true";
+            TestProjectDetection.Apply(properties, ReadItems(initialDocuments, properties, path)
+                .Where(item => item.Name.LocalName == "PackageReference")
+                .Select(item => Expand((string?)item.Attribute("Include") ?? "", properties)), sdk);
             if (!dependency && solutionTarget && rootProjects.Contains(path) && IsTrue(properties.GetValueOrDefault("IsTestProject")))
             {
                 visited.Remove(path); // A production dependency may still need its symbols.
                 report.ExcludedTestProjects.Add(path);
                 return;
             }
+            if (godotVersion == null && !IsConventionalSdk(sdk))
+                throw new NotSupportedException($"Unsupported SDK '{sdk}'. Direct loading supports conventional .NET SDK projects.");
             var frameworks = properties.GetValueOrDefault("TargetFramework", "");
             if (frameworks.Length == 0) frameworks = properties.GetValueOrDefault("TargetFrameworks", "");
             if (frameworks.Length == 0) throw new NotSupportedException("No statically readable TargetFramework/TargetFrameworks.");
@@ -331,6 +331,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 evaluated.TryAdd("IntermediateOutputPath", Path.Combine(evaluated["BaseIntermediateOutputPath"],
                     evaluated.GetValueOrDefault("Configuration", "Debug"), framework) + Path.DirectorySeparatorChar);
                 var items = ReadItems(evaluatedDocuments, evaluated, path).ToArray();
+                TestProjectDetection.Apply(evaluated, items.Where(item => item.Name.LocalName == "PackageReference")
+                    .Select(item => Expand((string?)item.Attribute("Include") ?? "", evaluated)), sdk);
                 if (godotVersion != null && !IsTrue(evaluated.GetValueOrDefault("EnableGodotDotNetPreview")))
                 {
                     var implicitItems = new List<XElement>();

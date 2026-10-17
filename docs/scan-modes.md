@@ -32,6 +32,15 @@ dotnetarium MyApp.csproj --project --configuration Release --framework net10.0
 Projects without C# source, such as documentation projects, are noted and skipped
 without failing other projects. A scan with no usable C# projects still exits 2.
 
+Solution scans exclude test projects identified by `IsTestProject`, the
+`IsTestingPlatformApplication` marker, or known test runner packages. This includes
+xUnit v3 runners and MSTest/NUnit runners with their enabled runner settings.
+No-build loading also recognizes `MSTest.Sdk` test roots before SDK validation;
+explicitly scanning that custom SDK still requires project mode. An explicit
+`IsTestProject=false` takes precedence. Assertion libraries, project names and
+folder names alone do not exclude projects. Referenced projects remain available
+for semantic binding, and explicitly selected test projects can still be scanned.
+
 There is no automatic fallback that executes project targets. Choose `-p` when
 unsupported imports, conditional source selection or non-Razor generators need project
 evaluation. The old no-build flags are removed; omit them to use the default.

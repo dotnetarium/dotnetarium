@@ -344,8 +344,8 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
 
             protected override TaintedDataAbstractValue ComputeAnalysisValueForReferenceOperation(IOperation operation, TaintedDataAbstractValue defaultValue)
             {
-                // Also applies to identifiers inside request DTOs and Nullable<Guid>.
-                if (TaintedDataSymbolMapExtensions.IsGuidIdentifier(operation.Type))
+                // Also applies to identifier members in DTOs and Nullable<Guid>.
+                if (TaintedDataSymbolMapExtensions.IsTypedIdentifier(operation.Type))
                     return TaintedDataAbstractValue.NotTainted;
                 // If the property/field reference itself is a tainted data source
                 if (operation is IPropertyReferenceOperation propertyReferenceOperation

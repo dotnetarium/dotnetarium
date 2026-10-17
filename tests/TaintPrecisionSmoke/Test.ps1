@@ -42,7 +42,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 public class Settings { public string Origin { get; set; } public string LogRoot { get; set; } }
-public interface IRepository { string Get(Guid id); }
+public interface IRepository { string Get(Guid id); string Get(Version version); }
 public class PrecisionController : ControllerBase {
     private readonly IRepository repository;
     private readonly IOptions<Settings> options;
@@ -56,6 +56,7 @@ public class PrecisionController : ControllerBase {
         System.IO.File.ReadAllText(Path.Combine(options.Value.LogRoot, input));
     }
     public void Identifier(Guid id) => System.IO.File.ReadAllText(repository.Get(id));
+    public void VersionIdentifier(Version version) => System.IO.File.ReadAllText(repository.Get(version));
     public IActionResult FixedRedirect(string input) {
         var url = "/Login?ReturnUrl=" + Uri.EscapeDataString(input);
         url += "&extra=" + Uri.EscapeDataString(input);

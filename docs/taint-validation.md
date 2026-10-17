@@ -206,6 +206,7 @@ to both the main scanner and the build-independent loading experiment.
 | Pattern | Scanner behavior |
 | --- | --- |
 | `Guid`, `Guid?`, or a GUID member inside a request DTO | Treated as a strongly typed identifier, not an injection payload. Lookup and standard-conversion results do not acquire taint solely from that identifier. |
+| Framework `System.Version`, including a member inside a request DTO | Treated as a numeric version selector. Selecting a record does not taint its path solely from the version. Separate request strings and explicitly modeled stored-content sources remain tainted. Application-defined types named `Version` are unaffected. |
 | LINQ/EF Core `Where`, `First[OrDefault]`, `Single[OrDefault]`, or `Last[OrDefault]` predicate | Predicate inputs select records; they do not become the returned record's stored contents. Existing taint in the collection is retained. |
 | LINQ `Select` returning a captured request string | The projected payload remains tainted. Inline selector return values are analyzed under the existing interprocedural limits. |
 | Explicit stored-content source model | Remains a source even when a GUID selects the content. There is no blanket database sanitizer or automatic stored-content source. |

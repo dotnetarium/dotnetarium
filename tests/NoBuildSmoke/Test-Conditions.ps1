@@ -46,7 +46,7 @@ if (HasNotice $inherited 'condition') { throw 'Supported compound props/item con
 $release = Scan $conditionalProject @('--configuration', 'Release')
 AssertMode $release 'no-build' 'available'
 if (@($release.results | Where-Object ruleId -ne 'DNA9000').Count) { throw 'False item condition included the unsafe source.' }
-$invalidXml = $conditionalXml.Replace('</Project>', '<PropertyGroup><DefineConstants Condition="true Or Exists(''marker.txt'')">UNSUPPORTED</DefineConstants></PropertyGroup></Project>')
+$invalidXml = $conditionalXml.Replace('</Project>', '<PropertyGroup><DefineConstants Condition="true Or UnknownFunction(''marker.txt'')">UNSUPPORTED</DefineConstants></PropertyGroup></Project>')
 $invalidXml | Set-Content -LiteralPath $conditionalProject
 $unsupportedCondition = Scan $conditionalProject @()
 AssertFinding $unsupportedCondition

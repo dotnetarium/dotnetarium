@@ -94,7 +94,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 var targets = ImmutableArray.CreateBuilder<IMethodSymbol>();
                 var seen = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
                 foreach (var type in candidates)
-                    if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol target &&
+                    if (FindImplementation(type, member) is IMethodSymbol target &&
                         target.Locations.Any(location => location.IsInSource) && seen.Add(target))
                         targets.Add(target);
                 return targets.ToImmutable();
@@ -115,11 +115,22 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                         return ImmutableArray<IMethodSymbol>.Empty;
                     // Filter concrete candidates before resolving inherited methods.
                     return candidates.Where(type => IsCompatible(type, receiverType))
-                        .Select(type => type.FindImplementationForInterfaceMember(member))
+                        .Select(type => FindImplementation(type, member))
                         .OfType<IMethodSymbol>()
                         .Where(target => target.Locations.Any(location => location.IsInSource))
                         .Distinct<IMethodSymbol>(SymbolEqualityComparer.Default).ToImmutableArray();
                 });
+        }
+
+        private static IMethodSymbol? FindImplementation(INamedTypeSymbol type, IMethodSymbol method)
+        {
+            // Roslyn resolves declarations, not a method instantiated at a call site.
+            // Passing Go<string> can throw inside modifier matching even for valid
+            // source. Keep containing-type substitutions, then instantiate the target.
+            var declaration = method.ConstructedFrom;
+            var target = type.FindImplementationForInterfaceMember(declaration) as IMethodSymbol;
+            return target != null && !SymbolEqualityComparer.Default.Equals(method, declaration)
+                ? target.Construct(method.TypeArguments.ToArray()) : target;
         }
 
         private bool IsCompatible(INamedTypeSymbol type, ITypeSymbol? receiverType)

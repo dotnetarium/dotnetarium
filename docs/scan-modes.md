@@ -29,8 +29,11 @@ dotnetarium MyApp.csproj --project --configuration Release --framework net10.0
 | Taint limits | Informational; retain other findings | Informational; retain other findings |
 | Unusable compilation or analyzer failure | Exit 2 | Exit 2 |
 
+Projects without C# source, such as documentation projects, are noted and skipped
+without failing other projects. A scan with no usable C# projects still exits 2.
+
 There is no automatic fallback that executes project targets. Choose `-p` when
-custom imports, conditional source selection or non-Razor generators need project
+unsupported imports, conditional source selection or non-Razor generators need project
 evaluation. The old no-build flags are removed; omit them to use the default.
 
 ## CLI options
@@ -84,7 +87,8 @@ The loader reads common properties, static string equality/inequality conditions
 combined with `And`, `Or`, `!` and parentheses, and literal
 `$(Property.Contains('text'))` checks using case-sensitive ordinal string matching.
 These checks are parsed as data; arbitrary methods, overloads, nested property
-functions and escaped arguments remain unsupported. The loader reads nearest
+functions and escaped arguments remain unsupported. Literal `Exists(...)` file
+and directory conditions are supported. The loader reads nearest
 `Directory.Build.props` and `Directory.Packages.props`, compile includes/removes,
 project references, explicit assembly references, implicit usings, JSON rules
 and editor configuration. By default it uses Debug and scans supported target
@@ -101,7 +105,13 @@ respect compile-asset visibility (`PrivateAssets`, `IncludeAssets` and
 `ExcludeAssets`) and use the SDK's default reference metadata. Circular or unavailable
 references produce coverage notices.
 
-Custom imports, `Directory.Build.targets`, package build inputs and unsupported
+Local static imports, including `.props` and `.csproj` files, are read in declaration
+order with their conditions. Nested imports retain their defining-file paths;
+cycles and traversal limits produce coverage notices. Matching unconditional
+official `Sdk.props` / `Sdk.targets` imports can also identify conventional SDK
+projects. Targets and tasks in imported files are not executed.
+
+Unresolved or wildcard imports, custom SDKs, `Directory.Build.targets`, package build inputs and unsupported
 conditions can change source selection or compiler options. No-build mode warns
 about these inputs, including unevaluated `Choose`/`When`/`Otherwise` branches.
 Shared props items resolve `MSBuildThisFileDirectory` against their defining file;

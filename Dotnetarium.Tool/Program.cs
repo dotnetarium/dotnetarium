@@ -113,6 +113,12 @@ internal static class Program
                 var compilationStarted = Stopwatch.GetTimestamp();
                 var compilation = await project.GetCompilationAsync();
                 report.RecordElapsed("compilation-total", compilationStarted);
+                if (compilation != null && !compilation.SyntaxTrees.Any() && project.DocumentIds.Count == 0 &&
+                    !inputs!.RazorProjects.Contains(project.Id))
+                {
+                    report.Info("no-source", $"{project.Name}: no C# source inputs; no code analysis is required.");
+                    return;
+                }
                 if (compilation == null || !compilation.SyntaxTrees.Any() ||
                     compilation.GetSpecialType(SpecialType.System_Object).TypeKind == TypeKind.Error)
                 {

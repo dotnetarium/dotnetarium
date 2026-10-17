@@ -23,6 +23,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     private readonly Dictionary<string, string[]> sourceInventories = new(ProjectLoader.PathComparer);
     private readonly Dictionary<string, string[]> explicitInventories = new(ProjectLoader.PathComparer);
     private readonly Dictionary<string, SourceText> texts = new(ProjectLoader.PathComparer);
+    private readonly Dictionary<string, XDocument> projectDocuments = new(ProjectLoader.PathComparer);
     private bool solutionTarget;
     private HashSet<string> rootProjects = new(ProjectLoader.PathComparer);
 
@@ -225,10 +226,21 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var root = Path.GetDirectoryName(path)!;
             var project = XDocument.Load(path);
             var sdk = (string?)project.Root?.Attribute("Sdk") ?? "";
+            // Equivalent explicit SDK imports are used by some Razor projects.
+            // Only recognize an unconditional, matching official props/targets pair.
+            if (sdk.Length == 0)
+            {
+                var sdkImports = project.Root!.Elements().Where(element => element.Name.LocalName == "Import" &&
+                    element.Attribute("Condition") == null && element.Attribute("Version") == null).ToArray();
+                sdk = sdkImports.Where(element => (string?)element.Attribute("Project") == "Sdk.props")
+                    .Select(element => (string?)element.Attribute("Sdk") ?? "")
+                    .FirstOrDefault(candidate => IsConventionalSdk(candidate) && sdkImports.Any(element =>
+                        (string?)element.Attribute("Project") == "Sdk.targets" && (string?)element.Attribute("Sdk") == candidate)) ?? "";
+            }
             var godotVersion = sdk.StartsWith("Godot.NET.Sdk/", StringComparison.Ordinal) ? sdk["Godot.NET.Sdk/".Length..] : null;
             if (godotVersion != null && (!Version.TryParse(godotVersion, out var version) || version.Major != 4 || version.Minor > 100 || version.Build > 100))
                 throw new NotSupportedException($"Unsupported Godot SDK version '{godotVersion}'.");
-            if (godotVersion == null && sdk is not ("Microsoft.NET.Sdk" or "Microsoft.NET.Sdk.Web" or "Microsoft.NET.Sdk.Razor" or "Microsoft.NET.Sdk.BlazorWebAssembly"))
+            if (godotVersion == null && !IsConventionalSdk(sdk))
                 throw new NotSupportedException($"Unsupported SDK '{sdk}'. Direct loading supports conventional .NET SDK projects.");
             var documents = new List<(string Path, XDocument Document)>();
             var props = FindNearest(root, "Directory.Build.props");
@@ -239,8 +251,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var properties = ProjectProperties(root);
             properties["MSBuildProjectName"] = Path.GetFileNameWithoutExtension(path);
             properties["MSBuildProjectFullPath"] = path;
-            ReadProperties(documents, properties, path);
-            if (!properties.ContainsKey("IsTestProject") && ReadItems(documents, properties, path)
+            var initialDocuments = ReadProperties(documents, properties, path);
+            if (!properties.ContainsKey("IsTestProject") && ReadItems(initialDocuments, properties, path)
                 .Any(item => item.Name.LocalName == "PackageReference" &&
                     string.Equals(Expand((string?)item.Attribute("Include") ?? "", properties), "Microsoft.NET.Test.Sdk", StringComparison.OrdinalIgnoreCase))) properties["IsTestProject"] = "true";
             if (!dependency && solutionTarget && rootProjects.Contains(path) && IsTrue(properties.GetValueOrDefault("IsTestProject")))
@@ -252,6 +264,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var frameworks = properties.GetValueOrDefault("TargetFramework", "");
             if (frameworks.Length == 0) frameworks = properties.GetValueOrDefault("TargetFrameworks", "");
             if (frameworks.Length == 0) throw new NotSupportedException("No statically readable TargetFramework/TargetFrameworks.");
+            if (frameworks.Contains("$(", StringComparison.Ordinal))
+                throw new NotSupportedException($"Unresolved TargetFramework/TargetFrameworks: {frameworks}. Supply the missing static project properties or use project mode (-p).");
             specs[path] = [];
             foreach (var framework in frameworks.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
@@ -268,7 +282,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 evaluated["TargetFramework"] = framework;
                 evaluated["MSBuildProjectName"] = Path.GetFileNameWithoutExtension(path);
                 evaluated["MSBuildProjectFullPath"] = path;
-                ReadProperties(documents, evaluated, path, preserveFramework: true);
+                var evaluatedDocuments = ReadProperties(documents, evaluated, path, preserveFramework: true);
                 if (properties.TryGetValue("IsTestProject", out var testProject)) evaluated.TryAdd("IsTestProject", testProject);
                 if (godotVersion != null)
                 {
@@ -316,7 +330,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 evaluated.TryAdd("BaseIntermediateOutputPath", "obj" + Path.DirectorySeparatorChar);
                 evaluated.TryAdd("IntermediateOutputPath", Path.Combine(evaluated["BaseIntermediateOutputPath"],
                     evaluated.GetValueOrDefault("Configuration", "Debug"), framework) + Path.DirectorySeparatorChar);
-                var items = ReadItems(documents, evaluated, path).ToArray();
+                var items = ReadItems(evaluatedDocuments, evaluated, path).ToArray();
                 if (godotVersion != null && !IsTrue(evaluated.GetValueOrDefault("EnableGodotDotNetPreview")))
                 {
                     var implicitItems = new List<XElement>();
@@ -332,10 +346,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                         string.Equals((string?)existing.Attribute("Include"), (string?)item.Attribute("Include"), StringComparison.OrdinalIgnoreCase)))).ToArray();
                     Warn(path, "generation", "Godot source generators were not executed. RPC declarations and ordinary C# bodies can be analyzed; generated signal/property/method helpers may be absent.");
                 }
-                foreach (var document in documents)
+                foreach (var document in evaluatedDocuments)
                 {
-                    foreach (var import in document.Document.Descendants().Where(element => element.Name.LocalName == "Import"))
-                        Warn(path, "import", $"Custom import was not evaluated: {(string?)import.Attribute("Project")}");
                     if (document.Document.Root!.Elements().Any(element => element.Name.LocalName == "Choose"))
                         Warn(path, "conditional-structure", "Choose/When/Otherwise inputs were not evaluated; source selection or compiler properties may differ.");
                     if (document.Document.Descendants().Any(element => element.Name.LocalName == "Target"))
@@ -395,28 +407,96 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         return selected.Values.ToArray();
     }
 
-    private void ReadProperties(IEnumerable<(string Path, XDocument Document)> documents,
+    private List<(string Path, XDocument Document)> ReadProperties(IEnumerable<(string Path, XDocument Document)> documents,
         Dictionary<string, string> properties, string project, bool preserveFramework = false)
     {
-        foreach (var document in documents)
+        var expanded = new List<(string Path, XDocument Document)>();
+        var active = new HashSet<string>(ProjectLoader.PathComparer);
+        var importCount = 0;
+        foreach (var document in documents) Visit(document.Path, document.Document, 0);
+        return expanded;
+
+        void Visit(string file, XDocument document, int depth)
         {
-            properties["MSBuildThisFileDirectory"] = Path.GetDirectoryName(document.Path)! + Path.DirectorySeparatorChar;
-            foreach (var group in document.Document.Root!.Elements().Where(element => element.Name.LocalName == "PropertyGroup"))
+            if (depth > 32 || ++importCount > 4096 || !active.Add(file))
             {
-                if (!Condition(group, properties, project)) continue;
-                foreach (var property in group.Elements())
-                    if (!(preserveFramework && property.Name.LocalName == "TargetFramework") &&
-                        !(selection.Configuration != null && property.Name.LocalName.Equals("Configuration", StringComparison.OrdinalIgnoreCase)) &&
-                        Condition(property, properties, project))
+                Warn(project, "import", $"Static import cycle or traversal limit: {file}");
+                return;
+            }
+            var previousDirectory = properties.GetValueOrDefault("MSBuildThisFileDirectory", "");
+            var previousPath = properties.GetValueOrDefault("MSBuildThisFileFullPath", "");
+            properties["MSBuildThisFileDirectory"] = Path.GetDirectoryName(file)! + Path.DirectorySeparatorChar;
+            properties["MSBuildThisFileFullPath"] = file;
+            try
+            {
+                foreach (var element in document.Root!.Elements())
+                {
+                    if (element.Name.LocalName == "ImportGroup")
                     {
-                        var value = Expand(property.Value, properties);
-                        if (value.Contains("$(", StringComparison.Ordinal))
-                            Warn(project, "property", $"Unresolved property '{property.Name.LocalName}': {value}");
-                        properties[property.Name.LocalName] = value;
+                        if (Condition(element, properties, project))
+                            foreach (var import in element.Elements().Where(child => child.Name.LocalName == "Import")) Import(import);
+                        continue;
                     }
+                    if (element.Name.LocalName == "Import") { Import(element); continue; }
+                    // Preserve item order and defining-file context. Items are evaluated
+                    // after properties, as in MSBuild; import conditions are frozen here.
+                    expanded.Add((file, new XDocument(new XElement("Project", new XElement(element)))));
+                    if (element.Name.LocalName != "PropertyGroup" || !Condition(element, properties, project)) continue;
+                    foreach (var property in element.Elements())
+                        if (!(preserveFramework && property.Name.LocalName == "TargetFramework") &&
+                            !(selection.Configuration != null && property.Name.LocalName.Equals("Configuration", StringComparison.OrdinalIgnoreCase)) &&
+                            (IsUnsetDefault(property) || Condition(property, properties, project)))
+                        {
+                            // Self-appending properties start empty on first assignment.
+                            // Other unknown properties remain unresolved, not guessed.
+                            var self = "$(" + property.Name.LocalName + ")";
+                            var source = properties.ContainsKey(property.Name.LocalName) ? property.Value :
+                                property.Value.Replace(self, "", StringComparison.OrdinalIgnoreCase);
+                            var value = Expand(source, properties);
+                            if (value.Contains("$(", StringComparison.Ordinal))
+                                Warn(project, "property", $"Unresolved property '{property.Name.LocalName}': {value}");
+                            properties[property.Name.LocalName] = value;
+                        }
+                }
+            }
+            finally
+            {
+                properties["MSBuildThisFileDirectory"] = previousDirectory;
+                properties["MSBuildThisFileFullPath"] = previousPath;
+                active.Remove(file);
+            }
+
+            bool IsUnsetDefault(XElement property) => !properties.ContainsKey(property.Name.LocalName) &&
+                Regex.IsMatch((string?)property.Attribute("Condition") ?? "", "^\\s*'\\$\\(" + Regex.Escape(property.Name.LocalName) + "\\)'\\s*==\\s*''\\s*$", RegexOptions.IgnoreCase);
+
+            void Import(XElement import)
+            {
+                if (!Condition(import, properties, project)) return;
+                var value = Expand((string?)import.Attribute("Project") ?? "", properties);
+                if (IsConventionalSdk((string?)import.Attribute("Sdk") ?? "") &&
+                    (value is "Sdk.props" or "Sdk.targets") && import.Attribute("Version") == null) return;
+                if (import.Attribute("Sdk") != null || value.Length == 0 || value.Contains("$(", StringComparison.Ordinal) || value.IndexOfAny(['*', '?', ';']) >= 0)
+                {
+                    Warn(project, "import", $"Unsupported static import in {file}: {value}");
+                    return;
+                }
+                try
+                {
+                    var target = Resolve(Path.GetDirectoryName(file)!, value);
+                    if (!projectDocuments.TryGetValue(target, out var parsed))
+                        projectDocuments[target] = parsed = XDocument.Load(target);
+                    Visit(target, parsed, depth + 1);
+                }
+                catch (Exception error) when (error is IOException or System.Xml.XmlException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                    Warn(project, "import", $"Unable to read static import {value} in {file}: {error.Message}");
+                }
             }
         }
     }
+
+    private static bool IsConventionalSdk(string sdk) => sdk is "Microsoft.NET.Sdk" or "Microsoft.NET.Sdk.Web" or
+        "Microsoft.NET.Sdk.Razor" or "Microsoft.NET.Sdk.BlazorWebAssembly";
 
     private IEnumerable<XElement> ReadItems(IEnumerable<(string Path, XDocument Document)> documents,
         Dictionary<string, string> properties, string project)
@@ -425,7 +505,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         {
             var context = new Dictionary<string, string>(properties, StringComparer.OrdinalIgnoreCase)
             {
-                ["MSBuildThisFileDirectory"] = Path.GetDirectoryName(document.Path)! + Path.DirectorySeparatorChar
+                ["MSBuildThisFileDirectory"] = Path.GetDirectoryName(document.Path)! + Path.DirectorySeparatorChar,
+                ["MSBuildThisFileFullPath"] = document.Path
             };
             foreach (var group in document.Document.Root!.Elements().Where(element => element.Name.LocalName == "ItemGroup"))
             {
@@ -436,7 +517,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     // Do not mutate the shared document across framework evaluations.
                     var expanded = new XElement(item);
                     string DefiningFile(string value) => value.Replace("$(MSBuildThisFileDirectory)",
-                        context["MSBuildThisFileDirectory"], StringComparison.OrdinalIgnoreCase);
+                        context["MSBuildThisFileDirectory"], StringComparison.OrdinalIgnoreCase)
+                        .Replace("$(MSBuildThisFileFullPath)", document.Path, StringComparison.OrdinalIgnoreCase);
                     foreach (var element in expanded.DescendantsAndSelf())
                     {
                         foreach (var attribute in element.Attributes()) attribute.Value = DefiningFile(attribute.Value);
@@ -454,7 +536,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         if (string.IsNullOrWhiteSpace(condition)) return true;
         var expression = Expand(condition, properties).Trim();
         if (StaticCondition.TryExpandFunctions(expression, properties, out var expanded) &&
-            StaticCondition.TryEvaluate(expanded, out var result)) return result;
+            StaticCondition.TryEvaluate(expanded, out var result, Path.GetDirectoryName(project))) return result;
         Warn(project, "condition", $"Unsupported condition; skipped {element.Name.LocalName}: {condition}");
         return false;
     }

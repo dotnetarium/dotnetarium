@@ -1,7 +1,7 @@
 namespace Dotnetarium.Tool;
 
 // A bounded, data-only subset of MSBuild conditions. Never invokes MSBuild,
-// arbitrary property functions, imports, tasks or targets. Unknown syntax invalidates the whole expression,
+// arbitrary property functions, tasks or targets. Unknown syntax invalidates the whole expression,
 // including branches whose Boolean value would otherwise short-circuit.
 internal static class StaticCondition
 {
@@ -42,17 +42,17 @@ internal static class StaticCondition
         return true;
     }
 
-    internal static bool TryEvaluate(string expression, out bool value)
+    internal static bool TryEvaluate(string expression, out bool value, string? projectDirectory = null)
     {
         value = false;
         if (expression.Length > 65536 || expression.Contains("$(", StringComparison.Ordinal)) return false;
-        var parser = new Parser(expression);
+        var parser = new Parser(expression, projectDirectory);
         if (!parser.TryOr(out var result) || !parser.AtEnd) return false;
         value = result;
         return true;
     }
 
-    private sealed class Parser(string text)
+    private sealed class Parser(string text, string? projectDirectory)
     {
         private int position;
         private int depth;
@@ -93,6 +93,19 @@ internal static class StaticCondition
                     return true;
                 }
                 if (Take("(")) return TryOr(out value) && Take(")");
+                if (TakeWord("Exists"))
+                {
+                    if (projectDirectory == null || !Take("(") || !Operand(out var path) || !Take(")")) return false;
+                    if (path.Length == 0) return true;
+                    try
+                    {
+                        var fullPath = Path.GetFullPath(Path.Combine(projectDirectory,
+                            path.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar)));
+                        value = File.Exists(fullPath) || Directory.Exists(fullPath);
+                        return true;
+                    }
+                    catch (Exception error) when (error is ArgumentException or NotSupportedException or IOException) { return false; }
+                }
                 if (!Operand(out var left)) return false;
                 var equal = Take("==");
                 if (equal || Take("!="))

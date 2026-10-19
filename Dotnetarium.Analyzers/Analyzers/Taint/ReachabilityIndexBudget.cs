@@ -14,7 +14,10 @@ namespace Dotnetarium.Analyzers.Taint
 
         internal ReachabilityIndexBudget(CancellationToken cancellationToken) => this.cancellationToken = cancellationToken;
 
-        internal void VisitOperation()
+        internal void VisitOperation() => Consume();
+        internal void VisitGraph() => Consume();
+
+        private void Consume()
         {
             if (++work <= Limit) return;
             cancellationToken.ThrowIfCancellationRequested();

@@ -160,6 +160,11 @@ namespace Dotnetarium.Analyzers.Taint
                 foreach (var lambda in currentGraph.DescendantOperations<IFlowAnonymousFunctionOperation>(OperationKind.FlowAnonymousFunction))
                 {
                     var lambdaGraph = currentGraph.GetAnonymousFunctionControlFlowGraph(lambda);
+                    // This standalone pass reports sinks inside the callback.
+                    // Parent dataflow still analyzes callbacks that supply values
+                    // or captured state, even when they contain no modeled sink.
+                    if (!settings.TaintConfiguration.GetSinkReachability(kind).MayReachSink(lambdaGraph, block.CancellationToken))
+                        continue;
                     if (lambda.Symbol.Parameters.Any(parameter => sources.IsSourceParameter(parameter, types) ||
                             parameter.GetAttributes().Any(attribute => attribute.AttributeClass?.ToDisplayString() == "Microsoft.AspNetCore.Http.AsParametersAttribute")) ||
                         settings.TaintConfiguration.GetSourceReachability(kind).MayReachSource(lambdaGraph, block.CancellationToken))

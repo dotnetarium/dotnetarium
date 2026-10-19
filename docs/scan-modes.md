@@ -6,10 +6,15 @@ root, stage and available work counters. Cached dataflow results replay logical
 work costs; cache warmth saves CPU without buying extra analysis depth. Negative
 source/sink proofs and component-state convergence have separate bounded budgets.
 An unfinished negative proof preserves normal taint analysis eligibility.
-Source/sink prechecks also separate shared index construction (8,192 operation
-visits per check) from rule-specific proof work (2,048 work units). A cold index
+Source/sink prechecks also separate shared index construction (8,192 graph and
+operation visits per check) from rule-specific proof work (2,048 work units). A cold index
 does not consume the semantic proof budget. If either limit is reached, normal
 taint analysis remains eligible; interrupted indexes can resume on later checks.
+Graph visits use that same indexing allowance, so many small callbacks do not
+force an unknown result at a separate fixed callback-count limit.
+Source indexing still inspects each operation; semantic proofs retain only
+source-relevant references and calls. Standalone callback checks skip callbacks proven to have
+no sink; parent dataflow still follows their returned values and captured state.
 
 An exhausted points-to request can reuse its stop outcome for the same root,
 analysis options, work limit and depth-stop policy, with a fresh budget. It still
@@ -17,6 +22,10 @@ reports incomplete analysis and charges the same logical work; no partial result
 is treated as complete. Different budgets remain eligible for analysis. SARIF
 cutoffs identify `points-to`, `taint` or `value-content` stages where available;
 `stopReused: true` means a previous identical budget stop avoided recomputation.
+The points-to cache also retains the 32 most recently completed root results per
+compilation to reduce recomputation after garbage collection. Older results
+remain weakly cached. Partial results are not retained, and cache hits still
+charge their logical work cost.
 
 The global tool has two input-loading modes. Both use Roslyn compilations,
 semantic symbols, the same rules, taint engine and SARIF data flows.

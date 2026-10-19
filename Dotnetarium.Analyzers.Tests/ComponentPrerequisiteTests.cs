@@ -4,10 +4,12 @@ namespace Dotnetarium.Analyzers.Tests;
 
 public sealed class ComponentPrerequisiteTests
 {
-    [Fact]
-    public async Task A_completed_binding_is_retained_when_an_unrelated_callback_summary_exhausts_work()
+    [Theory]
+    [InlineData(300, false)]
+    [InlineData(3000, true)]
+    public async Task A_completed_binding_is_retained_with_bounded_unrelated_callback_work(int operations, bool expectedLimit)
     {
-        var noise = string.Concat(Enumerable.Repeat("output = output.Trim();", 300));
+        var noise = string.Concat(Enumerable.Repeat("output = output.Trim();", operations));
         var source = """
             using System;
             using Microsoft.AspNetCore.Components;
@@ -30,6 +32,9 @@ public sealed class ComponentPrerequisiteTests
         var diagnostics = await FrameworkProbe.Analyze(source, new XssTaintAnalyzer(), configuration:
             """{"Version":"2.0","AnalysisProfile":"full","MaxTaintAnalysisWork":1200}""");
         Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "DNA0003");
-        Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "DNA9000" && diagnostic.Properties.GetValueOrDefault("dotnetarium.stage") == "component-state");
+        // The smaller source-free callback can now be proved irrelevant. Keep
+        // a larger interrupted proof to verify that completed bindings survive.
+        Assert.Equal(expectedLimit, diagnostics.Any(diagnostic => diagnostic.Id == "DNA9000" &&
+            diagnostic.Properties.GetValueOrDefault("dotnetarium.stage") == "component-state"));
     }
 }

@@ -357,6 +357,24 @@ public sealed class SinkReachabilityTests
         Assert.Equal(hasSink, Checker(compilation).MayReachSink(graph));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Many_small_callbacks_can_complete_a_sink_absence_proof(bool hasSink)
+    {
+        var callbacks = string.Concat(Enumerable.Range(0, 100).Select(index =>
+            $"System.Action callback{index} = () => {{ }};"));
+        var compilation = Compile($$"""
+            public static class Demo { public static void Run(string value) {
+                {{callbacks}}
+                System.Action last = () => { {{(hasSink ? "System.Diagnostics.Process.Start(value);" : "")}} };
+            } }
+            """);
+        var graph = Graph(compilation, "Demo", "Run");
+        Assert.Equal(hasSink, Checker(compilation).MayReachSink(graph));
+        Assert.Equal(hasSink, Checker(compilation).MayReachSink(graph));
+    }
+
     private static SinkReachability Checker(CSharpCompilation compilation)
     {
         var options = new Microsoft.CodeAnalysis.Diagnostics.AnalyzerOptions(ImmutableArray<AdditionalText>.Empty);

@@ -135,7 +135,6 @@ namespace Dotnetarium.Analyzers.Taint
             private IEnumerator<IOperation>? enumerator;
             private IOperation? next;
             private ControlFlowGraph? currentGraph;
-            private int count;
             private bool unknown;
             private Summary? completed;
             internal SummaryBuilder(ControlFlowGraph root) { graphs.Enqueue(root); }
@@ -149,9 +148,9 @@ namespace Dotnetarium.Analyzers.Taint
                         cancellationToken.ThrowIfCancellationRequested();
                         if (enumerator == null)
                         {
-                            if (graphs.Count == 0 || ++count > 64)
+                            if (graphs.Count == 0)
                             {
-                                completed = new Summary(members.ToImmutableArray(), methods.ToImmutableArray(), unknown || count > 64);
+                                completed = new Summary(members.ToImmutableArray(), methods.ToImmutableArray(), unknown);
                                 graphs.Clear();
                                 members.Clear();
                                 methods.Clear();
@@ -159,6 +158,7 @@ namespace Dotnetarium.Analyzers.Taint
                                 currentGraph = null;
                                 return completed;
                             }
+                            indexing.VisitGraph();
                             currentGraph = graphs.Dequeue();
                             foreach (var function in currentGraph.LocalFunctions) graphs.Enqueue(currentGraph.GetLocalFunctionControlFlowGraph(function));
                             enumerator = currentGraph.DescendantOperations().GetEnumerator();

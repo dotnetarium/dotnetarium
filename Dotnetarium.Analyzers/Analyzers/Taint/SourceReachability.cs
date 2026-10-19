@@ -281,7 +281,6 @@ namespace Dotnetarium.Analyzers.Taint
             private ControlFlowGraph? currentGraph;
             private IOperation? nextOperation;
             private Summary? completed;
-            private int graphCount;
 
             internal SummaryBuilder(ControlFlowGraph root) => pending.Enqueue(root);
 
@@ -296,7 +295,7 @@ namespace Dotnetarium.Analyzers.Taint
                         if (enumerator == null)
                         {
                             if (pending.Count == 0) return Complete(false);
-                            if (++graphCount > 64) return Complete(true);
+                            indexing.VisitGraph();
                             currentGraph = pending.Dequeue();
                             foreach (var function in currentGraph.LocalFunctions)
                                 pending.Enqueue(currentGraph.GetLocalFunctionControlFlowGraph(function));
@@ -317,7 +316,11 @@ namespace Dotnetarium.Analyzers.Taint
                         // summary is ever exposed as a source-absence proof.
                         indexing.VisitOperation();
                         var operation = nextOperation;
-                        operations.Add((operation, currentGraph!));
+                        // Only retain operations consulted by the source proof.
+                        // All operations are still indexed/charged, and child
+                        // references/calls remain visible. Literals, built-in
+                        // operators and statement wrappers add no source facts.
+                        if (IsSourceCandidate(operation)) operations.Add((operation, currentGraph!));
                         if (operation is IFlowAnonymousFunctionOperation lambda)
                             pending.Enqueue(currentGraph!.GetAnonymousFunctionControlFlowGraph(lambda));
                         nextOperation = null;
@@ -348,6 +351,14 @@ namespace Dotnetarium.Analyzers.Taint
                 nextOperation = null;
                 return completed;
             }
+
+            private static bool IsSourceCandidate(IOperation operation) => operation is
+                IInvocationOperation or IObjectCreationOperation or IPropertyReferenceOperation or
+                IFieldReferenceOperation or IEventReferenceOperation or IMethodReferenceOperation or
+                IParameterReferenceOperation or IArrayCreationOperation or IFlowAnonymousFunctionOperation or
+                IConversionOperation { OperatorMethod: not null } or IBinaryOperation { OperatorMethod: not null } or
+                IUnaryOperation { OperatorMethod: not null } or ICompoundAssignmentOperation { OperatorMethod: not null } or
+                IIncrementOrDecrementOperation { OperatorMethod: not null };
         }
 
         private sealed class SourceScan

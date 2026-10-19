@@ -26,6 +26,10 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
         // Keep the lookup stable across rules, but allow large completed trees to
         // be collected once no caller uses them. Only points-to opts into this.
         private static readonly ConditionalWeakTable<IOperation, SharedWeakAnalysisCache<TAnalysisContext, TAnalysisResult>> s_sharedRootCache = new();
+        // Retain a small working set of complete roots across rules/GCs. The
+        // compilation owns this allowance, without process-wide strong root
+        // keys. Only complete, cache-enabled root requests enter this window.
+        private static readonly ConditionalWeakTable<Compilation, RecentAnalysisResults<TAnalysisResult>> s_recentRoots = new();
         protected virtual bool ShareActiveRootResults => false;
         protected virtual bool ReuseRootWorkLimits => false;
         protected virtual string BudgetStage => "dataflow";
@@ -68,7 +72,10 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
             TAnalysisResult? Compute(TAnalysisContext context)
             {
                 computed = true;
-                return Run(context);
+                var result = Run(context);
+                if (ShareActiveRootResults && result != null)
+                    s_recentRoots.GetValue(context.WellKnownTypeProvider.Compilation, _ => new(32)).Keep(result);
+                return result;
             }
             var result = ShareActiveRootResults
                 ? s_sharedRootCache.GetValue(analysisContext.ControlFlowGraph.OriginalOperation, _ => new()).GetOrCompute(analysisContext, Compute, rememberWorkLimit: ReuseRootWorkLimits)

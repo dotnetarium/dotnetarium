@@ -172,6 +172,18 @@ public sealed class AnalysisWorkBudgetTests
         Assert.Contains(expected!, finding => finding.StartsWith("DNA0011:", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("System.Func<string> read = () => System.Console.ReadLine(); System.Diagnostics.Process.Start(read());")]
+    [InlineData("string value = null; System.Action read = () => value = System.Console.ReadLine(); read(); System.Diagnostics.Process.Start(value);")]
+    public async Task Sink_free_callbacks_still_supply_sources_and_captured_state_to_parent_sinks(string body)
+    {
+        var compilation = Compile("public static class Demo { public static void Run() { " + body + " } }");
+        var options = new AnalyzerOptions([new ConfigFile("""{"Version":"2.0","ThreatModels":["remote","local"]}""")]);
+        var diagnostics = await compilation.WithAnalyzers([new CommandInjectionTaintAnalyzer()], options).GetAnalyzerDiagnosticsAsync();
+        Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id == "AD0001");
+        Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "DNA0002");
+    }
+
     private static CSharpCompilation Compile(string source)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)

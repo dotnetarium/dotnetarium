@@ -450,6 +450,53 @@ public sealed class SourceReachabilityTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Many_small_callbacks_can_complete_a_source_absence_proof(bool hasSource)
+    {
+        var callbacks = string.Concat(Enumerable.Range(0, 100).Select(index =>
+            $"System.Func<string> callback{index} = () => \"fixed\";"));
+        var compilation = Compile($$"""
+            public static class Demo { public static void Run() {
+                {{callbacks}}
+                System.Func<string> last = () => {{(hasSource ? "System.Console.ReadLine()" : "\"fixed\"")}};
+            } }
+            """);
+        var graph = Graph(compilation, "Run");
+        Assert.Equal(hasSource, Checker(compilation).MayReachSource(graph));
+        Assert.Equal(hasSource, Checker(compilation).MayReachSource(graph));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Literal_bookkeeping_leaves_the_semantic_source_proof_budget_for_sources(bool hasSource)
+    {
+        var noise = string.Concat(Enumerable.Repeat("_ = 42;", 600));
+        var compilation = Compile($$"""
+            public static class Demo { public static void Run() {
+                {{noise}}
+                {{(hasSource ? "_ = System.Console.ReadLine();" : "")}}
+            } }
+            """);
+        Assert.Equal(hasSource, Checker(compilation).MayReachSource(Graph(compilation, "Run")));
+    }
+
+    [Theory]
+    [InlineData("Reader reader = new Reader(); string value = reader;", "public static implicit operator string(Reader value) => System.Console.ReadLine();")]
+    [InlineData("string value = new Reader() + new Reader();", "public static string operator +(Reader left, Reader right) => System.Console.ReadLine();")]
+    [InlineData("string value = +new Reader();", "public static string operator +(Reader value) => System.Console.ReadLine();")]
+    [InlineData("Reader reader = new Reader(); reader++;", "public static Reader operator ++(Reader value) { _ = System.Console.ReadLine(); return value; }")]
+    public void Source_candidate_index_keeps_user_defined_operator_calls(string body, string member)
+    {
+        var compilation = Compile($$"""
+            public sealed class Reader { {{member}} }
+            public static class Demo { public static void Run() { {{body}} } }
+            """);
+        Assert.True(Checker(compilation).MayReachSource(Graph(compilation, "Run")));
+    }
+
     private static TaintConfiguration Configuration(CSharpCompilation compilation) =>
         new(ConfigurationManager.GetProjectConfiguration(LocalSourceTestOptions.Files), compilation, LocalSourceTestOptions.Options);
     private static SourceReachability Checker(CSharpCompilation compilation) =>

@@ -1,7 +1,9 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -15,6 +17,7 @@ namespace Dotnetarium.Config
     internal sealed class MessageInputModel
     {
         private static readonly ConditionalWeakTable<Compilation, ConcurrentDictionary<(SyntaxTree Tree, TextSpan Span), ImmutableHashSet<IParameterSymbol>>> ParameterWrites = new();
+        private static readonly ConditionalWeakTable<Compilation, ConcurrentDictionary<(SyntaxTree Tree, TextSpan Span), Lazy<LocalBindings>>> BodyBindings = new();
         private readonly Compilation compilation;
         private readonly HashSet<INamedTypeSymbol> consumers = new(SymbolEqualityComparer.Default);
         private readonly HashSet<IMethodSymbol> deliveries = new(SymbolEqualityComparer.Default);
@@ -58,6 +61,7 @@ namespace Dotnetarium.Config
 
         private bool IsMemberInput(ISymbol member, IOperation? instance)
         {
+            if (member.Name is not ("Message" or "Headers" or "Body" or "BasicProperties" or "RoutingKey" or "Exchange")) return false;
             if (StableParameter(instance, compilation) is not { } parameter ||
                 parameter.ContainingSymbol is not IMethodSymbol method) return false;
             var type = parameter.Type as INamedTypeSymbol;
@@ -148,15 +152,35 @@ namespace Dotnetarium.Config
                 compilation.GetSemanticModel(declaration.SyntaxTree).GetOperation(declaration) is { } declaredOperation)
                 root = declaredOperation;
             while (root.Parent != null) root = root.Parent;
-            var operations = root.DescendantsAndSelf().ToArray();
-            var initializer = operations.OfType<IVariableDeclaratorOperation>().FirstOrDefault(candidate =>
-                SymbolEqualityComparer.Default.Equals(candidate.Symbol, local.Local))?.Initializer;
-            if (initializer == null || operations.Any(candidate =>
-                candidate is IAssignmentOperation assignment && assignment.Target is ILocalReferenceOperation target &&
-                    SymbolEqualityComparer.Default.Equals(target.Local, local.Local) ||
-                candidate is IArgumentOperation argument && argument.Parameter?.RefKind is RefKind.Out or RefKind.Ref &&
-                    argument.Value is ILocalReferenceOperation escaped && SymbolEqualityComparer.Default.Equals(escaped.Local, local.Local))) return null;
-            return StableParameter(initializer.Value, compilation, seen);
+            // The lexical body is immutable for this compilation. Index it once,
+            // rather than traversing and allocating its full operation array for
+            // every receiver and every rule. Cache no source/taint decisions here.
+            var bindings = BodyBindings.GetValue(compilation, _ => new())
+                .GetOrAdd((root.Syntax.SyntaxTree, root.Syntax.Span), _ =>
+                    new Lazy<LocalBindings>(() => new LocalBindings(root), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
+            if (bindings.Written.Contains(local.Local) || !bindings.Initializers.TryGetValue(local.Local, out var initializer)) return null;
+            return StableParameter(initializer, compilation, seen);
+        }
+
+        private sealed class LocalBindings
+        {
+            internal Dictionary<ILocalSymbol, IOperation> Initializers { get; } = new(SymbolEqualityComparer.Default);
+            internal HashSet<ILocalSymbol> Written { get; } = new(SymbolEqualityComparer.Default);
+
+            internal LocalBindings(IOperation root)
+            {
+                foreach (var operation in root.DescendantsAndSelf())
+                    switch (operation)
+                    {
+                        case IVariableDeclaratorOperation { Initializer: { } initializer } declaration:
+                            Initializers[declaration.Symbol] = initializer.Value; break;
+                        case IAssignmentOperation { Target: ILocalReferenceOperation local }:
+                            Written.Add(local.Local); break;
+                        case IArgumentOperation { Value: ILocalReferenceOperation local } argument
+                            when argument.Parameter?.RefKind is RefKind.Out or RefKind.Ref:
+                            Written.Add(local.Local); break;
+                    }
+            }
         }
 
         private static IOperation? Unwrap(IOperation? operation)

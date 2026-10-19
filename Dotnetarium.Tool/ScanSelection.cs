@@ -28,7 +28,10 @@ internal sealed record ScanSelection(string? Configuration = null, string? Frame
         var all = inputs.Workspace.CurrentSolution.Projects.Where(project => project.Language == LanguageNames.CSharp).ToArray();
         var selected = all.Where(project => roots.Contains(project.FilePath ?? "") && FrameworkOf(project) == Framework).ToArray();
         foreach (var root in roots.Where(path => !selected.Any(project => ProjectLoader.PathComparer.Equals(project.FilePath, path))))
+        {
             report.Warn("framework-selection", $"{root}: requested framework {Framework} has no available root compilation.");
+            report.Progress($"Skipped project: {root} (no available compilation for framework {Framework}).");
+        }
         var ids = new HashSet<ProjectId>();
         var pending = new Queue<Project>(selected);
         while (pending.TryDequeue(out var project))
@@ -38,6 +41,8 @@ internal sealed record ScanSelection(string? Configuration = null, string? Frame
                 if (inputs.Workspace.CurrentSolution.GetProject(reference.ProjectId) is { } dependency) pending.Enqueue(dependency);
         }
         if (inputs.SelectedProjects != null) ids.IntersectWith(inputs.SelectedProjects);
+        foreach (var project in inputs.Projects.Where(project => !ids.Contains(project.Id)))
+            report.Progress($"Skipped project: {project.Name} [{project.FilePath}] (not selected for framework {Framework}).");
         inputs.SelectedProjects = ids;
     }
 }

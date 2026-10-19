@@ -72,6 +72,7 @@ evaluation. The old no-build flags are removed; omit them to use the default.
 | `--config <path>` | Override discovered `dotnetarium.json` |
 | `--analysis-profile <fast\|full\|max>` | Override the configured profile without replacing custom models, threat models or explicit numeric limits |
 | `--fail` | Return 1 for findings when there is no fatal scan failure |
+| `-v`, `--verbose` | Show loaded/skipped projects, phase and per-project timings, and active projects every 20 seconds |
 | `-p`, `--project` | Select MSBuild design-time project loading |
 | `--configuration <name>` | Select configuration; default is `Debug` |
 | `--framework <TFM>` | Select `net8.0`, `net10.0`, `netstandard2.0` or `netstandard2.1` and compatible dependencies |
@@ -80,6 +81,16 @@ evaluation. The old no-build flags are removed; omit them to use the default.
 | `--config-include <glob>` | Limit credential files to matching paths; repeatable |
 | `--config-exclude <glob>` | Exclude matching credential files; repeatable |
 | `-h`, `--help` | Print usage |
+
+For longer scans, use `dotnetarium MyApp.sln -v --sarif results.sarif`.
+Verbose output is plain text on standard output, so it also streams into CI logs.
+It explains test/configuration exclusions and unsupported inputs, distinguishes
+reference-only projects from those selected for analysis, and shows the active
+projects with their current compilation or analysis elapsed time every 20 seconds.
+The timer stops when the command exits. Final timings separate loading (including
+Razor generation) from compilation/analysis wall time. Projects run concurrently;
+their individual times overlap and should not be added together. Verbosity does
+not change rule selection, finding format, suppression policy or exit-code policy.
 
 An omitted `--analysis-profile` preserves each project's configured profile;
 otherwise the CLI defaults to `full`. An explicit flag selects `fast`, `full` or

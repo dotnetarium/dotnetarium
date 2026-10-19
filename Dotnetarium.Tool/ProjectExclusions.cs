@@ -12,7 +12,7 @@ internal sealed class ProjectExclusions(string root, IEnumerable<string> pattern
             if (project.FilePath is { } path && Excludes(path))
             {
                 selected.Remove(project.Id);
-                report.ExcludedProjects.Add(path);
+                report.ExcludeProject(path);
             }
         inputs.SelectedProjects = selected;
     }

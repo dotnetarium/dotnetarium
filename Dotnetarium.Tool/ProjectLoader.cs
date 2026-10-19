@@ -84,7 +84,7 @@ internal static class ProjectLoader
                 var rootMetadata = await Task.WhenAll(roots.Select(async path =>
                 {
                     await slots.WaitAsync();
-                    try { return (Path: path, Values: await ProjectAnalysisOptions.ReadMetadataAsync(path, sdk.MSBuildPath, selection.Configuration, selection.Framework)); }
+                    try { report.Progress($"Inspecting project: {path}."); return (Path: path, Values: await ProjectAnalysisOptions.ReadMetadataAsync(path, sdk.MSBuildPath, selection.Configuration, selection.Framework)); }
                     catch (Exception error)
                     {
                         report.Warn("project-metadata", $"{path}: Could not classify the project; it remains eligible. {error.Message}");
@@ -95,17 +95,21 @@ internal static class ProjectLoader
                 // Preserve the workspace's solution configuration mapping when
                 // there are no test roots to exclude.
                 var excludeTests = rootMetadata.Any(root => IsTest(root.Values));
-                if (!excludeTests) await workspace.OpenSolutionAsync(target);
+                if (!excludeTests) { report.Progress($"Loading solution: {target}."); await workspace.OpenSolutionAsync(target); }
                 foreach (var root in rootMetadata)
                 {
                     metadata[(root.Path, selection.Framework)] = root.Values;
-                    if (IsTest(root.Values)) { report.ExcludedTestProjects.Add(root.Path); continue; }
+                    if (IsTest(root.Values)) { report.ExcludeTestProject(root.Path); continue; }
                     if (excludeTests && !workspace.CurrentSolution.Projects.Any(project => PathComparer.Equals(project.FilePath, root.Path)))
-                        try { await workspace.OpenProjectAsync(root.Path); }
-                        catch (Exception error) { report.Fail("project-load", $"{root.Path}: {error.Message}"); }
+                        try { report.Progress($"Loading project: {root.Path}."); await workspace.OpenProjectAsync(root.Path); }
+                        catch (Exception error)
+                        {
+                            report.Fail("project-load", $"{root.Path}: {error.Message}");
+                            report.Progress($"Skipped project: {root.Path} (could not be loaded; see diagnostics).");
+                        }
                 }
             }
-            else if (Path.GetExtension(target).Equals(".csproj", StringComparison.OrdinalIgnoreCase)) await workspace.OpenProjectAsync(target);
+            else if (Path.GetExtension(target).Equals(".csproj", StringComparison.OrdinalIgnoreCase)) { report.Progress($"Loading project: {target}."); await workspace.OpenProjectAsync(target); }
             else throw new ArgumentException("Expected a .csproj, .sln, or .slnx path.");
 
             var selected = new HashSet<ProjectId>();
@@ -125,7 +129,7 @@ internal static class ProjectLoader
                 inputs.TestProjectMetadata[project.Id] = values.GetValueOrDefault("IsTestProject", "false");
                 inputs.InputProperties[project.Id] = values;
                 var explicitlySelected = !solutionTarget && PathComparer.Equals(project.FilePath, target);
-                if (IsTest(values) && !explicitlySelected) report.ExcludedTestProjects.Add(project.FilePath!);
+                if (IsTest(values) && !explicitlySelected) report.ExcludeTestProject(project.FilePath!);
                 else selected.Add(project.Id);
             }
             inputs.SelectedProjects = selected;

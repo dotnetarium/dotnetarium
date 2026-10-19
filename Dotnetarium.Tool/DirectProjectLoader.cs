@@ -56,7 +56,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var includedRoots = roots.Where(path =>
             {
                 if (exclusions?.Excludes(path) != true) return true;
-                report.ExcludedProjects.Add(path);
+                report.ExcludeProject(path);
                 return false;
             }).ToArray();
             foreach (var path in includedRoots) ReadProject(path);
@@ -233,7 +233,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             inputs.SelectedProjects = activeSpecs.Where(spec => !IsTrue(spec.Properties.GetValueOrDefault("IsTestProject")) ||
                 !solutionTarget && rootProjects.Contains(spec.Path)).Select(spec => spec.Id).ToHashSet();
             foreach (var spec in activeSpecs.Where(spec => !inputs.SelectedProjects.Contains(spec.Id)))
-                report.ExcludedTestProjects.Add(spec.Path);
+                report.ExcludeTestProject(spec.Path);
             return inputs;
         }
         catch { inputs.Dispose(); throw; }
@@ -242,6 +242,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     private void ReadProject(string path, bool dependency = false)
     {
         if (!visited.Add(path)) return;
+        report.Progress($"Loading project: {path}.");
         try
         {
             var root = Path.GetDirectoryName(path)!;
@@ -277,7 +278,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             if (!dependency && solutionTarget && rootProjects.Contains(path) && IsTrue(properties.GetValueOrDefault("IsTestProject")))
             {
                 visited.Remove(path); // A production dependency may still need its symbols.
-                report.ExcludedTestProjects.Add(path);
+                report.ExcludeTestProject(path);
                 return;
             }
             if (godotVersion == null && !IsConventionalSdk(sdk))
@@ -295,7 +296,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     if (selection.Framework == null)
                     {
                         Warn(path, "target-framework", $"Unsupported direct-loader framework '{framework}'; skipped this framework.");
-                        report.SkippedProjects.Add($"{path} ({framework})");
+                        report.SkipProject($"{path} ({framework})", "unsupported target framework");
                     }
                     continue;
                 }
@@ -387,7 +388,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         catch (Exception error) when (error is IOException or System.Xml.XmlException or NotSupportedException or UnauthorizedAccessException)
         {
             Warn(path, "project-load", error.Message);
-            report.SkippedProjects.Add(path);
+            report.SkipProject(path, "project could not be loaded; see diagnostics");
         }
     }
 
@@ -425,6 +426,9 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     pending.Enqueue(dependency);
             }
         }
+        if (selection.Framework != null)
+            foreach (var spec in roots.Where(specs.ContainsKey).SelectMany(path => specs[path]).Where(spec => !selected.ContainsKey(spec.Id)))
+                report.Progress($"Skipped project: {spec.Path} ({spec.Framework}) (not selected for framework {selection.Framework}).");
         return selected.Values.ToArray();
     }
 

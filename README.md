@@ -63,6 +63,7 @@ Existing CLI scripts should remove `-nb` / `--no-build`; those flags are no long
 | --- | --- |
 | `--sarif <path>` | Export SARIF 2.1.0 with relative paths and available data flows |
 | `--fail` | Fail the command when security findings are present |
+| `-v`, `--verbose` | Show loaded/skipped projects, per-project timings and active analysis every 20 seconds |
 | `--config <path>` | Select a JSON rules configuration |
 | `--configuration <name>` | Select configuration; default is `Debug` |
 | `--framework <TFM>` | Select `net8.0`, `net10.0`, `netstandard2.0` or `netstandard2.1` |

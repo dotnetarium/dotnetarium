@@ -1,5 +1,10 @@
 # Project and no-build scans
 
+Start with the default no-build scan. If package references are missing, run
+`dotnet restore MyApp.sln` separately, then scan again. Use `-p` when your
+project needs MSBuild evaluation or generators beyond the supported Razor path.
+For a long scan, add `-v` to see the current projects and timing information.
+
 SARIF records the tool version and effective per-project analysis profile, method
 and lambda depths, work budget and threat models. Cutoffs include their rule,
 root, stage and available work counters. Cached dataflow results replay logical

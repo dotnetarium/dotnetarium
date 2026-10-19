@@ -55,6 +55,13 @@ dotnetarium MyApp.sln -p --sarif project.sarif
 | No-build, default | Reconstructs SDK inputs without targets or restore; runs the official SDK Razor generator in memory |
 | `-p` / `--project` | SDK/MSBuild design-time evaluation and available generators; no application assembly is emitted |
 
+For larger repositories, add `-v` to see which projects are loaded or skipped,
+per-project timings, and progress updates during analysis:
+
+```sh
+dotnetarium MyApp.sln -v --sarif results.sarif --fail
+```
+
 Solution scans exclude test projects in both modes. Pass a test `.csproj` explicitly to scan it. No-build mode needs installed reference packs and existing validated package assets; unresolved code or missing generators reduce coverage. See [scan modes and requirements](docs/scan-modes.md).
 
 Existing CLI scripts should remove `-nb` / `--no-build`; those flags are no longer accepted. Add `-p` to retain project loading.
@@ -64,6 +71,7 @@ Existing CLI scripts should remove `-nb` / `--no-build`; those flags are no long
 | `--sarif <path>` | Export SARIF 2.1.0 with relative paths and available data flows |
 | `--fail` | Fail the command when security findings are present |
 | `-v`, `--verbose` | Show loaded/skipped projects, per-project timings and active analysis every 20 seconds |
+| `--analysis-profile <fast\|full\|max>` | Select analysis effort; keeps custom models and explicit numeric limits |
 | `--config <path>` | Select a JSON rules configuration |
 | `--configuration <name>` | Select configuration; default is `Debug` |
 | `--framework <TFM>` | Select `net8.0`, `net10.0`, `netstandard2.0` or `netstandard2.1` |

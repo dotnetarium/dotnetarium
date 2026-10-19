@@ -11,7 +11,7 @@ internal sealed record ScanNotice(string Id, string Message, ScanNoticeKind Kind
 internal sealed record ScanAnalysisSettings(string Project, string Profile, uint MethodDepth, uint LambdaDepth,
     uint WorkBudget, string[] ThreatModels, bool ExperimentalFilePersistence = false);
 internal sealed record ScanCutoff(string Project, string Rule, string Root, string Stage, string Reason,
-    long? Work, long? Limit, long? Graphs, long? Blocks, long? Operations, int Count);
+    long? Work, long? Limit, long? Graphs, long? Blocks, long? Operations, int Count, bool? StopReused = null);
 
 internal sealed class ScanReport(Action<string>? progress = null)
 {

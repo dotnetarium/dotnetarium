@@ -208,7 +208,7 @@ internal static class Program
                     long? Number(string key) => long.TryParse(Get(key), out var value) ? value : null;
                     report.Cutoffs.Add(new(project.FilePath ?? project.Name, Get("rule"), Get("root"), Get("stage", "dataflow"),
                         Get("reason", "profile-limit"), Number("work"), Number("limit"), Number("graphs"), Number("blocks"), Number("operations"),
-                        (int)(Number("cutoffCount") ?? 1)));
+                        (int)(Number("cutoffCount") ?? 1), bool.TryParse(Get("stopReused"), out var reused) ? reused : null));
                 }
                 foreach (var error in projectErrors.Take(20))
                     if (error.Id != "AD0001")

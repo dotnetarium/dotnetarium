@@ -18,6 +18,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
     internal partial class TaintedDataAnalysis : ForwardDataFlowAnalysis<TaintedDataAnalysisData, TaintedDataAnalysisContext, TaintedDataAnalysisResult, TaintedDataBlockAnalysisResult, TaintedDataAbstractValue>
     {
         internal static readonly AbstractValueDomain<TaintedDataAbstractValue> ValueDomainInstance = TaintedDataAbstractValueDomain.Default;
+        protected override string BudgetStage => "taint";
 
         private TaintedDataAnalysis(TaintedDataAnalysisDomain analysisDomain, TaintedDataOperationVisitor operationVisitor)
             : base(analysisDomain, operationVisitor)

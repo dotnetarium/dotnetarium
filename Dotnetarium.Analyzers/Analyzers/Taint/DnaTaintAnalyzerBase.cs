@@ -22,6 +22,7 @@ namespace Dotnetarium.Analyzers.Taint
         protected abstract DiagnosticDescriptor TaintedDataEnteringSinkDescriptor { get; }
         protected virtual IEnumerable<SinkKind> SinkKinds => new[] { SinkKind };
         protected virtual bool AnalyzeRazorGeneratedCode => true;
+        protected virtual bool ShouldAnalyzeCompilation(Compilation compilation) => true;
         protected virtual bool IsSinkRelevant(Location location, Compilation compilation) => true;
 
         public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
@@ -36,6 +37,7 @@ namespace Dotnetarium.Analyzers.Taint
 
             context.RegisterCompilationStartAction(start =>
             {
+                if (!ShouldAnalyzeCompilation(start.Compilation)) return;
                 var settings = Configuration.GetOrCreate(start);
                 if (SinkKind == (SinkKind)(int)TaintType.CrossSiteScripting)
                     start.RegisterCompilationEndAction(end =>
@@ -130,7 +132,7 @@ namespace Dotnetarium.Analyzers.Taint
                 {
                     // One notice per public rule, rather than thousands of
                     // method warnings during live analysis or ordinary builds.
-                    cutoffs.TryAdd(block.OwningSymbol, new(0, exhausted.Stage));
+                    cutoffs.TryAdd(block.OwningSymbol, new(0, error.Stage));
                     return;
                 }
                 block.ReportDiagnostic(Diagnostic.Create(AnalysisDiagnostics.WorkLimit,
@@ -139,14 +141,15 @@ namespace Dotnetarium.Analyzers.Taint
                         .Add("dotnetarium.analysisStatus", "limited")
                         .Add("dotnetarium.rule", TaintedDataEnteringSinkDescriptor.Id)
                         .Add("dotnetarium.root", block.OwningSymbol.ToDisplayString())
-                        .Add("dotnetarium.stage", exhausted.Stage)
+                        .Add("dotnetarium.stage", error.Stage)
+                        .Add("dotnetarium.stopReused", error.StopReused ? "true" : "false")
                         .Add("dotnetarium.reason", "work-limit")
                         .Add("dotnetarium.work", exhausted.Work.ToString(System.Globalization.CultureInfo.InvariantCulture))
                         .Add("dotnetarium.limit", exhausted.Limit.ToString(System.Globalization.CultureInfo.InvariantCulture))
                         .Add("dotnetarium.graphs", exhausted.Graphs.ToString(System.Globalization.CultureInfo.InvariantCulture))
                         .Add("dotnetarium.blocks", exhausted.Blocks.ToString(System.Globalization.CultureInfo.InvariantCulture))
                         .Add("dotnetarium.operations", exhausted.Operations.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                    messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: {exhausted.Stage} analysis of '{block.OwningSymbol.ToDisplayString()}' stopped after {exhausted.Work} work units (limit {exhausted.Limit}; {exhausted.Graphs} flow analyses, {exhausted.Blocks} block visits, {exhausted.Operations} operation visits). Coverage is incomplete for this method; other methods continue. Increase MaxTaintAnalysisWork in dotnetarium.json to retry." }));
+                    messageArgs: new object[] { $"{TaintedDataEnteringSinkDescriptor.Id}: {error.Stage} analysis of '{block.OwningSymbol.ToDisplayString()}' stopped after {exhausted.Work} work units (limit {exhausted.Limit}; {exhausted.Graphs} flow analyses, {exhausted.Blocks} block visits, {exhausted.Operations} operation visits). Coverage is incomplete for this method; other methods continue. Increase MaxTaintAnalysisWork in dotnetarium.json to retry." }));
             }
 
             void AnalyzeGraph(Microsoft.CodeAnalysis.FlowAnalysis.ControlFlowGraph currentGraph, ISymbol owner)

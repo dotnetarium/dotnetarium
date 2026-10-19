@@ -27,6 +27,8 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
         // be collected once no caller uses them. Only points-to opts into this.
         private static readonly ConditionalWeakTable<IOperation, SharedWeakAnalysisCache<TAnalysisContext, TAnalysisResult>> s_sharedRootCache = new();
         protected virtual bool ShareActiveRootResults => false;
+        protected virtual bool ReuseRootWorkLimits => false;
+        protected virtual string BudgetStage => "dataflow";
         private static readonly ConditionalWeakTable<TAnalysisResult, MeasuredCost> s_costs = new();
         private sealed record MeasuredCost(AnalysisWorkBudget.Cost Value);
 
@@ -40,6 +42,16 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
         protected DataFlowOperationVisitor<TAnalysisData, TAnalysisContext, TAnalysisResult, TAbstractAnalysisValue> OperationVisitor { get; }
 
         protected TAnalysisResult? TryGetOrComputeResultCore(TAnalysisContext analysisContext, bool cacheResult)
+        {
+            try { return GetOrComputeResultCore(analysisContext, cacheResult); }
+            catch (AnalysisWorkLimitException error)
+            {
+                error.IdentifyStage(BudgetStage);
+                throw;
+            }
+        }
+
+        private TAnalysisResult? GetOrComputeResultCore(TAnalysisContext analysisContext, bool cacheResult)
         {
             if (analysisContext == null)
             {
@@ -59,7 +71,7 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
                 return Run(context);
             }
             var result = ShareActiveRootResults
-                ? s_sharedRootCache.GetValue(analysisContext.ControlFlowGraph.OriginalOperation, _ => new()).GetOrCompute(analysisContext, Compute)
+                ? s_sharedRootCache.GetValue(analysisContext.ControlFlowGraph.OriginalOperation, _ => new()).GetOrCompute(analysisContext, Compute, rememberWorkLimit: ReuseRootWorkLimits)
                 : s_resultCache.GetOrCreateValue(analysisContext.ControlFlowGraph.OriginalOperation).GetOrAdd(analysisContext, Compute);
             if (!computed && result != null && s_costs.TryGetValue(result, out var cost)) AnalysisWorkBudget.Replay(cost.Value);
             return result;

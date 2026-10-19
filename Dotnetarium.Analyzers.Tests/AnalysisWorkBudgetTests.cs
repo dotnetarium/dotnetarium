@@ -106,6 +106,13 @@ public sealed class AnalysisWorkBudgetTests
             WellKnownTypeProvider.GetOrCreate(compilation), PointsToAnalysisKind.Complete, config, null);
         using (var budget = new AnalysisWorkBudget(4, CancellationToken.None))
             Assert.Throws<AnalysisWorkLimitException>(() => Analyze());
+        using (var retry = new AnalysisWorkBudget(4, CancellationToken.None))
+        {
+            var stopped = Assert.Throws<AnalysisWorkLimitException>(() => Analyze());
+            Assert.Same(retry, stopped.Budget);
+            Assert.Equal("points-to", stopped.Stage);
+            Assert.True(stopped.StopReused);
+        }
         using (var budget = new AnalysisWorkBudget(10000, CancellationToken.None))
         {
             Assert.NotNull(Analyze()?.ReturnValueAndPredicateKind);

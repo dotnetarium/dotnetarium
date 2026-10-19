@@ -83,6 +83,7 @@ internal static class SarifWriter
             json.WriteString("stage", cutoff.Stage);
             json.WriteString("reason", cutoff.Reason);
             json.WriteNumber("count", cutoff.Count);
+            if (cutoff.StopReused.HasValue) json.WriteBoolean("stopReused", cutoff.StopReused.Value);
             if (cutoff.Work.HasValue) json.WriteNumber("work", cutoff.Work.Value);
             if (cutoff.Limit.HasValue) json.WriteNumber("limit", cutoff.Limit.Value);
             if (cutoff.Graphs.HasValue) json.WriteNumber("graphs", cutoff.Graphs.Value);

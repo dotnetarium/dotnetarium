@@ -7,6 +7,13 @@ work costs; cache warmth saves CPU without buying extra analysis depth. Negative
 source/sink proofs and component-state convergence have separate bounded budgets.
 An unfinished negative proof preserves normal taint analysis eligibility.
 
+An exhausted points-to request can reuse its stop outcome for the same root,
+analysis options, work limit and depth-stop policy, with a fresh budget. It still
+reports incomplete analysis and charges the same logical work; no partial result
+is treated as complete. Different budgets remain eligible for analysis. SARIF
+cutoffs identify `points-to`, `taint` or `value-content` stages where available;
+`stopReused: true` means a previous identical budget stop avoided recomputation.
+
 The global tool has two input-loading modes. Both use Roslyn compilations,
 semantic symbols, the same rules, taint engine and SARIF data flows.
 

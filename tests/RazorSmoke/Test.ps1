@@ -11,7 +11,12 @@ New-Item -ItemType Directory -Path $scratch, $packages -Force | Out-Null
 $config = Join-Path $scratch 'NuGet.Config'
 @"
 <?xml version="1.0" encoding="utf-8"?>
-<configuration><packageSources><clear /><add key="local" value="$feed" /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>
+<configuration><packageSources><clear /><add key="local" value="$feed" /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources>
+<packageSourceMapping>
+<packageSource key="local"><package pattern="Dotnetarium.Analyzers" /></packageSource>
+<packageSource key="nuget.org"><package pattern="*" /></packageSource>
+</packageSourceMapping>
+</configuration>
 "@ | Set-Content -LiteralPath $config
 $env:NUGET_PACKAGES = $packages
 

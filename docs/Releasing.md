@@ -35,8 +35,9 @@ Framework 4.8 projects. New features go to 2.x, whose source of truth is
 3. Publish a GitHub release for that tag. Keep the description to short
    **Features** and **Bug fixes** bullets, any essential upgrade note, and a
    full changelog link.
-4. The release workflow checks the tag, tests and packs both packages, then
-   waits at the `nuget-publish` environment. Approve it or use the administrator
+4. The release workflow checks the tag and runs the [release test suite](../tests/README.md),
+   building and packing once on Windows. It validates those same packages on Linux,
+   then waits at the `nuget-publish` environment. Approve it or use the administrator
    bypass as described above. The publishing job obtains a short-lived NuGet
    credential, publishes both packages, and adds
    the `.nupkg` files to the GitHub release. Verify both package pages and a

@@ -65,3 +65,5 @@ if ($LASTEXITCODE -ne 2 -or -not ($invalid -match 'Invalid dotnetarium.json')) {
     throw 'Invalid threat model must fail visibly with exit code 2.'
 }
 "Scope CLI checks passed (project mode=$ProjectMode). Reports: $scratch" | Write-Output
+# The deliberately rejected configuration above returns 2.
+$global:LASTEXITCODE = 0

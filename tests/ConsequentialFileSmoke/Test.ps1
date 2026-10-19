@@ -14,7 +14,12 @@ try {
 <configuration><packageSources><clear />
 <add key="fixture" value="$([System.Security.SecurityElement]::Escape((Join-Path $root 'artifacts')))" />
 <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-</packageSources></configuration>
+</packageSources>
+<packageSourceMapping>
+<packageSource key="fixture"><package pattern="Dotnetarium.Analyzers" /></packageSource>
+<packageSource key="nuget.org"><package pattern="*" /></packageSource>
+</packageSourceMapping>
+</configuration>
 "@ | Set-Content -LiteralPath $nugetConfig
     foreach ($framework in @('net8.0', 'net10.0')) {
         $directory = Join-Path $scratch $framework

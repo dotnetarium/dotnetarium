@@ -67,7 +67,7 @@ try {
                         loader { Check NoBuildSmoke @{ CoreOnly = $true } }
                         credentials { Check ProviderCredentialSmoke }
                         sdk {
-                            & dotnet run --project tests/ModernSinkSmoke/ModernSinkSmoke.csproj -c Release -p:RunAnalyzers=false -p:GeneratePackageOnBuild=false
+                            & dotnet run --project tests/ModernSinkSmoke/ModernSinkSmoke.csproj -c Release -p:BuildProjectReferences=false -p:RunAnalyzers=false -p:GeneratePackageOnBuild=false
                             if ($LASTEXITCODE -ne 0) { throw 'Modern sink checks failed.' }
                             foreach ($name in @('RazorSmoke', 'GameEngineSmoke', 'NoBuildRazorSmoke', 'TestSelectionSmoke',
                                 'TaintPrecisionSmoke', 'ConsequentialFileSmoke', 'MarkupArchiveSmoke')) { Check $name }

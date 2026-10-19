@@ -20,6 +20,10 @@ $nugetConfig = Join-Path $scratch 'NuGet.Config'
     <add key="fixture" value="$([System.Security.SecurityElement]::Escape($feed))" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
+<packageSourceMapping>
+<packageSource key="fixture"><package pattern="Dotnetarium.Analyzers" /></packageSource>
+<packageSource key="nuget.org"><package pattern="*" /></packageSource>
+</packageSourceMapping>
 </configuration>
 "@ | Set-Content -LiteralPath $nugetConfig -Encoding utf8
 foreach ($framework in @('net8.0', 'net10.0')) {

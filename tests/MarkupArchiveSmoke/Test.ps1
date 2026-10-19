@@ -1,19 +1,24 @@
 param([string]$ToolDll)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
+if (-not $ToolDll) { $ToolDll = if ($env:DOTNETARIUM_TEST_DLL) { $env:DOTNETARIUM_TEST_DLL } else { Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' } }
 $spec = [xml](Get-Content -Raw -LiteralPath (Join-Path $root 'Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj'))
 $version = $spec.SelectSingleNode('//PackageVersion').InnerText
 $feed = Join-Path $root 'artifacts'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('dotnetarium-markup-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
-$env:NUGET_PACKAGES = Join-Path $scratch 'packages'
+$env:NUGET_PACKAGES = if ($env:DOTNETARIUM_TEST_PACKAGES) { $env:DOTNETARIUM_TEST_PACKAGES } else { Join-Path $scratch 'packages' }
 $config = Join-Path $scratch 'NuGet.Config'
 @"
 <configuration><packageSources><clear />
 <add key="fixture" value="$([System.Security.SecurityElement]::Escape($feed))" />
 <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-</packageSources></configuration>
+</packageSources>
+<packageSourceMapping>
+<packageSource key="fixture"><package pattern="Dotnetarium.Analyzers" /></packageSource>
+<packageSource key="nuget.org"><package pattern="*" /></packageSource>
+</packageSourceMapping>
+</configuration>
 "@ | Set-Content -LiteralPath $config -Encoding utf8
 foreach ($framework in @('net8.0', 'net10.0')) {
     $projectRoot = Join-Path $scratch $framework

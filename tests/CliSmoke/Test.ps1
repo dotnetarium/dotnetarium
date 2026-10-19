@@ -14,7 +14,7 @@ $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('dotnetarium-cli-smoke-'
 $toolPath = Join-Path $scratch 'tool'
 $projectPath = Join-Path $scratch 'project'
 New-Item -ItemType Directory -Path $scratch, $toolPath, $projectPath -Force | Out-Null
-$env:NUGET_PACKAGES = Join-Path $scratch 'packages'
+$env:NUGET_PACKAGES = if ($env:DOTNETARIUM_TEST_PACKAGES) { $env:DOTNETARIUM_TEST_PACKAGES } else { Join-Path $scratch 'packages' }
 
 & dotnet new classlib -n CliSmoke -o $projectPath --force --no-restore | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Could not create CLI fixture.' }
@@ -265,9 +265,13 @@ if ($LASTEXITCODE -ne 0 -or -not ($buildOutput -match 'DNA0001') -or -not ($buil
     throw 'Packaged analyzer did not report the expected .NET 10 findings.'
 }
 
-& dotnet tool install dotnetarium --version $toolVersion --tool-path $toolPath --configfile $nugetConfig --ignore-failed-sources --no-cache
-if ($LASTEXITCODE -ne 0) { throw 'Local global tool install failed.' }
-$tool = Join-Path $toolPath $(if ($IsWindows) { 'dotnetarium.exe' } else { 'dotnetarium' })
+if ($env:DOTNETARIUM_TEST_TOOL) {
+    $tool = $env:DOTNETARIUM_TEST_TOOL
+} else {
+    & dotnet tool install dotnetarium --version $toolVersion --tool-path $toolPath --configfile $nugetConfig --ignore-failed-sources --no-cache
+    if ($LASTEXITCODE -ne 0) { throw 'Local global tool install failed.' }
+    $tool = Join-Path $toolPath $(if ($IsWindows) { 'dotnetarium.exe' } else { 'dotnetarium' })
+}
 $help = & $tool --help
 if ($LASTEXITCODE -ne 0 -or -not ($help -match '\.slnx') -or -not ($help -match '--sarif') -or
     -not ($help -match '--verbose\b') -or

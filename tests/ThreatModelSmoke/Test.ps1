@@ -1,7 +1,7 @@
 param([string]$ToolDll, [switch]$ProjectMode)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
+if (-not $ToolDll) { $ToolDll = if ($env:DOTNETARIUM_TEST_DLL) { $env:DOTNETARIUM_TEST_DLL } else { Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' } }
 if (-not (Test-Path -LiteralPath $ToolDll)) { throw 'Build the tool before running this test.' }
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('dotnetarium-scope-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
@@ -65,3 +65,5 @@ if ($LASTEXITCODE -ne 2 -or -not ($invalid -match 'Invalid dotnetarium.json')) {
     throw 'Invalid threat model must fail visibly with exit code 2.'
 }
 "Scope CLI checks passed (project mode=$ProjectMode). Reports: $scratch" | Write-Output
+# The deliberately rejected configuration above returns 2.
+$global:LASTEXITCODE = 0

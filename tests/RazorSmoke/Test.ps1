@@ -1,31 +1,33 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$scratch = Join-Path $env:TEMP ('dotnetarium-razor-smoke-' + [guid]::NewGuid().ToString('N'))
-$feed = Join-Path $scratch 'feed'
-$packages = Join-Path $scratch 'packages'
-New-Item -ItemType Directory -Path $feed, $packages -Force | Out-Null
-
-$analyzer = Join-Path $root 'Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj'
-& dotnet build $analyzer -c Release --nologo -v quiet -clp:ErrorsOnly -p:PackageVersion=0.0.0-razor-smoke
-if ($LASTEXITCODE -ne 0) { throw 'Analyzer build failed.' }
-& dotnet pack $analyzer -c Release --no-build --nologo -v quiet -p:PackageVersion=0.0.0-razor-smoke -o $feed
-if ($LASTEXITCODE -ne 0) { throw 'Analyzer package build failed.' }
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ('dotnetarium-razor-smoke-' + [guid]::NewGuid().ToString('N'))
+$feed = Join-Path $root 'artifacts'
+$spec = [xml](Get-Content (Join-Path $root 'Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj') -Raw)
+$version = $spec.SelectSingleNode('//PackageVersion').InnerText
+if (-not (Test-Path (Join-Path $feed "Dotnetarium.Analyzers.$version.nupkg"))) { throw 'Pack the analyzer into artifacts first.' }
+$packages = if ($env:DOTNETARIUM_TEST_PACKAGES) { $env:DOTNETARIUM_TEST_PACKAGES } else { Join-Path $scratch 'packages' }
+New-Item -ItemType Directory -Path $scratch, $packages -Force | Out-Null
 
 $config = Join-Path $scratch 'NuGet.Config'
 @"
 <?xml version="1.0" encoding="utf-8"?>
-<configuration><packageSources><clear /><add key="local" value="$feed" /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>
+<configuration><packageSources><clear /><add key="local" value="$feed" /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources>
+<packageSourceMapping>
+<packageSource key="local"><package pattern="Dotnetarium.Analyzers" /></packageSource>
+<packageSource key="nuget.org"><package pattern="*" /></packageSource>
+</packageSourceMapping>
+</configuration>
 "@ | Set-Content -LiteralPath $config
 $env:NUGET_PACKAGES = $packages
 
 $client = Join-Path $PSScriptRoot 'Client/Client.csproj'
 $server = Join-Path $PSScriptRoot 'Server/Server.csproj'
-& dotnet restore $server --configfile $config --nologo -v quiet
+& dotnet restore $server --configfile $config --nologo -v quiet "-p:DotnetariumSmokeVersion=$version"
 if ($LASTEXITCODE -ne 0) { throw 'Razor fixture restore failed.' }
 
 $diagnostics = @()
 foreach ($project in @($client, $server)) {
-    $output = & dotnet build $project -c Release --no-restore --nologo -v quiet -p:UseSharedCompilation=false -p:BuildProjectReferences=false 2>&1
+    $output = & dotnet build $project -c Release --no-restore --nologo -v quiet -p:UseSharedCompilation=false -p:BuildProjectReferences=false "-p:DotnetariumSmokeVersion=$version" 2>&1
     if ($LASTEXITCODE -ne 0) {
         $output | Write-Output
         throw "Razor fixture build failed: $project"

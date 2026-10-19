@@ -30,24 +30,27 @@ Set-Content (Join-Path $scratch 'nested/ignored.json') ('{"token":"' + $token + 
 Set-Content (Join-Path $project 'appsettings.json') ('{"token":"' + $token + '","reference":"${{ secrets.GITHUB_TOKEN }}"}')
 Set-Content (Join-Path $project '.env.production') ('GITHUB_TOKEN=' + $token)
 Set-Content (Join-Path $project 'NuGet.Config') '<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>'
+$fixturePackages = if ($env:DOTNETARIUM_TEST_PACKAGES) { $env:DOTNETARIUM_TEST_PACKAGES } else { Join-Path $scratch 'packages' }
 $projectFile = Join-Path $project 'App.csproj'
 @"
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><TargetFramework>net10.0</TargetFramework><RestoreConfigFile>$restoreConfig</RestoreConfigFile><RestorePackagesPath>$scratch/packages</RestorePackagesPath></PropertyGroup>
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><RestoreConfigFile>$restoreConfig</RestoreConfigFile><RestorePackagesPath>$fixturePackages</RestorePackagesPath></PropertyGroup>
   <ItemGroup><PackageReference Include="Dotnetarium.Analyzers" Version="$version" PrivateAssets="all" /></ItemGroup>
 </Project>
 "@ | Set-Content $projectFile
 Set-Content (Join-Path $project 'Class.cs') 'public class App {}'
 $sln = Join-Path $scratch 'src/App.slnx'
 Set-Content $sln '<Solution><Project Path="App/App.csproj" /></Solution>'
-& dotnet tool install dotnetarium --tool-path $tool --configfile $restoreConfig --version $version --no-cache *> (Join-Path $scratch 'install.log')
-if ($LASTEXITCODE -ne 0) { throw "Tool install failed: $scratch/install.log" }
+if (-not $env:DOTNETARIUM_TEST_TOOL) {
+    & dotnet tool install dotnetarium --tool-path $tool --configfile $restoreConfig --version $version --no-cache *> (Join-Path $scratch 'install.log')
+    if ($LASTEXITCODE -ne 0) { throw "Tool install failed: $scratch/install.log" }
+}
 & dotnet build $projectFile -c Release -v quiet -p:ErrorLog="$scratch/analyzer.sarif,version=2.1" *> (Join-Path $scratch 'build.log')
 if ($LASTEXITCODE -ne 0) { throw "Package build failed: $scratch/build.log" }
 $analyzer = Get-Content (Join-Path $scratch 'analyzer.sarif') -Raw | ConvertFrom-Json
 $packageFindings = @($analyzer.runs.results | Where-Object ruleId -EQ 'DNA0022')
 if ($packageFindings.Count -ne 2) { throw "Expected two project config findings; got $($packageFindings.Count). Logs: $scratch" }
-$exe = Join-Path $tool $(if ($IsWindows) { 'dotnetarium.exe' } else { 'dotnetarium' })
+$exe = if ($env:DOTNETARIUM_TEST_TOOL) { $env:DOTNETARIUM_TEST_TOOL } else { Join-Path $tool $(if ($IsWindows) { 'dotnetarium.exe' } else { 'dotnetarium' }) }
 # Unix PowerShell expands globs in native array splatting, even when the array
 # was constructed from quoted strings. ArgumentList preserves each literal.
 function Invoke-CredentialScan([string[]] $ScanArguments, [string] $LogPath) {

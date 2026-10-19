@@ -1,4 +1,4 @@
-param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly, [switch]$ReferencesOnly, [switch]$BlazorOnly, [switch]$ConditionsOnly)
+param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly, [switch]$ReferencesOnly, [switch]$BlazorOnly, [switch]$ConditionsOnly, [switch]$SolutionTargetsOnly)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
@@ -52,6 +52,11 @@ function AssertMode($Run, [string]$Mode, [string]$InputStatus) {
 }
 function HasNotice($Run, [string]$Id) {
     return @($Run.invocations[0].toolExecutionNotifications | Where-Object { $_.descriptor.id -eq $Id }).Count -gt 0
+}
+. (Join-Path $PSScriptRoot 'Test-SolutionTargets.ps1')
+if ($SolutionTargetsOnly) {
+    "No-build solution/targets checks passed. Reports: $scratch"
+    exit 0
 }
 . (Join-Path $PSScriptRoot 'Test-Conditions.ps1')
 . (Join-Path $PSScriptRoot 'Test-LoaderEdges.ps1')

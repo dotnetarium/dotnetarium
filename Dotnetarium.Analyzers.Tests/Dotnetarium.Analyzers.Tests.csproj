@@ -58,6 +58,7 @@
     <Compile Include="../Dotnetarium.Tool/SourceLocationSpan.cs" Link="Tool/SourceLocationSpan.cs" />
     <Compile Include="../Dotnetarium.Tool/StaticCondition.cs" Link="Tool/StaticCondition.cs" />
     <Compile Include="../Dotnetarium.Tool/StaticImportPath.cs" Link="Tool/StaticImportPath.cs" />
+    <Compile Include="../Dotnetarium.Tool/StaticPathCombine.cs" Link="Tool/StaticPathCombine.cs" />
     <Compile Include="../Dotnetarium.Tool/TestProjectDetection.cs" Link="Tool/TestProjectDetection.cs" />
     <Compile Include="../Dotnetarium.Tool/TargetFrameworkInputs.cs" Link="Tool/TargetFrameworkInputs.cs" />
     <Compile Include="../Dotnetarium.Tool/LoaderInputCache.cs" Link="Tool/LoaderInputCache.cs" />

@@ -145,19 +145,28 @@ respect compile-asset visibility (`PrivateAssets`, `IncludeAssets` and
 `ExcludeAssets`) and use the SDK's default reference metadata. Circular or unavailable
 references produce coverage notices.
 ASP.NET framework references also propagate through compatible source dependencies,
-respecting `PrivateAssets=all`. Analyzer-only references participate in restore
+respecting `PrivateAssets=all`. Validated NuGet assets can also supply an ASP.NET
+shared-framework reference declared by a package. Analyzer-only references participate in restore
 validation without exposing their types or becoming extra analyzed projects.
 
 Local static imports, including `.props` and `.csproj` files, are read in declaration
 order with their conditions. Nested imports retain their defining-file paths;
 cycles and traversal limits produce coverage notices. Matching unconditional
 official `Sdk.props` / `Sdk.targets` imports can also identify conventional SDK
-projects. Targets and tasks in imported files are not executed.
+projects. The nearest `Directory.Build.targets` contributes declarative properties,
+items and static imports after the project body. `ImportDirectoryBuildTargets=false`
+and an explicit `DirectoryBuildTargetsPath` are respected. Target bodies and tasks
+are not executed. Literal `System.IO.Path.Combine` property expressions with two
+to four expanded string arguments are supported without executing property functions.
+Solution scans supply `SolutionDir`, `SolutionPath`, `SolutionName` and
+`SolutionFileName` to every project and dependency. Project-only scans do not
+infer a solution directory. The `GITHUB_ACTIONS` environment flag is recognized;
+arbitrary environment properties are not imported.
 The conventional `[MSBuild]::GetPathOfFileAbove('filename', 'directory')`
 parent import is supported when both arguments resolve to literals. Arbitrary
 property functions still produce notices.
 
-Unresolved or wildcard imports, custom SDKs, `Directory.Build.targets`, package build inputs and unsupported
+Unresolved or wildcard imports, custom SDKs, package build inputs and unsupported
 conditions can change source selection or compiler options. No-build mode warns
 about these inputs, including unevaluated `Choose`/`When`/`Otherwise` branches.
 Shared props items resolve `MSBuildThisFileDirectory` against their defining file;

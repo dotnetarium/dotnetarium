@@ -25,6 +25,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     private readonly Dictionary<string, SourceText> texts = new(ProjectLoader.PathComparer);
     private readonly LoaderInputCache inputCache = new();
     private bool solutionTarget;
+    private readonly Dictionary<string, string> solutionProperties = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> rootProjects = new(ProjectLoader.PathComparer);
 
     private async Task<SourceText> ReadTextAsync(string path)
@@ -43,6 +44,14 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         {
             var roots = ProjectLoader.FindProjects(target);
             solutionTarget = Path.GetExtension(target).ToLowerInvariant() is ".sln" or ".slnx";
+            if (solutionTarget)
+            {
+                var fullPath = Path.GetFullPath(target);
+                solutionProperties["SolutionDir"] = Path.GetDirectoryName(fullPath)! + Path.DirectorySeparatorChar;
+                solutionProperties["SolutionPath"] = fullPath;
+                solutionProperties["SolutionName"] = Path.GetFileNameWithoutExtension(fullPath);
+                solutionProperties["SolutionFileName"] = Path.GetFileName(fullPath);
+            }
             rootProjects = roots.ToHashSet(ProjectLoader.PathComparer);
             var includedRoots = roots.Where(path =>
             {
@@ -367,8 +376,6 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     if (document.Document.Descendants().Any(element => element.Name.LocalName == "Target"))
                         Warn(path, "custom-targets", "Custom targets were not executed; generated inputs may be absent.");
                 }
-                if (FindNearest(root, "Directory.Build.targets") is { } targets)
-                    Warn(path, "import", $"Directory.Build.targets was not evaluated: {targets}");
                 string[] ProjectPaths(Func<XElement, bool> predicate) => items.Where(item => item.Name.LocalName == "ProjectReference" && predicate(item))
                     .Select(item => Expand((string?)item.Attribute("Include") ?? "", evaluated))
                     .Where(value => value.Length > 0).Select(value => Resolve(root, value)).Distinct(ProjectLoader.PathComparer).ToArray();
@@ -389,12 +396,14 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         ["Configuration"] = "Debug", ["Platform"] = "AnyCPU",
         ["DefineConstants"] = "",
         ["TargetFramework"] = "",
+        ["GITHUB_ACTIONS"] = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") ?? "",
         ["MSBuildProjectDirectory"] = root, ["MSBuildThisFileDirectory"] = root + Path.DirectorySeparatorChar
     };
 
     private Dictionary<string, string> ProjectProperties(string root)
     {
         var properties = BaseProperties(root);
+        foreach (var property in solutionProperties) properties[property.Key] = property.Value;
         if (selection.Configuration != null) properties["Configuration"] = selection.Configuration;
         return properties;
     }
@@ -426,6 +435,33 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
         var active = new HashSet<string>(ProjectLoader.PathComparer);
         var importCount = 0;
         foreach (var document in documents) Visit(document.Path, document.Document, 0);
+        // SDK targets import Directory.Build.targets after the project body.
+        // Read declarative inputs only; Visit never evaluates Target bodies.
+        if (!IsFalse(properties.GetValueOrDefault("ImportDirectoryBuildTargets")))
+        {
+            var root = Path.GetDirectoryName(project)!;
+            var configured = Expand(properties.GetValueOrDefault("DirectoryBuildTargetsPath", ""), properties);
+            var targets = configured.Length > 0 ? configured : FindNearest(root, "Directory.Build.targets");
+            if (!string.IsNullOrEmpty(targets))
+            {
+                if (targets.Contains("$(", StringComparison.Ordinal) || targets.IndexOfAny(['*', '?', ';']) >= 0)
+                    Warn(project, "import", $"Unsupported Directory.Build.targets path: {targets}");
+                else
+                {
+                    try
+                    {
+                        var file = Resolve(root, targets);
+                        properties["DirectoryBuildTargetsPath"] = file;
+                        SeedSdkTargetProperties(properties);
+                        Visit(file, inputCache.Xml(file), 0);
+                    }
+                    catch (Exception error) when (error is IOException or System.Xml.XmlException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                    {
+                        Warn(project, "import", $"Unable to read Directory.Build.targets {targets}: {error.Message}");
+                    }
+                }
+            }
+        }
         return expanded;
 
         void Visit(string file, XDocument document, int depth)
@@ -456,6 +492,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     if (element.Name.LocalName != "PropertyGroup" || !Condition(element, properties, project)) continue;
                     foreach (var property in element.Elements())
                         if (!(preserveFramework && property.Name.LocalName == "TargetFramework") &&
+                            !solutionProperties.ContainsKey(property.Name.LocalName) &&
                             !(selection.Configuration != null && property.Name.LocalName.Equals("Configuration", StringComparison.OrdinalIgnoreCase)) &&
                             (IsUnsetDefault(property) || Condition(property, properties, project)))
                         {
@@ -464,7 +501,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                             var self = "$(" + property.Name.LocalName + ")";
                             var source = properties.ContainsKey(property.Name.LocalName) ? property.Value :
                                 property.Value.Replace(self, "", StringComparison.OrdinalIgnoreCase);
-                            var value = Expand(source, properties);
+                            var value = StaticPathCombine.Expand(Expand(source, properties));
                             if (value.Contains("$(", StringComparison.Ordinal))
                                 Warn(project, "property", $"Unresolved property '{property.Name.LocalName}': {value}");
                             properties[property.Name.LocalName] = value;
@@ -504,6 +541,17 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                 }
             }
         }
+    }
+
+    private static void SeedSdkTargetProperties(Dictionary<string, string> properties)
+    {
+        var framework = properties.GetValueOrDefault("TargetFramework", "");
+        properties.TryAdd("BaseIntermediateOutputPath", "obj" + Path.DirectorySeparatorChar);
+        properties.TryAdd("IntermediateOutputPath", Path.Combine(properties["BaseIntermediateOutputPath"],
+            properties.GetValueOrDefault("Configuration", "Debug"),
+            IsFalse(properties.GetValueOrDefault("AppendTargetFrameworkToOutputPath")) ? "" : framework) + Path.DirectorySeparatorChar);
+        properties.TryAdd("DefaultLanguageSourceExtension", ".cs");
+        properties.TryAdd("TargetFrameworkMoniker", TargetFrameworkInputs.Supported(framework) ? TargetFrameworkInputs.Moniker(framework) : "");
     }
 
     private static bool IsConventionalSdk(string sdk) => sdk is "Microsoft.NET.Sdk" or "Microsoft.NET.Sdk.Web" or
@@ -572,7 +620,8 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             else foreach (var file in Directory.EnumerateFiles(reference, "*.dll")) paths.Add(file);
         }
         else AddPack(spec.Framework == "netstandard2.1" ? "NETStandard.Library.Ref" : "Microsoft.NETCore.App.Ref", spec.Framework, spec.Path, paths);
-        if (HasAspNetReference(spec))
+        var hasAspNetReference = HasAspNetReference(spec);
+        if (hasAspNetReference)
             AddPack("Microsoft.AspNetCore.App.Ref", spec.Framework, spec.Path, paths);
         foreach (var item in spec.Items.Where(item => item.Name.LocalName == "FrameworkReference" &&
             (string?)item.Attribute("Include") != "Microsoft.AspNetCore.App"))
@@ -620,6 +669,16 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     var folders = assets.RootElement.GetProperty("packageFolders").EnumerateObject().Select(folder => folder.Name).ToArray();
                     foreach (var library in target.EnumerateObject())
                     {
+                        // NuGet packages can add a shared framework reference,
+                        // including through transitive project dependencies.
+                        // Only consume this metadata after restore validation.
+                        if (!hasAspNetReference && library.Value.TryGetProperty("frameworkReferences", out var frameworks) &&
+                            frameworks.ValueKind == JsonValueKind.Array && frameworks.EnumerateArray().Any(reference =>
+                                reference.ValueKind == JsonValueKind.String && reference.GetString() == "Microsoft.AspNetCore.App"))
+                        {
+                            AddPack("Microsoft.AspNetCore.App.Ref", spec.Framework, spec.Path, paths);
+                            hasAspNetReference = true;
+                        }
                         if (new[] { "build", "buildTransitive", "buildMultiTargeting" }.Any(name => library.Value.TryGetProperty(name, out _)))
                             Warn(spec.Path, "package-build-inputs", $"Package {library.Name} has build-time inputs that were not evaluated; source selection or compiler properties may differ.");
                         if (!libraries.TryGetProperty(library.Name, out var metadata) ||

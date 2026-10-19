@@ -410,6 +410,46 @@ public sealed class SourceReachabilityTests
         Assert.True(Checker(compilation).MayReachSource(Graph(compilation, "Run")));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Cold_and_warm_structural_indexes_keep_the_same_source_proof_budget(bool hasSource)
+    {
+        var noise = string.Concat(Enumerable.Repeat("count++;", 400));
+        var compilation = Compile($$"""
+            public static class Demo {
+                public static void Run(int count) { {{noise}} {{(hasSource ? "_ = System.Console.ReadLine();" : "")}} }
+            }
+            """);
+        var graph = Graph(compilation, "Run");
+        Assert.Equal(hasSource, Checker(compilation).MayReachSource(graph));
+        Assert.Equal(hasSource, Checker(compilation).MayReachSource(graph));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Interrupted_index_keeps_a_late_source_eligible_and_resumes(bool hasSource)
+    {
+        var noise = string.Concat(Enumerable.Repeat("count++;", 4000));
+        var compilation = Compile($$"""
+            public static class Demo {
+                public static void Run(int count) { {{noise}} {{(hasSource ? "_ = System.Console.ReadLine();" : "")}} }
+            }
+            """);
+        var graph = Graph(compilation, "Run");
+        var checker = Checker(compilation);
+        Assert.True(checker.MayReachSource(graph));
+        if (hasSource)
+        {
+            for (var attempt = 0; attempt < 16; attempt++) Assert.True(checker.MayReachSource(graph));
+        }
+        else
+        {
+            Assert.Contains(Enumerable.Range(0, 32).Select(_ => checker.MayReachSource(graph)), result => !result);
+        }
+    }
+
     private static TaintConfiguration Configuration(CSharpCompilation compilation) =>
         new(ConfigurationManager.GetProjectConfiguration(LocalSourceTestOptions.Files), compilation, LocalSourceTestOptions.Options);
     private static SourceReachability Checker(CSharpCompilation compilation) =>

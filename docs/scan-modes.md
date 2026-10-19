@@ -6,6 +6,10 @@ root, stage and available work counters. Cached dataflow results replay logical
 work costs; cache warmth saves CPU without buying extra analysis depth. Negative
 source/sink proofs and component-state convergence have separate bounded budgets.
 An unfinished negative proof preserves normal taint analysis eligibility.
+Source/sink prechecks also separate shared index construction (8,192 operation
+visits per check) from rule-specific proof work (2,048 work units). A cold index
+does not consume the semantic proof budget. If either limit is reached, normal
+taint analysis remains eligible; interrupted indexes can resume on later checks.
 
 An exhausted points-to request can reuse its stop outcome for the same root,
 analysis options, work limit and depth-stop policy, with a fresh budget. It still

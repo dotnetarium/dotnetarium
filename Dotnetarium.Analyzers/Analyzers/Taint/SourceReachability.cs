@@ -58,12 +58,14 @@ namespace Dotnetarium.Analyzers.Taint
 
         internal bool MayReachSource(ControlFlowGraph graph, CancellationToken cancellationToken = default)
         {
+            var indexing = new ReachabilityIndexBudget(cancellationToken);
             using var budget = new AnalysisWorkBudget(2048, cancellationToken);
-            try { return results.GetOrAdd(graph, root => Compute(root, cancellationToken)); }
+            try { return results.GetOrAdd(graph, root => Compute(root, cancellationToken, indexing)); }
             catch (AnalysisWorkLimitException error) when (ReferenceEquals(error.Budget, budget)) { return true; }
+            catch (ReachabilityIndexBudget.LimitException error) when (ReferenceEquals(error.Budget, indexing)) { return true; }
         }
 
-        private bool Compute(ControlFlowGraph root, CancellationToken cancellationToken)
+        private bool Compute(ControlFlowGraph root, CancellationToken cancellationToken, ReachabilityIndexBudget indexing)
         {
             var pending = new Queue<ControlFlowGraph>();
             var visited = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
@@ -79,7 +81,7 @@ namespace Dotnetarium.Analyzers.Taint
                     if (cached) return true;
                     continue;
                 }
-                var summary = Summaries.GetValue(graph, root => new SummaryBuilder(root)).GetSummary(cancellationToken,
+                var summary = Summaries.GetValue(graph, root => new SummaryBuilder(root)).GetSummary(cancellationToken, indexing,
                     operation => operation is IParameterReferenceOperation parameter && IsSourceParameter(parameter.Parameter) ||
                         operation is IFlowAnonymousFunctionOperation lambda && lambda.Symbol.Parameters.Any(IsSourceParameter));
                 var scan = scans.GetOrAdd(graph, _ => new SourceScan());
@@ -283,7 +285,7 @@ namespace Dotnetarium.Analyzers.Taint
 
             internal SummaryBuilder(ControlFlowGraph root) => pending.Enqueue(root);
 
-            internal Summary GetSummary(CancellationToken cancellationToken, Func<IOperation, bool> hasParameterSource)
+            internal Summary GetSummary(CancellationToken cancellationToken, ReachabilityIndexBudget indexing, Func<IOperation, bool> hasParameterSource)
             {
                 lock (this)
                 {
@@ -313,7 +315,7 @@ namespace Dotnetarium.Analyzers.Taint
                         // Retain the uncommitted operation when a root runs out of
                         // work. A later root can finish indexing, but no partial
                         // summary is ever exposed as a source-absence proof.
-                        AnalysisWorkBudget.VisitOperation();
+                        indexing.VisitOperation();
                         var operation = nextOperation;
                         operations.Add((operation, currentGraph!));
                         if (operation is IFlowAnonymousFunctionOperation lambda)

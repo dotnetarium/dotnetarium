@@ -3593,6 +3593,13 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
             }
 
             var syntax = fieldReference.Field.DeclaringSyntaxReferences[0].GetSyntax();
+            // Inherited fields can belong to a source CompilationReference.
+            // This receiver refinement may only use the current compilation's
+            // semantic models; otherwise retain ordinary conservative dispatch.
+            if (!WellKnownTypeProvider.Compilation.ContainsSyntaxTree(syntax.SyntaxTree))
+            {
+                return null;
+            }
             var semanticModel = WellKnownTypeProvider.Compilation.GetSemanticModel(syntax.SyntaxTree);
             var initializer = syntax.DescendantNodes()
                 .Select(node => semanticModel.GetOperation(node))
@@ -3608,6 +3615,10 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
             foreach (var syntaxReference in fieldReference.Field.ContainingType.DeclaringSyntaxReferences)
             {
                 var typeSyntax = syntaxReference.GetSyntax();
+                if (!WellKnownTypeProvider.Compilation.ContainsSyntaxTree(typeSyntax.SyntaxTree))
+                {
+                    return null;
+                }
                 var typeSemanticModel = WellKnownTypeProvider.Compilation.GetSemanticModel(typeSyntax.SyntaxTree);
                 if (typeSyntax.DescendantNodes()
                     .Select(node => typeSemanticModel.GetOperation(node))

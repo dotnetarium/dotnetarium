@@ -40,7 +40,8 @@ internal static class Program
                 throw new FileNotFoundException("Project or solution was not found.", target);
             var root = Path.GetDirectoryName(target)!;
             var defaultConfig = Path.Combine(root, "dotnetarium.json");
-            var report = new ScanReport();
+            await using var progress = options.Verbose ? new ScanProgress(Console.Out) : null;
+            var report = new ScanReport(progress == null ? null : progress.Message);
             var selection = new ScanSelection(options.Configuration, options.Framework);
             var scopeConfig = options.ConfigPath ?? defaultConfig;
             ProjectExclusions? exclusions = null;
@@ -61,6 +62,7 @@ internal static class Program
             var diagnostics = new ConcurrentBag<Diagnostic>(configScanner.Scan(configRoot));
             ScanInputs? loadedInputs = null;
             var loadingStarted = Stopwatch.GetTimestamp();
+            progress?.Phase("Loading projects");
             try
             {
                 if (File.Exists(scopeConfig))
@@ -88,6 +90,10 @@ internal static class Program
             finally { report.RecordElapsed("loading", loadingStarted); }
             using var inputs = loadedInputs;
             var projects = inputs?.Projects.ToArray() ?? Array.Empty<Project>();
+            if (progress != null && inputs != null)
+                foreach (var project in inputs.Workspace.CurrentSolution.Projects.OrderBy(project => project.Name, StringComparer.Ordinal))
+                    progress.Message($"Loaded project: {project.Name} [{project.FilePath}] " +
+                        (projects.Any(selected => selected.Id == project.Id) ? "(selected for analysis)." : "(reference only; not selected for analysis)."));
             var credentialProjects = (inputs?.Workspace.CurrentSolution.Projects.Select(project => project.FilePath).OfType<string>() ?? [])
                 .Concat(report.ExcludedProjects);
             foreach (var projectRoot in credentialProjects.Select(path => Path.GetDirectoryName(path)!).Distinct(ProjectLoader.PathComparer))
@@ -109,11 +115,13 @@ internal static class Program
             // Start large projects first so one expensive compilation is not
             // left running after the smaller projects have drained the queue.
             var projectStagesStarted = Stopwatch.GetTimestamp();
+            progress?.Phase("Analyzing projects", projects.Length);
             await Parallel.ForEachAsync(projects.Where(project => project.Language == LanguageNames.CSharp)
                     .OrderByDescending(project => project.DocumentIds.Count)
                     .ThenBy(project => project.Name, StringComparer.Ordinal),
                 new ParallelOptions { MaxDegreeOfParallelism = projectConcurrency }, async (project, cancellationToken) =>
             {
+                using var projectProgress = progress?.StartProject(project.Id.ToString(), project.Name);
                 var additionalFiles = project.AnalyzerOptions.AdditionalFiles;
                 // Scan each configuration input once with CLI scope/checksum
                 // policy, including when this project's compilation is unusable.
@@ -132,6 +140,7 @@ internal static class Program
                     !inputs!.RazorProjects.Contains(project.Id))
                 {
                     report.Info("no-source", $"{project.Name}: no C# source inputs; no code analysis is required.");
+                    report.Progress($"Skipped project: {project.Name} (no C# source inputs).");
                     return;
                 }
                 if (compilation == null || !compilation.SyntaxTrees.Any() ||
@@ -140,7 +149,7 @@ internal static class Program
                     if (options.NoBuild && inputs!.RazorProjects.Contains(project.Id) && compilation != null && !compilation.SyntaxTrees.Any())
                         report.Warn("razor-generation", $"{project.Name}: no C# remains after unavailable Razor generation; other projects continue.");
                     else report.Fail("compilation-load", $"Unable to compile {project.Name}.");
-                    report.SkippedProjects.Add(project.Name);
+                    report.SkipProject(project.Name, "compilation unavailable");
                     return;
                 }
 
@@ -170,7 +179,7 @@ internal static class Program
                 catch (System.Text.Json.JsonException error)
                 {
                     report.Fail("configuration-error", $"{project.Name}: invalid dotnetarium.json: {error.Message}");
-                    report.SkippedProjects.Add(project.Name);
+                    report.SkipProject(project.Name, "invalid configuration");
                     return;
                 }
                 var effectiveSettings = new TaintAnalysisSettings(effectiveConfig, analyzerOptions);
@@ -180,9 +189,11 @@ internal static class Program
                     (effectiveConfig.ThreatModels ?? [SourceScope.Remote]).Select(scope => scope.ToString().ToLowerInvariant()).Order(StringComparer.Ordinal).ToArray(),
                     effectiveConfig.ExperimentalFilePersistence == true));
                 var analysisStarted = Stopwatch.GetTimestamp();
+                projectProgress?.Analyze(effectiveSettings.Profile.ToString().ToLowerInvariant());
                 var driverOptions = new CompilationWithAnalyzersOptions(analyzerOptions, null, true, false, reportSuppressedDiagnostics: true);
                 var result = await compilation.WithAnalyzers(analyzers, driverOptions).GetAllDiagnosticsAsync();
                 report.RecordElapsed("analysis-total", analysisStarted);
+                projectProgress?.Complete();
                 report.AnalyzedProjects.Add(project.Name);
                 var projectErrors = result.Where(diagnostic =>
                     diagnostic.Id == "AD0001" ||
@@ -197,7 +208,7 @@ internal static class Program
                     long? Number(string key) => long.TryParse(Get(key), out var value) ? value : null;
                     report.Cutoffs.Add(new(project.FilePath ?? project.Name, Get("rule"), Get("root"), Get("stage", "dataflow"),
                         Get("reason", "profile-limit"), Number("work"), Number("limit"), Number("graphs"), Number("blocks"), Number("operations"),
-                        (int)(Number("cutoffCount") ?? 1)));
+                        (int)(Number("cutoffCount") ?? 1), bool.TryParse(Get("stopReused"), out var reused) ? reused : null));
                 }
                 foreach (var error in projectErrors.Take(20))
                     if (error.Id != "AD0001")
@@ -210,6 +221,7 @@ internal static class Program
                     report.Warn("compiler-error-summary", $"{project.Name}: {projectErrors.Length} compiler/analyzer errors; the first 20 are shown.");
             });
             report.RecordElapsed("project-stages-wall", projectStagesStarted);
+            progress?.Phase("Writing results");
 
             if (report.AnalyzedProjects.Count == 0)
                 report.Fail("no-analysis", "No usable C# projects were analyzed.");
@@ -268,6 +280,7 @@ internal static class Program
                 Console.WriteLine($"{report.ExcludedProjects.Distinct().Count()} project(s) excluded by configuration.");
             if (options.SarifPath != null)
                 await SarifWriter.WriteAsync(options.SarifPath, target, findings, report, options.NoBuild ? "no-build" : "project", outputRoot);
+            progress?.Timings(report.StageSeconds);
             if (report.HasFailures)
             {
                 Console.Error.WriteLine("Scan failed: see errors above; available findings were preserved.");
@@ -293,6 +306,7 @@ internal static class Program
         "  --config <path>            Override dotnetarium.json (version 2.0)\n" +
         "  --analysis-profile <fast|full|max> Override the configured profile; explicit numeric limits remain in effect\n" +
         "  --fail                     Return 1 when findings are present\n" +
+        "  -v, --verbose              Show projects, timings and active analysis every 20 seconds\n" +
         "  --suppress <off|fingerprint|editorconfig|all> Local suppression policy (default: off)\n" +
         "  --suppression-file <path>  Local SARIF decisions (default: <repo>/.dotnetarium/suppressions.sarif)\n" +
         "  --respect-editorconfig     Compatibility alias enabling editorconfig suppression\n" +
@@ -318,13 +332,13 @@ internal static class Program
 
     private sealed record Options(string Target, string? SarifPath, string? ConfigPath,
         bool Fail, bool NoBuild, string? Configuration, string? Framework, string Suppress, string? SuppressionFile,
-        ConfigurationScanScope ConfigScope, bool VerifySecrets, AnalysisProfile? ProfileOverride)
+        ConfigurationScanScope ConfigScope, bool VerifySecrets, AnalysisProfile? ProfileOverride, bool Verbose)
     {
         internal bool RespectEditorConfig => Suppress is "editorconfig" or "all";
         internal static Options Parse(string[] args)
         {
             string? target = null, sarif = null, config = null, configuration = null, framework = null, suppress = null, suppressionFile = null;
-            bool fail = false, noBuild = true, respectEditorConfig = false, verifySecrets = false;
+            bool fail = false, noBuild = true, respectEditorConfig = false, verifySecrets = false, verbose = false;
             AnalysisProfile? analysisProfile = null;
             var configIncludes = new List<string>();
             var configExcludes = new List<string>();
@@ -346,6 +360,7 @@ internal static class Program
                         };
                         break;
                     case "--fail": fail = true; break;
+                    case "-v": case "--verbose": verbose = true; break;
                     case "--respect-editorconfig": respectEditorConfig = true; break;
                     case "--suppress":
                         suppress = NextValue();
@@ -378,7 +393,7 @@ internal static class Program
                 throw new ArgumentException("--respect-editorconfig conflicts with the selected --suppress mode.");
             suppress ??= respectEditorConfig ? "editorconfig" : "off";
             return new Options(target, sarif, config, fail, noBuild, configuration, framework, suppress, suppressionFile,
-                new ConfigurationScanScope(configIncludes, configExcludes), verifySecrets, analysisProfile);
+                new ConfigurationScanScope(configIncludes, configExcludes), verifySecrets, analysisProfile, verbose);
         }
     }
 }

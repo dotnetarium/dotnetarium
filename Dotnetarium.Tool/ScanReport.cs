@@ -11,10 +11,26 @@ internal sealed record ScanNotice(string Id, string Message, ScanNoticeKind Kind
 internal sealed record ScanAnalysisSettings(string Project, string Profile, uint MethodDepth, uint LambdaDepth,
     uint WorkBudget, string[] ThreatModels, bool ExperimentalFilePersistence = false);
 internal sealed record ScanCutoff(string Project, string Rule, string Root, string Stage, string Reason,
-    long? Work, long? Limit, long? Graphs, long? Blocks, long? Operations, int Count);
+    long? Work, long? Limit, long? Graphs, long? Blocks, long? Operations, int Count, bool? StopReused = null);
 
-internal sealed class ScanReport
+internal sealed class ScanReport(Action<string>? progress = null)
 {
+    internal void Progress(string message) => progress?.Invoke(message);
+    internal void ExcludeTestProject(string project)
+    {
+        ExcludedTestProjects.Add(project);
+        Progress($"Skipped project: {project} (test project).");
+    }
+    internal void ExcludeProject(string project)
+    {
+        ExcludedProjects.Add(project);
+        Progress($"Skipped project: {project} (excluded by configuration).");
+    }
+    internal void SkipProject(string project, string reason)
+    {
+        SkippedProjects.Add(project);
+        Progress($"Skipped project: {project} ({reason}).");
+    }
     internal ConcurrentQueue<ScanNotice> Notices { get; } = new();
     internal ConcurrentBag<string> AnalyzedProjects { get; } = [];
     internal ConcurrentBag<string> SkippedProjects { get; } = [];

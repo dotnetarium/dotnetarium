@@ -13,7 +13,7 @@ namespace Dotnetarium.Analyzers.Taint
         protected override SinkKind SinkKind => (SinkKind)(int)TaintType.UnsafeDeserialization;
         protected override DiagnosticDescriptor TaintedDataEnteringSinkDescriptor => DnaRuleCatalog.UnsafeBinaryFormatter;
 
-        protected override bool IsSinkRelevant(Location location, Compilation compilation)
+        protected override bool ShouldAnalyzeCompilation(Compilation compilation)
         {
             // The in-box .NET 10 formatter throws. An explicit compatibility
             // package restores unsafe deserialization, so only flag that scope.

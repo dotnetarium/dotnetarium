@@ -12,7 +12,7 @@ public sealed class SarifProvenanceTests
     {
         var report = new ScanReport();
         report.AnalysisSettings.Add(new("Example.csproj", "max", 7, 6, 9000, ["local", "remote"]));
-        report.Cutoffs.Add(new("Example.csproj", "DNA0003", "Example.Render", "dataflow", "work-limit", 9001, 9000, 10, 100, 8891, 1));
+        report.Cutoffs.Add(new("Example.csproj", "DNA0003", "Example.Render", "points-to", "work-limit", 9001, 9000, 10, 100, 8891, 1, true));
         report.Warn("analysis-budget", "Bounded analysis stopped.");
         var path = Path.GetTempFileName();
         try
@@ -35,6 +35,8 @@ public sealed class SarifProvenanceTests
             Assert.Equal("max", settings.GetProperty("profile").GetString());
             Assert.Equal(2, settings.GetProperty("threatModels").GetArrayLength());
             Assert.Equal("DNA0003", properties.GetProperty("dotnetarium.cutoffs")[0].GetProperty("rule").GetString());
+            Assert.Equal("points-to", properties.GetProperty("dotnetarium.cutoffs")[0].GetProperty("stage").GetString());
+            Assert.True(properties.GetProperty("dotnetarium.cutoffs")[0].GetProperty("stopReused").GetBoolean());
         }
         finally { File.Delete(path); }
     }

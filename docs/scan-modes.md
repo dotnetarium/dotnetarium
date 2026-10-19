@@ -6,6 +6,26 @@ root, stage and available work counters. Cached dataflow results replay logical
 work costs; cache warmth saves CPU without buying extra analysis depth. Negative
 source/sink proofs and component-state convergence have separate bounded budgets.
 An unfinished negative proof preserves normal taint analysis eligibility.
+Source/sink prechecks also separate shared index construction (8,192 graph and
+operation visits per check) from rule-specific proof work (2,048 work units). A cold index
+does not consume the semantic proof budget. If either limit is reached, normal
+taint analysis remains eligible; interrupted indexes can resume on later checks.
+Graph visits use that same indexing allowance, so many small callbacks do not
+force an unknown result at a separate fixed callback-count limit.
+Source indexing still inspects each operation; semantic proofs retain only
+source-relevant references and calls. Standalone callback checks skip callbacks proven to have
+no sink; parent dataflow still follows their returned values and captured state.
+
+An exhausted points-to request can reuse its stop outcome for the same root,
+analysis options, work limit and depth-stop policy, with a fresh budget. It still
+reports incomplete analysis and charges the same logical work; no partial result
+is treated as complete. Different budgets remain eligible for analysis. SARIF
+cutoffs identify `points-to`, `taint` or `value-content` stages where available;
+`stopReused: true` means a previous identical budget stop avoided recomputation.
+The points-to cache also retains the 32 most recently completed root results per
+compilation to reduce recomputation after garbage collection. Older results
+remain weakly cached. Partial results are not retained, and cache hits still
+charge their logical work cost.
 
 The global tool has two input-loading modes. Both use Roslyn compilations,
 semantic symbols, the same rules, taint engine and SARIF data flows.
@@ -72,6 +92,7 @@ evaluation. The old no-build flags are removed; omit them to use the default.
 | `--config <path>` | Override discovered `dotnetarium.json` |
 | `--analysis-profile <fast\|full\|max>` | Override the configured profile without replacing custom models, threat models or explicit numeric limits |
 | `--fail` | Return 1 for findings when there is no fatal scan failure |
+| `-v`, `--verbose` | Show loaded/skipped projects, phase and per-project timings, and active projects every 20 seconds |
 | `-p`, `--project` | Select MSBuild design-time project loading |
 | `--configuration <name>` | Select configuration; default is `Debug` |
 | `--framework <TFM>` | Select `net8.0`, `net10.0`, `netstandard2.0` or `netstandard2.1` and compatible dependencies |
@@ -80,6 +101,16 @@ evaluation. The old no-build flags are removed; omit them to use the default.
 | `--config-include <glob>` | Limit credential files to matching paths; repeatable |
 | `--config-exclude <glob>` | Exclude matching credential files; repeatable |
 | `-h`, `--help` | Print usage |
+
+For longer scans, use `dotnetarium MyApp.sln -v --sarif results.sarif`.
+Verbose output is plain text on standard output, so it also streams into CI logs.
+It explains test/configuration exclusions and unsupported inputs, distinguishes
+reference-only projects from those selected for analysis, and shows the active
+projects with their current compilation or analysis elapsed time every 20 seconds.
+The timer stops when the command exits. Final timings separate loading (including
+Razor generation) from compilation/analysis wall time. Projects run concurrently;
+their individual times overlap and should not be added together. Verbosity does
+not change rule selection, finding format, suppression policy or exit-code policy.
 
 An omitted `--analysis-profile` preserves each project's configured profile;
 otherwise the CLI defaults to `full`. An explicit flag selects `fast`, `full` or
@@ -145,19 +176,28 @@ respect compile-asset visibility (`PrivateAssets`, `IncludeAssets` and
 `ExcludeAssets`) and use the SDK's default reference metadata. Circular or unavailable
 references produce coverage notices.
 ASP.NET framework references also propagate through compatible source dependencies,
-respecting `PrivateAssets=all`. Analyzer-only references participate in restore
+respecting `PrivateAssets=all`. Validated NuGet assets can also supply an ASP.NET
+shared-framework reference declared by a package. Analyzer-only references participate in restore
 validation without exposing their types or becoming extra analyzed projects.
 
 Local static imports, including `.props` and `.csproj` files, are read in declaration
 order with their conditions. Nested imports retain their defining-file paths;
 cycles and traversal limits produce coverage notices. Matching unconditional
 official `Sdk.props` / `Sdk.targets` imports can also identify conventional SDK
-projects. Targets and tasks in imported files are not executed.
+projects. The nearest `Directory.Build.targets` contributes declarative properties,
+items and static imports after the project body. `ImportDirectoryBuildTargets=false`
+and an explicit `DirectoryBuildTargetsPath` are respected. Target bodies and tasks
+are not executed. Literal `System.IO.Path.Combine` property expressions with two
+to four expanded string arguments are supported without executing property functions.
+Solution scans supply `SolutionDir`, `SolutionPath`, `SolutionName` and
+`SolutionFileName` to every project and dependency. Project-only scans do not
+infer a solution directory. The `GITHUB_ACTIONS` environment flag is recognized;
+arbitrary environment properties are not imported.
 The conventional `[MSBuild]::GetPathOfFileAbove('filename', 'directory')`
 parent import is supported when both arguments resolve to literals. Arbitrary
 property functions still produce notices.
 
-Unresolved or wildcard imports, custom SDKs, `Directory.Build.targets`, package build inputs and unsupported
+Unresolved or wildcard imports, custom SDKs, package build inputs and unsupported
 conditions can change source selection or compiler options. No-build mode warns
 about these inputs, including unevaluated `Choose`/`When`/`Otherwise` branches.
 Shared props items resolve `MSBuildThisFileDirectory` against their defining file;

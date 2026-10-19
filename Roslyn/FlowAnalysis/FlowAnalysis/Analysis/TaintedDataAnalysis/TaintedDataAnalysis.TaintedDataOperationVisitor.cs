@@ -717,6 +717,13 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 foreach (var syntaxReference in owner.DeclaringSyntaxReferences)
                 {
                     var syntax = syntaxReference.GetSyntax();
+                    // A base controller may be declared in a referenced source
+                    // project. Do not assume a constructor-injection refinement
+                    // without a semantic model owned by this compilation.
+                    if (!WellKnownTypeProvider.Compilation.ContainsSyntaxTree(syntax.SyntaxTree))
+                    {
+                        return false;
+                    }
                     var semanticModel = WellKnownTypeProvider.Compilation.GetSemanticModel(syntax.SyntaxTree);
                     foreach (var assignmentSyntax in syntax.DescendantNodes().OfType<AssignmentExpressionSyntax>())
                     {

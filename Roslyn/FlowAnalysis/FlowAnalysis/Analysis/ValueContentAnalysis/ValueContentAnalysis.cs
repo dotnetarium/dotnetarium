@@ -19,6 +19,7 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow.ValueContentAnalysis
     public partial class ValueContentAnalysis : ForwardDataFlowAnalysis<ValueContentAnalysisData, ValueContentAnalysisContext, ValueContentAnalysisResult, ValueContentBlockAnalysisResult, ValueContentAbstractValue>
     {
         internal static readonly AbstractValueDomain<ValueContentAbstractValue> ValueDomainInstance = ValueContentAbstractValueDomain.Default;
+        protected override string BudgetStage => "value-content";
 
         private ValueContentAnalysis(ValueContentAnalysisDomain analysisDomain, ValueContentDataFlowOperationVisitor operationVisitor)
             : base(analysisDomain, operationVisitor)

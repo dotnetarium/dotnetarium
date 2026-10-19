@@ -321,6 +321,60 @@ public sealed class SinkReachabilityTests
         Assert.True(Checker(compilation).MayReachSink(Graph(compilation, "Demo", "Run")));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Cold_and_warm_structural_indexes_keep_the_same_sink_proof_budget(bool hasSink)
+    {
+        var noise = string.Concat(Enumerable.Repeat("_ = 42;", 1100));
+        var compilation = Compile($$"""
+            public static class Demo {
+                public static void Run(string value) { {{noise}} {{(hasSink ? "System.Diagnostics.Process.Start(value);" : "")}} }
+            }
+            """);
+        var graph = Graph(compilation, "Demo", "Run");
+        Assert.Equal(hasSink, Checker(compilation).MayReachSink(graph));
+        Assert.Equal(hasSink, Checker(compilation).MayReachSink(graph));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Interrupted_index_keeps_a_late_sink_eligible_and_resumes(bool hasSink)
+    {
+        var noise = string.Concat(Enumerable.Repeat("_ = 42;", 5000));
+        var compilation = Compile($$"""
+            public static class Demo {
+                public static void Run(string value) { {{noise}} {{(hasSink ? "System.Diagnostics.Process.Start(value);" : "")}} }
+            }
+            """);
+        var graph = Graph(compilation, "Demo", "Run");
+        var checker = Checker(compilation);
+        Assert.True(checker.MayReachSink(graph));
+        var retries = Enumerable.Range(0, 16).Select(_ => checker.MayReachSink(graph)).ToArray();
+        if (hasSink) Assert.All(retries, Assert.True);
+        else Assert.Contains(false, retries);
+        Assert.Equal(hasSink, Checker(compilation).MayReachSink(graph));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Many_small_callbacks_can_complete_a_sink_absence_proof(bool hasSink)
+    {
+        var callbacks = string.Concat(Enumerable.Range(0, 100).Select(index =>
+            $"System.Action callback{index} = () => {{ }};"));
+        var compilation = Compile($$"""
+            public static class Demo { public static void Run(string value) {
+                {{callbacks}}
+                System.Action last = () => { {{(hasSink ? "System.Diagnostics.Process.Start(value);" : "")}} };
+            } }
+            """);
+        var graph = Graph(compilation, "Demo", "Run");
+        Assert.Equal(hasSink, Checker(compilation).MayReachSink(graph));
+        Assert.Equal(hasSink, Checker(compilation).MayReachSink(graph));
+    }
+
     private static SinkReachability Checker(CSharpCompilation compilation)
     {
         var options = new Microsoft.CodeAnalysis.Diagnostics.AnalyzerOptions(ImmutableArray<AdditionalText>.Empty);

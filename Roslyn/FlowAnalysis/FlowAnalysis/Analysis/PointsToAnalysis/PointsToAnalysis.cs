@@ -20,6 +20,8 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow.PointsToAnalysis
     {
         internal static readonly AbstractValueDomain<PointsToAbstractValue> ValueDomainInstance = PointsToAbstractValueDomain.Default;
         protected override bool ShareActiveRootResults => true;
+        protected override bool ReuseRootWorkLimits => true;
+        protected override string BudgetStage => "points-to";
 
         private PointsToAnalysis(PointsToAnalysisDomain analysisDomain, PointsToDataFlowOperationVisitor operationVisitor)
             : base(analysisDomain, operationVisitor)

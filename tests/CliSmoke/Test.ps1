@@ -270,6 +270,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Local global tool install failed.' }
 $tool = Join-Path $toolPath $(if ($IsWindows) { 'dotnetarium.exe' } else { 'dotnetarium' })
 $help = & $tool --help
 if ($LASTEXITCODE -ne 0 -or -not ($help -match '\.slnx') -or -not ($help -match '--sarif') -or
+    -not ($help -match '--verbose\b') -or
     -not ($help -match '--fail\b') -or
     ($help -match '--sdk-path|--sarif-absolute-paths|--cwe|--export|--fail-any-warn|--fail-on-findings')) {
     throw 'CLI help does not match the simplified options.'
@@ -621,5 +622,6 @@ if ($LASTEXITCODE -ne 1 -or @((Get-Content -LiteralPath $scopeOverrideSarif -Raw
 }
 
 . (Join-Path $PSScriptRoot 'Test-Profiles.ps1')
+& (Join-Path $PSScriptRoot '../VerboseSmoke/Test.ps1') -ToolExecutable $tool
 'Analyzer NuGet package and global tool scan .NET 8/10; source selection, custom JSON, relative SARIF, and compiler error checks passed.' | Write-Output
 exit 0

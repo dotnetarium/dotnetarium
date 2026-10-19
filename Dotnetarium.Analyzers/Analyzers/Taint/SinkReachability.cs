@@ -39,12 +39,14 @@ namespace Dotnetarium.Analyzers.Taint
             // A bounded negative proof is an optimization, not taint coverage.
             // An interrupted proof must preserve eligibility and must not spend
             // different amounts of the caller's budget on cold/warm caches.
+            var indexing = new ReachabilityIndexBudget(cancellationToken);
             using var budget = new AnalysisWorkBudget(2048, cancellationToken);
-            try { return results.GetOrAdd(graph, root => Compute(root, cancellationToken)); }
+            try { return results.GetOrAdd(graph, root => Compute(root, cancellationToken, indexing)); }
             catch (AnalysisWorkLimitException error) when (ReferenceEquals(error.Budget, budget)) { return true; }
+            catch (ReachabilityIndexBudget.LimitException error) when (ReferenceEquals(error.Budget, indexing)) { return true; }
         }
 
-        private bool Compute(ControlFlowGraph root, CancellationToken cancellationToken)
+        private bool Compute(ControlFlowGraph root, CancellationToken cancellationToken, ReachabilityIndexBudget indexing)
         {
             var pending = new Queue<ControlFlowGraph>();
             var visited = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
@@ -58,7 +60,7 @@ namespace Dotnetarium.Analyzers.Taint
                     if (cached) return true;
                     continue;
                 }
-                var summary = Summaries.GetValue(graph, current => new SummaryBuilder(current)).GetSummary(cancellationToken);
+                var summary = Summaries.GetValue(graph, current => new SummaryBuilder(current)).GetSummary(cancellationToken, indexing);
                 if (summary.Unknown || summary.Members.Any(IsSinkMember)) return RememberPossibleSink(graph);
                 foreach (var call in summary.Methods)
                 {
@@ -133,11 +135,10 @@ namespace Dotnetarium.Analyzers.Taint
             private IEnumerator<IOperation>? enumerator;
             private IOperation? next;
             private ControlFlowGraph? currentGraph;
-            private int count;
             private bool unknown;
             private Summary? completed;
             internal SummaryBuilder(ControlFlowGraph root) { graphs.Enqueue(root); }
-            internal Summary GetSummary(CancellationToken cancellationToken)
+            internal Summary GetSummary(CancellationToken cancellationToken, ReachabilityIndexBudget indexing)
             {
                 lock (gate)
                 {
@@ -147,9 +148,9 @@ namespace Dotnetarium.Analyzers.Taint
                         cancellationToken.ThrowIfCancellationRequested();
                         if (enumerator == null)
                         {
-                            if (graphs.Count == 0 || ++count > 64)
+                            if (graphs.Count == 0)
                             {
-                                completed = new Summary(members.ToImmutableArray(), methods.ToImmutableArray(), unknown || count > 64);
+                                completed = new Summary(members.ToImmutableArray(), methods.ToImmutableArray(), unknown);
                                 graphs.Clear();
                                 members.Clear();
                                 methods.Clear();
@@ -157,6 +158,7 @@ namespace Dotnetarium.Analyzers.Taint
                                 currentGraph = null;
                                 return completed;
                             }
+                            indexing.VisitGraph();
                             currentGraph = graphs.Dequeue();
                             foreach (var function in currentGraph.LocalFunctions) graphs.Enqueue(currentGraph.GetLocalFunctionControlFlowGraph(function));
                             enumerator = currentGraph.DescendantOperations().GetEnumerator();
@@ -168,7 +170,7 @@ namespace Dotnetarium.Analyzers.Taint
                         }
                         // Charge before consuming the pending operation. Budget
                         // exhaustion or cancellation must not skip a late sink.
-                        AnalysisWorkBudget.VisitOperation();
+                        indexing.VisitOperation();
                         switch (next)
                         {
                             case IInvocationOperation call: AddMethod(call.TargetMethod, call.Instance); break;

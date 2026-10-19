@@ -36,6 +36,8 @@ namespace Analyzer.Utilities
         internal long Operations { get; private set; }
         internal long DepthLimits { get; private set; }
         internal static bool IsActive => current != null;
+        internal static AnalysisWorkBudget? Current => current;
+        internal bool StopsAtDepthLimit => stopAtDepthLimit;
 
         internal readonly record struct Cost(long Graphs, long Blocks, long Operations, long DepthLimits)
         {
@@ -107,9 +109,19 @@ namespace Analyzer.Utilities
     internal sealed class AnalysisWorkLimitException : Exception
     {
         internal AnalysisWorkLimitException(AnalysisWorkBudget budget)
-            : base("The root dataflow analysis exhausted its work budget.") => Budget = budget;
+            : base("The root dataflow analysis exhausted its work budget.")
+        {
+            Budget = budget;
+            Stage = budget.Stage;
+        }
 
         internal AnalysisWorkBudget Budget { get; }
+        internal string Stage { get; private set; }
+        internal bool StopReused { get; set; }
+        internal void IdentifyStage(string stage)
+        {
+            if (Stage == "dataflow") Stage = stage;
+        }
     }
 
     internal sealed class AnalysisDepthLimitException : Exception

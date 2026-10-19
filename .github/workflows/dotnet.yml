@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: windows-latest
@@ -19,53 +23,21 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
-      - name: Build and run unit tests
-        run: dotnet test Dotnetarium.sln -c Release -p:RunAnalyzers=false
-      - name: Test modern sinks
-        run: dotnet run --project tests/ModernSinkSmoke/ModernSinkSmoke.csproj -c Release -p:RunAnalyzers=false
-      - name: Build CLI for project and no-build smoke tests
-        run: dotnet build Dotnetarium.Tool/Dotnetarium.Tool.csproj -c Release -p:RunAnalyzers=false
-      - name: Check local suppression modes and persistence
+      - name: Build, pack once and run PR tests
         shell: pwsh
-        run: ./tests/SuppressionSmoke/Test.ps1
-      - name: Test Razor and Blazor flows
-        shell: pwsh
-        run: ./tests/RazorSmoke/Test.ps1
-      - name: Check Godot RPC and crypto coverage in both loading modes
-        shell: pwsh
-        run: ./tests/GameEngineSmoke/Test.ps1
-      - name: Check no-build Razor generation and default test exclusion
-        shell: pwsh
-        run: |
-          ./tests/NoBuildRazorSmoke/Test.ps1
-          ./tests/TestSelectionSmoke/Test.ps1
-      - name: Pack analyzer and global tool
-        run: |
-          dotnet pack Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj -c Release -p:RunAnalyzers=false -o artifacts
-          dotnet pack Dotnetarium.Tool/Dotnetarium.Tool.csproj -c Release -p:RunAnalyzers=false -o artifacts
-      - name: Scan through installed global tool
-        shell: pwsh
-        run: ./tests/CliSmoke/Test.ps1
-      - name: Check provider credentials in project and repository configuration
-        shell: pwsh
-        run: ./tests/ProviderCredentialSmoke/Test.ps1
-      - name: Check default no-build and explicit project loading through installed tool
-        shell: pwsh
-        run: ./tests/NoBuildSmoke/Test.ps1 -ToolPackage (Get-ChildItem artifacts/*.nupkg | Where-Object Name -Match '^dotnetarium\.\d' | Select-Object -First 1).FullName
-      - name: Check identifier and boundary precision on .NET 8 and 10
-        shell: pwsh
-        run: ./tests/TaintPrecisionSmoke/Test.ps1
-      - name: Check consequential file access in analyzer and both CLI modes
-        shell: pwsh
-        run: ./tests/ConsequentialFileSmoke/Test.ps1
-      - name: Check Markdown, archive extraction and generated Razor CLI coverage
-        shell: pwsh
-        run: ./tests/MarkupArchiveSmoke/Test.ps1
+        run: ./tests/Run-CI.ps1 -Suite pr
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
         with:
           name: dotnetarium-2-packages
           path: artifacts/*.nupkg
           if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: dotnetarium-windows-test-timings
+          path: artifacts/test-timings.json
           retention-days: 7
 
   linux-package-smoke:
@@ -77,38 +49,13 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
-      - name: Build and run unit tests
-        run: dotnet test Dotnetarium.sln -c Release -p:RunAnalyzers=false
-      - name: Pack analyzer and global tool
-        run: |
-          dotnet pack Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj -c Release -p:RunAnalyzers=false -o artifacts
-          dotnet pack Dotnetarium.Tool/Dotnetarium.Tool.csproj -c Release -p:RunAnalyzers=false -o artifacts
-      - name: Scan with lowercase project config
+      - name: Build, pack once and run PR tests
         shell: pwsh
-        run: ./tests/CliSmoke/Test.ps1
-      - name: Check local suppression modes and persistence
-        shell: pwsh
-        run: ./tests/SuppressionSmoke/Test.ps1
-      - name: Check no-build Razor generation and default test exclusion
-        shell: pwsh
-        run: |
-          ./tests/NoBuildRazorSmoke/Test.ps1
-          ./tests/TestSelectionSmoke/Test.ps1
-      - name: Check Godot RPC and crypto coverage in both loading modes
-        shell: pwsh
-        run: ./tests/GameEngineSmoke/Test.ps1
-      - name: Check provider credentials in project and repository configuration
-        shell: pwsh
-        run: ./tests/ProviderCredentialSmoke/Test.ps1
-      - name: Check default no-build and explicit project loading through installed tool
-        shell: pwsh
-        run: ./tests/NoBuildSmoke/Test.ps1 -ToolPackage (Get-ChildItem artifacts/*.nupkg | Where-Object Name -Match '^dotnetarium\.\d' | Select-Object -First 1).FullName
-      - name: Check identifier and boundary precision on .NET 8 and 10
-        shell: pwsh
-        run: ./tests/TaintPrecisionSmoke/Test.ps1
-      - name: Check consequential file access in analyzer and both CLI modes
-        shell: pwsh
-        run: ./tests/ConsequentialFileSmoke/Test.ps1
-      - name: Check Markdown, archive extraction and generated Razor CLI coverage
-        shell: pwsh
-        run: ./tests/MarkupArchiveSmoke/Test.ps1
+        run: ./tests/Run-CI.ps1 -Suite pr
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: dotnetarium-linux-test-timings
+          path: artifacts/test-timings.json
+          if-no-files-found: error
+          retention-days: 7

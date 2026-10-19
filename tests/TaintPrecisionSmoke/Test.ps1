@@ -1,7 +1,7 @@
 param([string]$ToolDll, [switch]$ProjectMode)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
+if (-not $ToolDll) { $ToolDll = if ($env:DOTNETARIUM_TEST_DLL) { $env:DOTNETARIUM_TEST_DLL } else { Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' } }
 $spec = [xml](Get-Content -Raw -LiteralPath (Join-Path $root 'Dotnetarium.Analyzers/Dotnetarium.Analyzers.csproj'))
 $version = $spec.SelectSingleNode('//PackageVersion').InnerText
 $feed = Join-Path $root 'artifacts'
@@ -11,7 +11,7 @@ if (-not (Test-Path -LiteralPath $ToolDll) -or
 }
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('dotnetarium-precision-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
-$env:NUGET_PACKAGES = Join-Path $scratch 'packages'
+$env:NUGET_PACKAGES = if ($env:DOTNETARIUM_TEST_PACKAGES) { $env:DOTNETARIUM_TEST_PACKAGES } else { Join-Path $scratch 'packages' }
 $nugetConfig = Join-Path $scratch 'NuGet.Config'
 @"
 <configuration>

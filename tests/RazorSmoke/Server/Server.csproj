@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Dotnetarium.Analyzers" Version="0.0.0-razor-smoke" />
+    <PackageReference Include="Dotnetarium.Analyzers" Version="$(DotnetariumSmokeVersion)" />
     <ProjectReference Include="../Client/Client.csproj" />
   </ItemGroup>
 </Project>

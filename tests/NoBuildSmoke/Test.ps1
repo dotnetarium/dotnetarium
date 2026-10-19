@@ -1,13 +1,16 @@
-param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly, [switch]$ReferencesOnly, [switch]$BlazorOnly, [switch]$ConditionsOnly, [switch]$SolutionTargetsOnly)
+param([string]$ToolDll, [string]$ToolPackage, [switch]$BudgetsOnly, [switch]$ReferencesOnly, [switch]$BlazorOnly, [switch]$ConditionsOnly, [switch]$SolutionTargetsOnly, [switch]$CoreOnly)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-if (-not $ToolDll) { $ToolDll = Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' }
+if (-not $ToolDll) { $ToolDll = if ($env:DOTNETARIUM_TEST_DLL) { $env:DOTNETARIUM_TEST_DLL } else { Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' } }
 if (-not (Test-Path -LiteralPath $ToolDll)) { throw "Build the scanner first: $ToolDll" }
 $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('dotnetarium-no-build-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 $script:command = 'dotnet'
 $script:prefix = @($ToolDll)
-if ($ToolPackage) {
+if ($env:DOTNETARIUM_TEST_TOOL) {
+    $script:command = $env:DOTNETARIUM_TEST_TOOL
+    $script:prefix = @()
+} elseif ($ToolPackage) {
     $toolPath = Join-Path $scratch 'tool'
     $package = [System.IO.Path]::GetFullPath($ToolPackage)
     $packageVersion = [System.IO.Path]::GetFileNameWithoutExtension($package).Substring('dotnetarium.'.Length)
@@ -53,6 +56,11 @@ function AssertMode($Run, [string]$Mode, [string]$InputStatus) {
 function HasNotice($Run, [string]$Id) {
     return @($Run.invocations[0].toolExecutionNotifications | Where-Object { $_.descriptor.id -eq $Id }).Count -gt 0
 }
+if ($ReferencesOnly) {
+    . (Join-Path $PSScriptRoot 'Test-References.ps1')
+    "No-build reference checks passed. Reports: $scratch"
+    exit 0
+}
 . (Join-Path $PSScriptRoot 'Test-SolutionTargets.ps1')
 if ($SolutionTargetsOnly) {
     "No-build solution/targets checks passed. Reports: $scratch"
@@ -71,11 +79,6 @@ if ($ConditionsOnly) {
 if ($BlazorOnly) {
     . (Join-Path $PSScriptRoot 'Test-BlazorUsings.ps1')
     "No-build Blazor using checks passed. Reports: $scratch"
-    exit 0
-}
-if ($ReferencesOnly) {
-    . (Join-Path $PSScriptRoot 'Test-References.ps1')
-    "No-build reference checks passed. Reports: $scratch"
     exit 0
 }
 . (Join-Path $PSScriptRoot 'Test-Budgets.ps1')
@@ -174,7 +177,7 @@ public class Entry : Controller {
     AssertMode $release 'no-build' 'available'
     "PASS ${framework}: no targets/restore, default no-build, explicit project mode, degraded inputs, missing packages, generator coverage and preserved flows"
 }
-. (Join-Path $PSScriptRoot 'Test-References.ps1')
+if (-not $CoreOnly) { . (Join-Path $PSScriptRoot 'Test-References.ps1') }
 . (Join-Path $PSScriptRoot 'Test-BlazorUsings.ps1')
 $unsupported = Join-Path $scratch 'Unsupported.csproj'
 '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net48</TargetFramework></PropertyGroup></Project>' | Set-Content -LiteralPath $unsupported

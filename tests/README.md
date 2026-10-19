@@ -18,9 +18,9 @@ and the standalone threat-model checks in both loading modes. The publishing
 workflow validates the packages on Windows and then validates those same package
 files on Linux before allowing publication.
 
-The runner builds the solution once, runs unit tests without rebuilding, and
-packs each package once without another
-build or restore, and installs the built tool once. Smoke tests share an isolated
+The runner builds the solution once and runs unit tests without rebuilding. It
+then packs each package without another build or restore and installs the built
+tool once. Smoke tests share an isolated
 package cache for that invocation. This avoids repeated dependency downloads
 without accidentally using an older published Dotnetarium package with the same
 version. DLL-based checks also use the installed package's assembly.

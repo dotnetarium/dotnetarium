@@ -9,7 +9,7 @@ Bring it into your editor with the **NuGet analyzer**, scan a solution with the 
 ```sh
 dotnet add MyApp.csproj package Dotnetarium.Analyzers
 dotnet tool install --global dotnetarium
-dotnetarium MyApp.sln --sarif results.sarif --fail
+dotnetarium MyApp.sln --sarif results.sarif
 ```
 
 Update the tool with `dotnet tool update --global dotnetarium`.

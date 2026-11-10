@@ -16,9 +16,9 @@ Update the tool with `dotnet tool update --global dotnetarium`.
 
 | Component | Requirements |
 | --- | --- |
-| Projects | C# targeting .NET 8/10 or .NET Standard 2.0/2.1 libraries |
+| Projects | C# targeting .NET 8/10/11 or .NET Standard 2.0/2.1 libraries |
 | NuGet analyzer | Roslyn 5.0+ host, such as the .NET 10 SDK or Visual Studio 2026 |
-| Global tool | .NET 10 runtime; a compatible SDK for project loading or Razor generation |
+| Global tool | .NET 10 or .NET 11 runtime; a compatible SDK for project loading or Razor generation |
 | GitHub Action | [Standalone workflow or existing CI](https://github.com/dotnetarium/dotnetarium-action#standalone-scan); SDK setup and restore included by default |
 
 Version 2.x does not support VB.NET, .NET Framework or Visual Studio 2022.
@@ -74,7 +74,7 @@ Existing CLI scripts should remove `-nb` / `--no-build`; those flags are no long
 | `--analysis-profile <fast\|full\|max>` | Select analysis effort; keeps custom models and explicit numeric limits |
 | `--config <path>` | Select a JSON rules configuration |
 | `--configuration <name>` | Select configuration; default is `Debug` |
-| `--framework <TFM>` | Select `net8.0`, `net10.0`, `netstandard2.0` or `netstandard2.1` |
+| `--framework <TFM>` | Select `net8.0`, `net10.0`, `net11.0`, `netstandard2.0` or `netstandard2.1` |
 | `--suppress <off\|fingerprint\|editorconfig\|all>` | Apply local suppression policy; default `off`. See [local suppressions](docs/local-suppressions.md) |
 | `--suppression-file <path>` | Override the local `.dotnetarium/suppressions.sarif` file |
 | `--respect-editorconfig` | Compatibility alias enabling EditorConfig policy |
@@ -139,6 +139,9 @@ Rules are warnings by default. The NuGet analyzer honors `.editorconfig`; use `d
 | Development | [Architecture](docs/Architecture.md), [tests](tests/README.md), [releasing](docs/Releasing.md) |
 
 Run from source with a .NET 10 SDK:
+
+The CLI restores the .NET 11 SDK's pinned Roslyn compiler build from Microsoft's
+public `dotnet-tools` feed for C# 15 and Razor support.
 
 ```sh
 dotnet run --project Dotnetarium.Tool -- MyApp.sln --sarif results.sarif --fail

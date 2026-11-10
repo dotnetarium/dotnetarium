@@ -1,6 +1,6 @@
 # Running tests
 
-There are two suites, both run with PowerShell 7 and the .NET 10 SDK:
+There are two suites, both run with PowerShell 7 and the .NET 11 SDK (with .NET 8 and 10 reference packs/runtimes installed):
 
 ```powershell
 ./tests/Run-CI.ps1 -Suite pr
@@ -9,7 +9,7 @@ There are two suites, both run with PowerShell 7 and the .NET 10 SDK:
 
 **PR** runs all unit tests and the existing package, CLI, loader, suppression,
 credentials, Razor/Blazor, Godot and security-rule regression checks. It keeps
-the .NET 8/10 and .NET Standard fixtures. Independent integration groups run
+the .NET 8/10/11 and .NET Standard fixtures. Independent integration groups run
 with a maximum of three jobs at once. The long no-build suite is split into
 core and reference-graph checks; its assertions are unchanged.
 

@@ -100,7 +100,7 @@ evaluation. The old no-build flags are removed; omit them to use the default.
 | `-v`, `--verbose` | Show loaded/skipped projects, phase and per-project timings, and active projects every 20 seconds |
 | `-p`, `--project` | Select MSBuild design-time project loading |
 | `--configuration <name>` | Select configuration; default is `Debug` |
-| `--framework <TFM>` | Select `net8.0`, `net10.0`, `netstandard2.0` or `netstandard2.1` and compatible dependencies |
+| `--framework <TFM>` | Select `net8.0`, `net10.0`, `net11.0`, `netstandard2.0` or `netstandard2.1` and compatible dependencies |
 | `--respect-editorconfig` | Apply configured rule severity/suppression; off by default in the CLI |
 | `--verify-secrets` | Verify supported configuration credentials online; off by default |
 | `--config-include <glob>` | Limit credential files to matching paths; repeatable |
@@ -136,11 +136,11 @@ or loading of `dotnetarium.json`. See [credential scope](credential-scanning.md)
 
 ## Requirements and limits
 
-The tool needs the .NET 10 runtime. Default loading also needs a compatible SDK
+The tool runs on the .NET 10 or .NET 11 runtime. Default loading also needs a compatible SDK
 selected from the target directory, respecting `global.json`.
 
 No-build loading supports conventional `Microsoft.NET.Sdk`, Web, Razor and Blazor
-WebAssembly projects targeting .NET 8 or 10, plus conventional .NET Standard 2.0/2.1
+WebAssembly projects targeting .NET 8, 10 or 11, plus conventional .NET Standard 2.0/2.1
 library projects. Install the corresponding reference packs, normally supplied by
 the SDK or a separate restore. Standard 2.0 uses the cached `NETStandard.Library`
 reference contract (2.0.3 by default); Standard 2.1 uses `NETStandard.Library.Ref`.
@@ -169,7 +169,7 @@ and logging namespaces are included when `ImplicitUsings` is enabled; explicit
 both modes; framework selection retains compatible source dependencies of the
 selected root projects.
 No-build dependency selection prefers an exact target, then compatible lower
-targets: .NET 10 can reference .NET 8, and both can reference Standard 2.1/2.0.
+targets: .NET 11 can reference .NET 10 and .NET 8; .NET 10 can reference .NET 8. All three can reference Standard 2.1/2.0.
 Standard 2.1 can reference Standard 2.0; the reverse is not compatible. Project
 mode uses the workspace's selected dependency targets; a multi-target library
 may resolve differently from no-build mode.

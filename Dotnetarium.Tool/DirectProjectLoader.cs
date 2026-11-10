@@ -77,7 +77,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             var solution = workspace.CurrentSolution;
             foreach (var spec in activeSpecs)
             {
-                var major = spec.Framework == "net8.0" ? 8 : spec.Framework == "net10.0" ? 10 : 4;
+                var major = spec.Framework.StartsWith("netstandard", StringComparison.Ordinal) ? 4 : int.Parse(spec.Framework[3..spec.Framework.IndexOf('.')]);
                 var symbols = TargetFrameworkInputs.Symbols(spec.Framework);
                 if (!IsTrue(spec.Properties.GetValueOrDefault("DisableImplicitConfigurationDefines")))
                 {
@@ -772,7 +772,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
 
     private bool HasAspNetReference(ProjectSpec root)
     {
-        if (root.Framework is not ("net8.0" or "net10.0")) return false;
+        if (root.Framework is not ("net8.0" or "net10.0" or "net11.0")) return false;
         var pending = new Queue<ProjectSpec>();
         var seen = new HashSet<ProjectId>();
         pending.Enqueue(root);
@@ -995,7 +995,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
 
     private void AddPack(string name, string framework, string project, HashSet<string> paths)
     {
-        var major = framework == "net8.0" ? 8 : framework == "netstandard2.1" ? 2 : 10;
+        var major = framework == "netstandard2.1" ? 2 : int.Parse(framework[3..framework.IndexOf('.')]);
         var minor = framework == "netstandard2.1" ? 1 : 0;
         var candidates = packRoots.SelectMany(root => new[] { Path.Combine(root, name), Path.Combine(root, name.ToLowerInvariant()) })
             .Distinct(StringComparer.Ordinal).Where(Directory.Exists)

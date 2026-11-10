@@ -16,7 +16,7 @@ $projectPath = Join-Path $scratch 'project'
 New-Item -ItemType Directory -Path $scratch, $toolPath, $projectPath -Force | Out-Null
 $env:NUGET_PACKAGES = if ($env:DOTNETARIUM_TEST_PACKAGES) { $env:DOTNETARIUM_TEST_PACKAGES } else { Join-Path $scratch 'packages' }
 
-& dotnet new classlib -n CliSmoke -o $projectPath --force --no-restore | Out-Null
+& dotnet new classlib -f net10.0 -n CliSmoke -o $projectPath --force --no-restore | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Could not create CLI fixture.' }
 @'
 using System;
@@ -279,6 +279,23 @@ if ($LASTEXITCODE -ne 0 -or -not ($help -match '\.slnx') -or -not ($help -match 
     ($help -match '--sdk-path|--sarif-absolute-paths|--cwe|--export|--fail-any-warn|--fail-on-findings')) {
     throw 'CLI help does not match the simplified options.'
 }
+# A .NET 11-only machine must not need the .NET 10 runtime to launch the tool.
+$dotnetRoot = Split-Path (Get-Command dotnet).Source
+$runtime = Get-ChildItem (Join-Path $dotnetRoot 'shared/Microsoft.NETCore.App') -Directory |
+    Where-Object Name -Like '11.*' | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+if (-not $runtime) { throw 'Install the .NET 11 runtime before running CLI smoke checks.' }
+$runtimeRoot = Join-Path $scratch 'net11-runtime-only'
+New-Item -ItemType Directory -Path (Join-Path $runtimeRoot 'shared/Microsoft.NETCore.App') -Force | Out-Null
+$linkType = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
+New-Item -ItemType $linkType -Path (Join-Path $runtimeRoot 'host') -Target (Join-Path $dotnetRoot 'host') | Out-Null
+New-Item -ItemType $linkType -Path (Join-Path $runtimeRoot "shared/Microsoft.NETCore.App/$($runtime.Name)") -Target $runtime.FullName | Out-Null
+$isolatedDotnet = Join-Path $runtimeRoot $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
+Copy-Item (Get-Command dotnet).Source $isolatedDotnet
+$installedDll = if ($env:DOTNETARIUM_TEST_DLL) { $env:DOTNETARIUM_TEST_DLL } else {
+    (Get-ChildItem (Join-Path $toolPath '.store') -Recurse -Filter Dotnetarium.Tool.dll | Select-Object -First 1).FullName
+}
+$runtimeHelp = & $isolatedDotnet $installedDll --help
+if ($LASTEXITCODE -ne 0 -or -not ($runtimeHelp -match 'net11.0')) { throw 'The installed tool must launch with only the .NET 11 runtime.' }
 $sarif = Join-Path $scratch 'results.sarif'
 $launcher = Join-Path $scratch 'launcher'
 New-Item -ItemType Directory -Path $launcher | Out-Null
@@ -347,26 +364,28 @@ if ($flow.Count -lt 2 -or $flow[0].location.id -ne 1 -or
     throw 'SARIF flow steps are missing stable locations.'
 }
 
-# The same analyzer package and .NET 10-hosted tool must also scan .NET 8 code.
+# The same analyzer package and .NET 10-hosted tool also scan .NET 11 and .NET 8 code.
 $projectXml = Get-Content -LiteralPath $project -Raw
-$projectXml.Replace('<TargetFramework>net10.0</TargetFramework>',
-    '<TargetFramework>net8.0</TargetFramework>') |
-    Set-Content -LiteralPath $project -Encoding utf8
-& dotnet restore $project --configfile $nugetConfig --nologo -v quiet
-if ($LASTEXITCODE -ne 0) { throw '.NET 8 fixture restore failed.' }
-$buildOutput = & dotnet build $project --no-restore --nologo -v quiet -p:UseSharedCompilation=false 2>&1
-if ($LASTEXITCODE -ne 0 -or -not ($buildOutput -match 'DNA0001') -or -not ($buildOutput -match 'DNA0002') -or
-    -not ($buildOutput -match 'DNA0008') -or -not ($buildOutput -match 'DNA0011') -or -not ($buildOutput -match 'DNA0020')) {
-    $buildOutput | Write-Output
-    throw 'Packaged analyzer did not report the expected .NET 8 findings.'
-}
-$net8Sarif = Join-Path $scratch 'results-net8.sarif'
-& $tool $project --sarif $net8Sarif --fail | Out-Null
-if ($LASTEXITCODE -ne 1) { throw 'Global tool did not find the .NET 8 flows.' }
-$net8Report = Get-Content -LiteralPath $net8Sarif -Raw | ConvertFrom-Json
-$net8Ids = @($net8Report.runs[0].results | ForEach-Object ruleId)
-if (Compare-Object ($ids | Sort-Object) ($net8Ids | Sort-Object)) {
-    throw '.NET 8 and .NET 10 fixtures must report the same source-to-sink flows.'
+foreach ($framework in @('net11.0', 'net8.0')) {
+    $projectXml.Replace('<TargetFramework>net10.0</TargetFramework>',
+        "<TargetFramework>$framework</TargetFramework>") |
+        Set-Content -LiteralPath $project -Encoding utf8
+    & dotnet restore $project --configfile $nugetConfig --nologo -v quiet
+    if ($LASTEXITCODE -ne 0) { throw "$framework fixture restore failed." }
+    $buildOutput = & dotnet build $project --no-restore --nologo -v quiet -p:UseSharedCompilation=false 2>&1
+    if ($LASTEXITCODE -ne 0 -or -not ($buildOutput -match 'DNA0001') -or -not ($buildOutput -match 'DNA0002') -or
+        -not ($buildOutput -match 'DNA0008') -or -not ($buildOutput -match 'DNA0011') -or -not ($buildOutput -match 'DNA0020')) {
+        $buildOutput | Write-Output
+        throw "Packaged analyzer did not report the expected $framework findings."
+    }
+    $frameworkSarif = Join-Path $scratch "results-$framework.sarif"
+    & $tool $project --sarif $frameworkSarif --fail | Out-Null
+    if ($LASTEXITCODE -ne 1) { throw "Global tool did not find the $framework flows." }
+    $frameworkReport = Get-Content -LiteralPath $frameworkSarif -Raw | ConvertFrom-Json
+    $frameworkIds = @($frameworkReport.runs[0].results | ForEach-Object ruleId)
+    if (Compare-Object ($ids | Sort-Object) ($frameworkIds | Sort-Object)) {
+        throw "$framework and .NET 10 fixtures must report the same source-to-sink flows."
+    }
 }
 
 $config = Join-Path $scratch 'custom.json'

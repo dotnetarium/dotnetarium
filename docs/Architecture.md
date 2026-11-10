@@ -5,7 +5,7 @@ The analyzer targets `netstandard2.0` so Roslyn can load it during a build. The
 .NET 10 tool reconstructs conventional SDK project inputs by default.
 `-p` / `--project` selects MSBuild design-time loading. Both modes
 run the same analyzers and can write SARIF 2.1.0. The tool supports projects
-targeting .NET 8 or .NET 10. See [scan modes](scan-modes.md).
+targeting .NET 8, .NET 10 or .NET 11. See [scan modes](scan-modes.md).
 
 ## Taint models
 

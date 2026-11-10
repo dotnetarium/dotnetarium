@@ -47,7 +47,7 @@ internal sealed class NoBuildRazorGeneration(ScanReport report)
                 var files = request.Files.Select(file => new RazorText(file, SourceText.From(File.ReadAllText(file.Path), Encoding.UTF8))).ToArray();
                 var parseOptions = (CSharpParseOptions)project.ParseOptions!;
                 var features = parseOptions.Features.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-                if (request.Properties.GetValueOrDefault("_RazorUseRoslynTokenizer", request.Properties.GetValueOrDefault("TargetFramework") == "net10.0" ? "true" : "false") == "true")
+                if (request.Properties.GetValueOrDefault("_RazorUseRoslynTokenizer", request.Properties.GetValueOrDefault("TargetFramework") is "net10.0" or "net11.0" ? "true" : "false") == "true")
                     features["use-roslyn-tokenizer"] = "true";
                 foreach (var feature in request.Properties.GetValueOrDefault("Features", "").Split(';', StringSplitOptions.RemoveEmptyEntries))
                 {

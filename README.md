@@ -151,7 +151,7 @@ dotnet run --project Dotnetarium.Tool -- MyApp.sln --sarif results.sarif --fail
 
 ## Moving from 1.x
 
-New features go to 2.x. [1.3.0](https://github.com/dotnetarium/dotnetarium/releases/tag/v1.3.0) remains available for VB.NET and .NET Framework 4.8 on [release/1.x](https://github.com/dotnetarium/dotnetarium/tree/release/1.x).
+New features go to 2.x. [1.4.0](https://github.com/dotnetarium/dotnetarium/releases/tag/v1.4.0) remains available for VB.NET and .NET Framework 4.8 on [release/1.x](https://github.com/dotnetarium/dotnetarium/tree/release/1.x).
 
 Replace `Dotnetarium.Analyzers.SCS` with `Dotnetarium.Analyzers`, `dotnetarium-scs` with `dotnetarium`, and YAML configuration with `dotnetarium.json`. Update suppressions and SARIF filters for the sequential `DNA` IDs. Local sources require explicit opt-in.
 

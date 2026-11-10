@@ -234,7 +234,6 @@ namespace Dotnetarium.Analyzers.Taint
         private static bool IsUnrelatedGeneratedFile(string path) =>
             !string.IsNullOrEmpty(path) &&
             path.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) &&
-            !path.EndsWith("_razor.g.cs", StringComparison.OrdinalIgnoreCase) &&
-            !path.EndsWith("_cshtml.g.cs", StringComparison.OrdinalIgnoreCase);
+            !RazorCodeAnalysis.IsRazorPath(path);
     }
 }

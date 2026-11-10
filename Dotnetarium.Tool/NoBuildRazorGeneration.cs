@@ -41,7 +41,7 @@ internal sealed class NoBuildRazorGeneration(ScanReport report)
                 // Other generated inputs retain their existing reuse notice.
                 var solution = workspace.CurrentSolution;
                 foreach (var document in project.Documents.Where(document => document.FilePath is { } file &&
-                    (file.EndsWith("_razor.g.cs", StringComparison.OrdinalIgnoreCase) || file.EndsWith("_cshtml.g.cs", StringComparison.OrdinalIgnoreCase))))
+                    Dotnetarium.Analyzers.RazorCodeAnalysis.IsRazorPath(file)))
                     solution = solution.RemoveDocument(document.Id);
                 project = solution.GetProject(id)!;
                 var files = request.Files.Select(file => new RazorText(file, SourceText.From(File.ReadAllText(file.Path), Encoding.UTF8))).ToArray();

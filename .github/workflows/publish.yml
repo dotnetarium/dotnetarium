@@ -1,0 +1,112 @@
+name: Publish 1.x analyzer
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: startsWith(github.event.release.tag_name, 'v1.')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+            11.0.x
+      - uses: microsoft/setup-msbuild@v2
+      - uses: darenm/Setup-VSTest@v1.2
+      - name: Verify release version
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $package = [xml](Get-Content DotnetariumSCS/DotnetariumSCS.csproj -Raw)
+          $assembly = [xml](Get-Content Directory.Build.props -Raw)
+          if ($package.SelectSingleNode('//PackageVersion').InnerText -ne $version -or
+              $assembly.SelectSingleNode('//InformationalVersion').InnerText -ne $version -or
+              $assembly.SelectSingleNode('//AssemblyVersion').InnerText -ne "$version.0" -or
+              $assembly.SelectSingleNode('//FileVersion').InnerText -ne "$version.0") {
+            throw 'Package and assembly versions must match the release tag.'
+          }
+      - name: Build and test legacy analyzer
+        shell: pwsh
+        run: |
+          nuget restore Dotnetarium.Analyzers.SCS.sln
+          if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
+          msbuild -m Dotnetarium.Analyzers.SCS.sln /p:Configuration=Release
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+          VSTest.console.exe ./DotnetariumSCS.Test/bin/Release/DotnetariumSCS.Test.dll
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy tests failed.' }
+      - name: Verify .NET 10 and .NET 11 support
+        shell: pwsh
+        run: |
+          foreach ($framework in @('net10.0', 'net11.0')) {
+            dotnet run --project tests/ModernSinkSmoke -c Release --framework $framework
+            if ($LASTEXITCODE -ne 0) { throw "$framework sink checks failed." }
+          }
+          ./tests/ModernSinkSmoke/Test-Package.ps1
+      - name: Pack release analyzer
+        shell: pwsh
+        run: |
+          dotnet pack DotnetariumSCS/DotnetariumSCS.csproj -c Release --no-build --no-restore -o artifacts --nologo
+          if ($LASTEXITCODE -ne 0) { throw 'Pack failed.' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dotnetarium-1x-release-package
+          path: artifacts/*.nupkg
+          if-no-files-found: error
+          retention-days: 7
+      - name: Attach analyzer to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $package = Get-ChildItem artifacts -Filter '*.nupkg'
+          if (@($package).Count -ne 1) { throw 'Expected one analyzer package.' }
+          gh release upload $env:GITHUB_REF_NAME $package.FullName --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'Release attachment failed.' }
+
+  publish:
+    needs: build
+    runs-on: windows-latest
+    environment: nuget-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dotnetarium-1x-release-package
+          path: artifacts
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 11.0.x
+      - name: Verify release package
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem artifacts -Filter '*.nupkg')
+          if ($packages.Count -ne 1 -or $packages[0].Name -ne "Dotnetarium.Analyzers.SCS.$($env:GITHUB_REF_NAME.Substring(1)).nupkg") {
+            throw 'Expected the 1.x analyzer package for the release tag.'
+          }
+      - uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        id: login
+        with:
+          user: dbalikhin
+      - name: Publish analyzer to NuGet.org
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          $package = Get-ChildItem artifacts -Filter '*.nupkg'
+          dotnet nuget push $package.FullName --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate
+          if ($LASTEXITCODE -ne 0) { throw 'NuGet publication failed.' }

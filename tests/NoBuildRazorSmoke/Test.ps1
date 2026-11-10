@@ -21,7 +21,7 @@ function Findings($Run, $Count) {
     }
     if (@($Run.results | Where-Object { -not $_.codeFlows }).Count) { throw 'Razor source flows were lost.' }
 }
-foreach ($framework in @('net8.0','net10.0')) {
+foreach ($framework in @('net8.0','net10.0','net11.0')) {
     $directory = Join-Path $scratch $framework
     $app = Join-Path $directory 'app'
     $library = Join-Path $directory 'library'

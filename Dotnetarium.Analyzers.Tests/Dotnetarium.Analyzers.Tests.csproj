@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <!-- Compiler build shipped in .NET SDK 11.0.100; stable NuGet packages are not yet published. -->
+    <RestoreAdditionalProjectSources>$(RestoreAdditionalProjectSources);https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-tools/nuget/v3/index.json</RestoreAdditionalProjectSources>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -11,7 +13,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.12.0-1.26529.118" />
     <PackageReference Include="GodotSharp" Version="4.7.2" />
     <PackageReference Include="RazorLight" Version="2.3.1" />
     <PackageReference Include="System.Runtime.Serialization.Formatters" Version="9.0.0" />

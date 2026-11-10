@@ -5,9 +5,13 @@ namespace Dotnetarium.Analyzers
 {
     internal static class RazorCodeAnalysis
     {
-        internal static bool IsRazorTree(SyntaxTree tree) =>
-            tree.FilePath.EndsWith("_razor.g.cs", StringComparison.OrdinalIgnoreCase) ||
-            tree.FilePath.EndsWith("_cshtml.g.cs", StringComparison.OrdinalIgnoreCase);
+        internal static bool IsRazorTree(SyntaxTree tree) => IsRazorPath(tree.FilePath);
+
+        internal static bool IsRazorPath(string path) =>
+            path.EndsWith("_razor.g.cs", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith("_razor.decl.g.cs", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith("_cshtml.g.cs", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith("_cshtml.decl.g.cs", StringComparison.OrdinalIgnoreCase);
 
         internal static bool IsUserCode(SyntaxNode syntax)
         {

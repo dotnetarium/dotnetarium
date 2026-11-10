@@ -4,13 +4,14 @@ namespace Dotnetarium.Tool;
 
 internal static class TargetFrameworkInputs
 {
-    internal static bool Supported(string framework) => framework is "net8.0" or "net10.0" or "netstandard2.0" or "netstandard2.1";
+    internal static bool Supported(string framework) => framework is "net8.0" or "net10.0" or "net11.0" or "netstandard2.0" or "netstandard2.1";
 
     // Prefer the closest supported contract, independently of declaration order.
     internal static string? Nearest(string framework, IEnumerable<string> candidates)
     {
         string[] preference = framework switch
         {
+            "net11.0" => ["net11.0", "net10.0", "net8.0", "netstandard2.1", "netstandard2.0"],
             "net10.0" => ["net10.0", "net8.0", "netstandard2.1", "netstandard2.0"],
             "net8.0" => ["net8.0", "netstandard2.1", "netstandard2.0"],
             "netstandard2.1" => ["netstandard2.1", "netstandard2.0"],
@@ -26,6 +27,7 @@ internal static class TargetFrameworkInputs
         "netstandard2.0" => LanguageVersion.CSharp7_3,
         "netstandard2.1" => LanguageVersion.CSharp8,
         "net8.0" => LanguageVersion.CSharp12,
+        "net11.0" => LanguageVersion.CSharp15,
         _ => LanguageVersion.CSharp14
     };
 
@@ -44,7 +46,7 @@ internal static class TargetFrameworkInputs
         }
         else
         {
-            var major = framework == "net8.0" ? 8 : 10;
+            var major = int.Parse(framework[3..framework.IndexOf('.')]);
             symbols.UnionWith(["NET", "NETCOREAPP", $"NET{major}_0", "NETCOREAPP1_0_OR_GREATER",
                 "NETCOREAPP1_1_OR_GREATER", "NETCOREAPP2_0_OR_GREATER", "NETCOREAPP2_1_OR_GREATER",
                 "NETCOREAPP2_2_OR_GREATER", "NETCOREAPP3_0_OR_GREATER", "NETCOREAPP3_1_OR_GREATER"]);

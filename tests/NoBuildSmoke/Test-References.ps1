@@ -3,7 +3,7 @@
 . (Join-Path $PSScriptRoot 'Test-FrameworkGraph.ps1')
 # Each dependency exposes a type from the next project, just as an ORM/service
 # API does. Losing a transitive reference breaks overload binding at the sink.
-foreach ($framework in @('net8.0', 'net10.0')) {
+foreach ($framework in @('net8.0', 'net10.0', 'net11.0')) {
     $graph = Join-Path $scratch "references-$framework"
     foreach ($name in @('App', 'Bridge', 'Other', 'Data')) {
         New-Item -ItemType Directory -Path (Join-Path $graph $name) -Force | Out-Null

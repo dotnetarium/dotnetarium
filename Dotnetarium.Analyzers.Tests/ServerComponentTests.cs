@@ -7,6 +7,7 @@ public sealed class ServerComponentTests
 {
     [Theory]
     [InlineData("Probe_razor.g.cs", 1)]
+    [InlineData("Probe_razor.decl.g.cs", 1)]
     [InlineData("Unrelated.g.cs", 0)]
     public async Task Grpc_configuration_checks_only_inspect_mapped_Razor_user_code(string file, int expected)
     {
@@ -205,9 +206,12 @@ public sealed class ServerComponentTests
                 }
             }
             """;
-        var razor = await FrameworkProbe.Analyze(source, new CryptographyAnalyzer(), filePath: "Probe_razor.g.cs");
-        var finding = Assert.Single(razor.Where(d => d.Id == id));
-        Assert.Equal("Probe.razor", finding.Location.GetMappedLineSpan().Path);
+        foreach (var file in new[] { "Probe_razor.g.cs", "Probe_razor.decl.g.cs" })
+        {
+            var razor = await FrameworkProbe.Analyze(source, new CryptographyAnalyzer(), filePath: file);
+            var finding = Assert.Single(razor.Where(d => d.Id == id));
+            Assert.Equal("Probe.razor", finding.Location.GetMappedLineSpan().Path);
+        }
         Assert.Empty(await FrameworkProbe.Analyze(source, new CryptographyAnalyzer(), filePath: "Unrelated.g.cs"));
     }
 }

@@ -1,6 +1,6 @@
 # SDK parity for Jellyfin-style parent imports, inherited framework contracts
 # and analyzer-only restore edges. Neither loader emits the application.
-foreach ($framework in @('net8.0', 'net10.0')) {
+foreach ($framework in @('net8.0', 'net10.0', 'net11.0')) {
     $graph = Join-Path $scratch "framework-graph-$framework"
     foreach ($name in @('src/App', 'src/Bridge', 'src/Data', 'src/Generator')) {
         New-Item -ItemType Directory -Path (Join-Path $graph $name) -Force | Out-Null

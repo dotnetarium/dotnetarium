@@ -92,7 +92,7 @@ if ($BudgetsOnly) {
     "No-build budget checks passed. Reports: $scratch"
     exit 0
 }
-foreach ($framework in @('net8.0', 'net10.0')) {
+foreach ($framework in @('net8.0', 'net10.0', 'net11.0')) {
     $app = Join-Path $scratch $framework
     New-Item -ItemType Directory -Path $app -Force | Out-Null
     $project = Join-Path $app 'App.csproj'

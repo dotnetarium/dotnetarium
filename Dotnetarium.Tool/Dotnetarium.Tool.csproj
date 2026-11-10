@@ -10,7 +10,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dotnetarium</ToolCommandName>
     <PackageId>dotnetarium</PackageId>
-    <Version>2.8.1</Version>
+    <Version>2.9.0</Version>
     <Authors>Dmitry Balikhin</Authors>
     <Description>Dotnetarium security scanner for modern .NET projects</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>

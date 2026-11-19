@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   scan:
-    uses: dotnetarium/dotnetarium-action/.github/workflows/scan.yml@396cf8081431186aea3d018aed3366483243f48a
+    uses: dotnetarium/dotnetarium-action/.github/workflows/scan.yml@87acfa071b0724a92b8de8e7124ab5ac8906b1ff
     with:
       target: Dotnetarium.Tool/Dotnetarium.Tool.csproj
       configuration: Release

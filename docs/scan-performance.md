@@ -97,6 +97,35 @@ inputs. A synthetic `finally` can still call source-defined disposal logic.
 Any pruning needs to preserve catch and finally reachability, changes to tracked
 state, and calls made during disposal.
 
+### Reusing exception-flow work
+
+Both passes can rediscover the same continuation from the end of a `finally`
+region. Reusing those registrations keeps the continuation list small while
+retaining distinct destinations, branch semantics, and region transfers.
+Possible-throw metadata is cached per basic block and reused for the lookup and
+update of the block's exception state. Both passes still compute exceptions and
+apply cleanup effects.
+
+One paired no-build run per application used `0ff4d5b` as the baseline and the
+same restored inputs as above.
+
+| Application | Profile | Wall seconds, baseline → experiment | Cutoffs | Findings |
+| --- | --- | ---: | ---: | ---: |
+| Vulnerable app | Fast | 12.88 → 12.96 | 74 → 75 | 34 → 33 |
+| Sarifintown | Fast | 7.10 → 7.23 | 243 → 243 | 0 → 0 |
+| LANCommander | Fast | 61.54 → 59.87 | 1,433 → 1,410 | 14 → 14 |
+| LANCommander | Full | 73.16 → 66.79 | 1,295 → 1,262 | 15 → 15 |
+
+The full LANCommander pair ran the experiment first. Its peak scanner memory
+was 1,594 MiB on the baseline and 1,664 MiB in the experiment. Finding locations
+and messages matched on LANCommander, with one full-profile flow selecting a
+different read of the same archive entry property as its source. The vulnerable
+app's intermittent finding also varied between runs of the first optimization
+pass. Earlier timings show that runtime and cutoff counts vary between runs.
+
+The new regression covers tainted state flowing through a filtered catch, an
+explicit `finally`, and source-defined disposal. All 1,711 analyzer tests passed.
+
 ### Remaining candidates
 
 | Candidate | Evidence and constraints |

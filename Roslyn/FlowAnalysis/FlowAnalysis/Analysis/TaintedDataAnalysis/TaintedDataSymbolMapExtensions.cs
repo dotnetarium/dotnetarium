@@ -28,21 +28,19 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
         /// <param name="sourceSymbolMap"></param>
         /// <param name="method"></param>
         /// <param name="arguments"></param>
-        /// <param name="pointsToFactory">If the method needs to do PointsToAnalysis, the PointsToAnalysis result will be produced by the passed value factory.</param>
-        /// <param name="valueContentFactory">If the method needs to do ValueContentAnalysis, the ValueContentAnalysis result will be produced by the passed value factory.</param>
+        /// <param name="pointsToAnalysisResult">The analysis result used by points-to source predicates.</param>
+        /// <param name="valueContentAnalysisResult">The analysis result used by value-content source predicates.</param>
         /// <param name="allTaintedTargets"></param>
         /// <returns></returns>
         public static bool IsSourceMethod(
             this TaintedDataSymbolMap<SourceInfo> sourceSymbolMap,
             IMethodSymbol method,
             ImmutableArray<IArgumentOperation> arguments,
-            Lazy<PointsToAnalysisResult?> pointsToFactory,
-            Lazy<(PointsToAnalysisResult? p, ValueContentAnalysisResult? v)> valueContentFactory,
+            PointsToAnalysisResult? pointsToAnalysisResult,
+            ValueContentAnalysisResult? valueContentAnalysisResult,
             [NotNullWhen(returnValue: true)] out PooledHashSet<string>? allTaintedTargets)
         {
             allTaintedTargets = null;
-            PointsToAnalysisResult? pointsToAnalysisResult = null;
-            ValueContentAnalysisResult? valueContentAnalysisResult = null;
             foreach (SourceInfo sourceInfo in sourceSymbolMap.GetInfosForType(method.ContainingType))
             {
                 foreach ((MethodMatcher methodMatcher, ImmutableHashSet<string> taintedTargets) in sourceInfo.TaintedMethods)
@@ -62,7 +60,6 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 {
                     if (pointsToTaintedTargets.Any() && methodMatcher(method.Name, arguments))
                     {
-                        pointsToAnalysisResult ??= pointsToFactory.Value;
                         if (pointsToAnalysisResult == null)
                         {
                             break;
@@ -88,8 +85,6 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 {
                     if (valueContentTaintedTargets.Any() && methodMatcher(method.Name, arguments))
                     {
-                        pointsToAnalysisResult ??= valueContentFactory.Value.p;
-                        valueContentAnalysisResult ??= valueContentFactory.Value.v;
                         if (pointsToAnalysisResult == null || valueContentAnalysisResult == null)
                         {
                             break;
@@ -308,7 +303,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
             this TaintedDataSymbolMap<SourceInfo> sourceSymbolMap,
             IMethodSymbol method,
             ImmutableArray<IArgumentOperation> arguments,
-            ISet<string> taintedParameterNames,
+            Func<string, bool> isTaintedParameter,
             [NotNullWhen(returnValue: true)] out PooledHashSet<(string, string)>? taintedParameterPairs)
         {
             taintedParameterPairs = null;
@@ -325,7 +320,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
 
                         // A model can cover overloads with different output
                         // parameters. Only transfer to targets on this overload.
-                        taintedParameterPairs.UnionWith(sourceToEnds.Where(s => taintedParameterNames.Contains(s.source) &&
+                        taintedParameterPairs.UnionWith(sourceToEnds.Where(s => isTaintedParameter(s.source) &&
                             (s.end is TaintedTargetValue.Return or TaintedTargetValue.This ||
                              arguments.Any(argument => argument.Parameter?.Name == s.end))));
                     }

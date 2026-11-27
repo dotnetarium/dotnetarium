@@ -1,6 +1,6 @@
 # Bind against real framework assemblies without targets/restore. The official
 # SDK Razor generator is the only generator permitted in no-build mode.
-foreach ($framework in @('net8.0', 'net10.0')) {
+foreach ($framework in @('net8.0', 'net10.0', 'net11.0')) {
     $app = Join-Path $scratch "blazor-usings-$framework"
     New-Item -ItemType Directory -Path $app -Force | Out-Null
     '<p>Generated component</p>' | Set-Content -LiteralPath (Join-Path $app 'Example.razor')

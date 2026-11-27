@@ -236,6 +236,7 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
                 {
                     info = ThrownExceptionInfo.CreateDefaultInfoForExceptionsPathAnalysis(
                         CurrentBasicBlock, WellKnownTypeProvider, DataFlowAnalysisContext.InterproceduralAnalysisData?.CallStack);
+                    _exceptionPathsThrownExceptionInfoMap.Add(CurrentBasicBlock, info);
                 }
 
                 return info;
@@ -850,20 +851,6 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
             Debug.Assert(ExecutingExceptionPathsAnalysisPostPass);
             Debug.Assert(!SkipExceptionPathsAnalysisPostPass);
 
-            // Bail out if we are not analyzing an interprocedural call and there is no
-            // tracked analysis data.
-            if (!HasAnyAbstractValue(CurrentAnalysisData) &&
-                DataFlowAnalysisContext.InterproceduralAnalysisData == null)
-            {
-                return;
-            }
-
-            // Bail out if System.Exception is not defined.
-            if (ExceptionNamedType == null)
-            {
-                return;
-            }
-
             IOperation? instance = null;
             IOperation? invocation = null;
             switch (operation)
@@ -900,6 +887,14 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
                     return;
             }
 
+            // Non-throwing operations have no exception state to track. Check
+            // the abstract state only for operations the engine models here.
+            if (ExceptionNamedType == null ||
+                (!HasAnyAbstractValue(CurrentAnalysisData) && DataFlowAnalysisContext.InterproceduralAnalysisData == null))
+            {
+                return;
+            }
+
             var invocationInstanceAccessCanThrow = instance != null &&
                 instance.Kind != OperationKind.InstanceReference &&
                 GetNullAbstractValue(instance) != NullAbstractValue.NotNull;
@@ -913,7 +908,8 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
 
             // This operation can throw, so update the analysis data for unhandled exception with 'System.Exception' type.
             AnalysisDataForUnhandledThrowOperations ??= new Dictionary<ThrownExceptionInfo, TAnalysisData>();
-            if (!AnalysisDataForUnhandledThrowOperations.TryGetValue(DefaultThrownExceptionInfo, out TAnalysisData? data) ||
+            var exceptionInfo = DefaultThrownExceptionInfo;
+            if (!AnalysisDataForUnhandledThrowOperations.TryGetValue(exceptionInfo, out TAnalysisData? data) ||
                 CurrentBasicBlock.IsContainedInRegionOfKind(ControlFlowRegionKind.Finally))
             {
                 data = null;
@@ -922,7 +918,7 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
             data = GetMergedAnalysisDataForPossibleThrowingOperation(data, operation);
             RoslynDebug.Assert(data != null);
             AssertValidAnalysisData(data);
-            AnalysisDataForUnhandledThrowOperations[DefaultThrownExceptionInfo] = data!;
+            AnalysisDataForUnhandledThrowOperations[exceptionInfo] = data!;
         }
 
         protected virtual TAnalysisData GetMergedAnalysisDataForPossibleThrowingOperation(TAnalysisData? existingData, IOperation operation)
@@ -2836,7 +2832,12 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
 
         public override TAbstractAnalysisValue DefaultVisit(IOperation operation, object? argument)
         {
-            return VisitArray(operation.Children, argument);
+            foreach (var child in operation.ChildOperations)
+            {
+                _ = Visit(child, argument);
+            }
+
+            return ValueDomain.UnknownOrMayBeValue;
         }
 
         public override TAbstractAnalysisValue VisitSimpleAssignment(ISimpleAssignmentOperation operation, object? argument)

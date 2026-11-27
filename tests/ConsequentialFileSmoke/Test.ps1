@@ -21,7 +21,7 @@ try {
 </packageSourceMapping>
 </configuration>
 "@ | Set-Content -LiteralPath $nugetConfig
-    foreach ($framework in @('net8.0', 'net10.0')) {
+    foreach ($framework in @('net8.0', 'net10.0', 'net11.0')) {
         $directory = Join-Path $scratch $framework
         New-Item -ItemType Directory -Path $directory | Out-Null
         $project = Join-Path $directory 'FileAccess.csproj'

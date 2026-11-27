@@ -22,6 +22,7 @@ namespace Dotnetarium.Config
                 var model = compilation.GetSemanticModel(tree);
                 foreach (var syntax in tree.GetRoot().DescendantNodes().OfType<AssignmentExpressionSyntax>())
                 {
+                    if (InvocationSyntax.Name(syntax.Left) != "DisableImplicitFromServicesParameters") continue;
                     if (model.GetOperation(syntax) is not ISimpleAssignmentOperation assignment ||
                         assignment.Target is not IPropertyReferenceOperation property ||
                         property.Property.Name != "DisableImplicitFromServicesParameters" ||

@@ -361,7 +361,7 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
                     // Get the successors with corresponding flow branches.
                     // CONSIDER: Currently we need to do a bunch of branch adjustments for branches to/from finally, catch and filter regions.
                     //           We should revisit the overall CFG API and the walker to avoid such adjustments.
-                    var successorsWithAdjustedBranches = GetSuccessorsWithAdjustedBranches(block).ToArray();
+                    var successorsWithAdjustedBranches = GetSuccessorsWithAdjustedBranches(block);
                     foreach ((BranchWithInfo successorWithBranch, BranchWithInfo? preadjustSuccessorWithBranch) in successorsWithAdjustedBranches)
                     {
                         // successorWithAdjustedBranch returns a pair of branches:
@@ -373,6 +373,8 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
                         // Flow the current analysis data through the branch.
                         (TAnalysisData newSuccessorInput, bool isFeasibleBranch) = OperationVisitor.FlowBranch(block, successorWithBranch, AnalysisDomain.Clone(output));
 
+                        // Continuations already registered for a finally block
+                        // have no original branch and cannot extend this list.
                         if (preadjustSuccessorWithBranch != null)
                         {
                             UpdateFinallySuccessorsAndCatchInput(preadjustSuccessorWithBranch, newSuccessorInput, block);
@@ -775,6 +777,25 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
                 {
                     lastBlockSuccessors = new List<BranchWithInfo>();
                     finallyBlockSuccessorsMap.Add(finallyRegion.LastBlockOrdinal, lastBlockSuccessors);
+                }
+                else
+                {
+                    // Both passes can reach the same exit branch repeatedly.
+                    // Keep distinct transfers (including their region effects),
+                    // and apply each transfer once per visit to the finally exit.
+                    foreach (var previous in lastBlockSuccessors)
+                    {
+                        if (previous.Destination == successor.Destination &&
+                            previous.Kind == successor.Kind &&
+                            previous.BranchValue == successor.BranchValue &&
+                            previous.ControlFlowConditionKind == successor.ControlFlowConditionKind &&
+                            previous.EnteringRegions == successor.EnteringRegions &&
+                            previous.LeavingRegions == successor.LeavingRegions &&
+                            previous.FinallyRegions == successor.FinallyRegions)
+                        {
+                            return;
+                        }
+                    }
                 }
 
                 lastBlockSuccessors.Add(successor);

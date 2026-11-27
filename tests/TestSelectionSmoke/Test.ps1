@@ -4,7 +4,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 if (-not $ToolDll) { $ToolDll = if ($env:DOTNETARIUM_TEST_DLL) { $env:DOTNETARIUM_TEST_DLL } else { Join-Path $root 'Dotnetarium.Tool/bin/Release/net10.0/Dotnetarium.Tool.dll' } }
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('dotnetarium-test-selection-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
-foreach ($framework in @('net8.0','net10.0')) {
+foreach ($framework in @('net8.0','net10.0','net11.0')) {
     $directory = Join-Path $scratch $framework
     foreach ($name in @('production','imported-tests','sdk-tests','needed-tests')) { New-Item -ItemType Directory -Path (Join-Path $directory $name) -Force | Out-Null }
     $production = Join-Path $directory 'production/LooksLikeTests.csproj'

@@ -43,6 +43,18 @@ public sealed class SourceDelegateTargetsTests
     }
 
     [Fact]
+    public void Incompatible_arity_and_return_shapes_do_not_spend_matching_budget()
+    {
+        var compilation = Compile("delegate string Callback(); public static class Demo { " +
+            string.Concat(Enumerable.Range(0, 128).Select(index =>
+                $"static string WrongArity{index}(int i) => i.ToString(); static void WrongReturn{index}() {{}}")) +
+            "static string Late() => System.Console.ReadLine(); }");
+        var invoke = compilation.GetTypeByMetadataName("Callback")!.DelegateInvokeMethod!;
+        using var budget = new AnalysisWorkBudget(64, CancellationToken.None);
+        Assert.Contains(SourceDelegateTargets.GetOrCreate(compilation).GetTargets(invoke), method => method.Name == "Late");
+    }
+
+    [Fact]
     public void Cancellation_does_not_poison_an_interrupted_signature_query()
     {
         var compilation = Compile(Source("delegate string Callback();", "static string Late() => System.Console.ReadLine();"));
@@ -135,7 +147,9 @@ public sealed class SourceDelegateTargetsTests
         methods.Select(method => method.ToDisplayString()).Order(StringComparer.Ordinal).ToArray();
 
     private static string Source(string declarations, string target) => declarations + " public static class Demo { " +
-        string.Concat(Enumerable.Range(0, 600).Select(index => $"static int Noise{index}() => {index};")) + target + " }";
+        string.Concat(Enumerable.Range(0, 384).Select(index => $"static int Noise{index}() => {index};")) +
+        string.Concat(Enumerable.Range(0, 128).Select(index =>
+            $"static int Noise{index}(int i) => i; static void VoidNoise{index}(int i) {{}}")) + target + " }";
 
     private static CSharpCompilation Compile(string source)
     {

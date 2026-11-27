@@ -31,6 +31,271 @@ Disposal tracking, configured interprocedural depth and framework-specific sourc
 models remain enabled. Ordinary code is not excluded because its directory or
 class happens to be named `Migration`.
 
+## .NET 11 checkout performance follow-up
+
+Component callback sites, forwarding edges and prerequisite render CFGs are
+indexed once per compilation. Each rule still applies its own browser execution
+policy and computes state with its configured source and sanitizer maps. Minimal
+API handlers, endpoint-filter bindings, SignalR registration facts and incoming
+messaging registrations now also share compilation-scoped indexes. They contain
+bound program facts and expire with the compilation.
+
+Delegate targets are indexed by return shape and arity. Optional and `params`
+methods remain eligible through a separate lookup. Sink reachability visits each
+distinct method and interface receiver bound once per structural summary. A
+source, sanitizer or sink map resolves inherited models once for a given type.
+The taint visitor caches constructor-injected field classification and checks
+argument taint only when a matching transfer or sanitizer needs it.
+
+No-build loading overlaps the initial configuration-file scan, reuses reference
+pack inventories, and parses XML documentation without diagnostics. Razor SDK
+probes are shared by nearest `global.json` scope, with a directory-specific probe
+for linked paths. The generator driver produces the sources without constructing
+an intermediate compilation that the workspace would discard.
+
+### No-build comparison
+
+Sequential Release/net10.0 scans on Linux, with a four-CPU quota, SDK 11.0.100,
+and remote and local sources enabled. Baseline `ab08234` and the candidate ran
+against the same restored checkouts. Sarifintown (`c30a5d0`) and LANCommander
+(`4a2eef7e`) still report degraded inputs. The vulnerable app (`60d060f`) has
+available inputs and budget notices. No analyzer failures occurred.
+
+| Application | Fast median wall seconds, baseline → candidate | Fast median project-stage wall seconds | Fast cutoff range | Fast findings |
+| --- | ---: | ---: | ---: | ---: |
+| Vulnerable app | 16.42 → 15.08 | 11.40 → 10.13 | 74–75 → 74–75 | 33–34 → 33–34 |
+| Sarifintown | 8.80 → 7.52 | 5.59 → 4.48 | 243 → 243 | 0 → 0 |
+| LANCommander | 61.51 → 58.12 | 49.65 → 47.05 | 1,415–1,447 → 1,440–1,444 | 14 → 14 |
+
+The fast medians use three or four baseline runs and two candidate runs per
+application. Finding locations and messages had the same union across repeats.
+One vulnerable-app finding appeared intermittently on both builds. One candidate
+fast run produced a shorter code flow for an otherwise identical finding. The
+baseline flow appeared in the other candidate repeat. LANCommander reached
+1,134–1,138 depth stops and 306 work stops on the candidate, versus 1,123–1,141
+and 292–306 on the baseline. Depth remains its largest cutoff family.
+
+| Application | Full wall seconds, baseline → candidate | Full cutoffs | Full findings |
+| --- | ---: | ---: | ---: |
+| Vulnerable app | 17.14 → 14.76 | 43 → 43 | 42 → 42 |
+| Sarifintown | 9.38 → 8.14 | 221 → 221 | 0 → 0 |
+| LANCommander | 68.14 → 67.02 | 1,268–1,300 → 1,287–1,302 | 15 → 15 |
+
+Full uses one pair per smaller application. The LANCommander median uses two
+pairs, with the order reversed for the second pair. Its baseline and candidate
+ranges overlap at 64.33–71.96 and 65.04–69.00 seconds respectively. All full
+finding locations and messages matched. On LANCommander, one code flow selected
+a different read of the same archive entry property as its source.
+
+### Exception-path post-pass
+
+A temporary instrumented fast LANCommander scan recorded 1,191 points-to
+post-pass visits and 2,106 taint post-pass visits. The work inside those passes
+took 10.38 of 36.24 summed dataflow worker-seconds, about 29%, with nested passes
+counted once in the timing. The sample includes compilations with degraded
+inputs. A synthetic `finally` can still call source-defined disposal logic.
+Any pruning needs to preserve catch and finally reachability, changes to tracked
+state, and calls made during disposal.
+
+### Reusing exception-flow work
+
+Both passes can rediscover the same continuation from the end of a `finally`
+region. Reusing those registrations keeps the continuation list small while
+retaining distinct destinations, branch semantics, and region transfers.
+Possible-throw metadata is cached per basic block and reused for the lookup and
+update of the block's exception state. Both passes still compute exceptions and
+apply cleanup effects.
+
+One paired no-build run per application used `0ff4d5b` as the baseline and the
+same restored inputs as above.
+
+| Application | Profile | Wall seconds, baseline → experiment | Cutoffs | Findings |
+| --- | --- | ---: | ---: | ---: |
+| Vulnerable app | Fast | 12.88 → 12.96 | 74 → 75 | 34 → 33 |
+| Sarifintown | Fast | 7.10 → 7.23 | 243 → 243 | 0 → 0 |
+| LANCommander | Fast | 61.54 → 59.87 | 1,433 → 1,410 | 14 → 14 |
+| LANCommander | Full | 73.16 → 66.79 | 1,295 → 1,262 | 15 → 15 |
+
+The full LANCommander pair ran the experiment first. Its peak scanner memory
+was 1,594 MiB on the baseline and 1,664 MiB in the experiment. Finding locations
+and messages matched on LANCommander, with one full-profile flow selecting a
+different read of the same archive entry property as its source. The vulnerable
+app's intermittent finding also varied between runs of the first optimization
+pass. Earlier timings show that runtime and cutoff counts vary between runs.
+
+The new regression covers tainted state flowing through a filtered catch, an
+explicit `finally`, and source-defined disposal. All 1,711 analyzer tests passed.
+
+### Coordinated taint dispatch
+
+Roslyn discovers one taint analyzer for the built-in rules. The individual rule
+types remain available to hosts that instantiate analyzers directly. The
+coordinator gets the root CFG once and keeps completed points-to results alive
+for the duration of the root. Cache hits replay the recorded analysis work.
+
+Rules can share a profile when their resolved source and sanitizer definitions
+and effective flow settings agree across the compilation. XSS has its own
+browser execution and file-persistence model. SSRF has its own destination-state
+transfers. When a shared component summary changes, the coordinator invalidates
+that profile's source reachability proofs.
+
+Each rule checks sink eligibility and analyzes relevant standalone callbacks
+under its own budget. Rules with matching source profiles and callback costs run
+one parent dataflow pass. Results retain the rule for each sink and source
+origin, including interprocedural witnesses. Each reporting rule receives its
+own budget with the analysis work already charged. A grouped stop is reported
+for each affected rule. An incomplete shared component model emits one notice
+with the profile's rule IDs. Grouped taint results are scoped to that pass so
+later passes can observe newly learned component state.
+
+All 1,717 analyzer tests passed, including comparison with standalone rules,
+custom model separation, per-rule EditorConfig settings, and budget notices.
+The packaged Razor smoke test, CLI Razor tests for .NET 8, 10, and 11, and CLI
+and package taint-precision fixtures passed.
+
+Sequential no-build Release/net10.0 checks used the same restored inputs,
+remote and local sources, and `125945e` as the baseline. The table uses the
+final coordinator build. Fast timings on the smaller apps use the paired
+recheck. The candidate-only fast runs on those apps took 16.98 and 9.19 seconds
+respectively, so their turnaround varies between runs.
+
+| Application | Fast wall seconds, baseline → coordinator | Full wall seconds | Fast cutoffs | Full cutoffs | Findings, fast / full |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulnerable app | 14.29 → 14.81 | 14.97 → 14.79 | 75 → 74 | 43 → 42 | 33 / 42 |
+| Sarifintown | 7.43 → 6.77 | 8.03 → 7.77 | 243 → 243 | 221 → 221 | 0 / 0 |
+| LANCommander | 61.76 → 57.12 | 72.87 → 60.46 | 1,459 → 1,438 | 1,284 → 1,303 | 14 / 15 |
+
+The final scans matched baseline SARIF findings and code flows in each cell.
+LANCommander's full-profile project stage took 62.10 → 48.79 wall seconds.
+The vulnerable app's fast work and depth totals match the baseline, with one
+fewer shared component notice. Runtime and individual cutoffs vary across
+bounded scans. Each LANCommander comparison uses one baseline and one final
+coordinator run. Sarifintown and LANCommander retain degraded input notices.
+
+### Combined end-to-end evaluation
+
+The combined build at `5b6047f` includes shared taint discovery (`0ff4d5b`),
+exception-flow reuse (`125945e`), and coordinated taint dispatch (`5b6047f`).
+It was compared with the `v2.9.0` baseline at `ab08234`.
+
+The release CI suite passed all 1,717 analyzer tests and five integration
+groups. It packed both NuGet packages, installed the freshly built CLI, and
+checked the packaged analyzers and CLI on .NET 8, 10, and 11. Release checks
+included taint precision and threat modeling in both CLI loading modes.
+
+The timed scans used the no-build loader on the same restored inputs as above,
+with Release, net10.0, and remote and local sources. Each application and
+profile ran twice per build on Linux with SDK 11.0.100 and a four-CPU quota.
+Scans ran sequentially in fresh processes with the build order reversed for
+the second pair. Cutoffs count bounded stops reported in SARIF.
+
+| Application | Profile | Median wall seconds, baseline → combined | Wall time reduction | Cutoffs, baseline → combined | Findings on each build |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Vulnerable app | Fast | 16.9 → 14.7 | 13.4% | 75 → 74 | 33 |
+| Vulnerable app | Full | 17.5 → 15.1 | 13.7% | 43 → 42 | 42 |
+| Sarifintown | Fast | 9.7 → 7.7 | 20.5% | 243 → 243 | 0 |
+| Sarifintown | Full | 9.9 → 7.6 | 23.7% | 221 → 221 | 0 |
+| LANCommander | Fast | 70.0 → 61.4 | 12.3% | 1,459–1,462 → 1,459–1,466 | 14 |
+| LANCommander | Full | 74.9 → 63.0 | 15.9% | 1,269–1,311 → 1,262–1,276 | 15 |
+
+On LANCommander, both combined runs beat both baseline runs for each profile.
+Median peak scanner memory was 1,464 → 1,534 MiB in fast and 1,615 → 1,574 MiB
+in full. The median full-profile cutoff count fell by 21, with overlapping
+ranges. The vulnerable app emitted one fewer component-state budget notice
+in each profile.
+
+All 24 scans completed without analyzer failures. Finding rule IDs, locations,
+and messages matched in every pair, including multiple sources at the same
+sink. The fast pairs also matched complete SARIF results. In full, some
+vulnerable-app flows added or dropped an intermediate Razor callback step
+with the same source and sink. One LANCommander flow selected the adjacent
+read of the same archive entry property. Sarifintown and LANCommander reported
+degraded inputs on both builds.
+
+### Max profile, MSBuild project mode, and build-time analyzers
+
+This follow-up uses the same scanner builds, restored checkouts, Release
+configuration, `net10.0`, and remote and local sources. The no-build `max`
+profile uses depth 10 and 10,000 work units. Each application ran twice on
+each build, with the order reversed for the second pair.
+
+| No-build `max` | Median wall seconds, baseline → combined | Cutoffs, baseline → combined | Findings on each build |
+| --- | ---: | ---: | ---: |
+| Vulnerable app | 17.28 → 14.28 | 12 → 11 | 42 |
+| Sarifintown | 10.58 → 8.68 | 196 → 196 | 0 |
+| LANCommander | 76.36 → 65.93 | 1,190–1,192 → 1,183–1,199 | 15 |
+
+Finding locations, messages and sources matched. One LANCommander witness
+used a different call site to the same method between the same source and
+sink. Sarifintown and LANCommander continued to report degraded inputs in
+no-build mode.
+
+The `--project` runs use MSBuild design-time loading. LANCommander `full` and
+`max` use two pairs with reversed build order. The vulnerable app's `fast`
+result uses three pairs to check a finding difference. The other rows use
+one pair. Wall times are medians where there were repeats.
+
+| MSBuild project mode | Profile | Wall seconds, baseline → combined | Cutoffs, baseline → combined | Findings, baseline → combined |
+| --- | --- | ---: | ---: | ---: |
+| Vulnerable app | Fast | 16.48 → 15.19 | 72–74 → 73–74 | 34 → 33 |
+| Vulnerable app | Full | 17.70 → 15.96 | 43 → 42 | 42 → 42 |
+| Vulnerable app | Max | 17.97 → 16.18 | 12 → 11 | 42 → 42 |
+| Sarifintown | Fast | 10.99 → 10.36 | 243 → 243 | 0 → 0 |
+| Sarifintown | Full | 12.29 → 10.81 | 221 → 221 | 0 → 0 |
+| Sarifintown | Max | 13.96 → 12.48 | 196 → 196 | 0 → 0 |
+| LANCommander | Fast | 99.05 → 85.86 | 3,578 → 3,609 | 14 → 14 |
+| LANCommander | Full | 110.32 → 91.35 | 3,376–3,402 → 3,404–3,417 | 15 → 15 |
+| LANCommander | Max | 115.19 → 92.82 | 3,166–3,168 → 3,136–3,143 | 15 → 15 |
+
+The baseline reported `DNA0011` at `XssFileUpload.razor:244` in all three
+MSBuild `fast` runs. It was absent from all three combined runs. Both builds
+reported it in `full` and `max`. This finding also varied across earlier
+no-build `fast` repeats. Two additional MSBuild `fast` runs per intermediate
+build reported it twice at `0ff4d5b` and once at `125945e`. Other finding
+identities matched in the paired baseline and combined runs. Some code flows
+chose different intermediate calls or adjacent reads of the same archive
+entry property.
+
+All CLI scans completed without analyzer failures. Both builds reported
+available project-mode inputs for the vulnerable app and Sarifintown, and
+degraded inputs for LANCommander. LANCommander's median `max` project stage
+fell from 88.15 to 63.95 seconds.
+
+For build-time analysis, copies of the vulnerable app reference the actual
+`Dotnetarium.Analyzers` NuGet packages and use the package's default `fast`
+profile. The two packages used separate NuGet caches. The package assemblies were
+verified against the respective scanner builds. Two trials per package used
+opposite package order. Each trial used `dotnet build -c Release --no-restore`
+with a fresh C# compiler server, then reused that server after a comment-only
+source edit. A third invocation used identical inputs to check MSBuild's
+up-to-date behavior.
+
+| Package build phase | Median build wall seconds, baseline → combined | Median accumulated Dotnetarium analyzer seconds |
+| --- | ---: | ---: |
+| First build, fresh compiler server | 11.95 → 11.31 | 15.24 → 12.46 |
+| Second build, warm recompilation | 10.17 → 8.24 | 21.24 → 13.57 |
+| Unchanged inputs | 1.13 → 1.08 | Compiler skipped |
+
+The analyzer column is the compiler's `ReportAnalyzer` total for the package.
+It sums overlapping work and can exceed build wall time. The first two
+invocations ran the compiler and loaded the package in all trials. All builds
+succeeded without analyzer failures. Both packages reported 42 compiler-SARIF
+security diagnostics on each first build. One combined warm build reported 41
+because it emitted one fewer callback trace for the existing `DNA0011` sink at
+`BrokenJwt.razor:159`. Both packages still reported the same set of sink locations.
+
+### Remaining candidates
+
+| Candidate | Evidence and constraints |
+| --- | --- |
+| Callback dataflow | The coordinator groups parent passes after measuring each rule's standalone callback work. Sharing callback passes would need compatible eligibility, remaining work, and source-model state at the callback. |
+| Completed taint invocations | The framework restores exit state, returns, exceptions, and nested results. The taint visitor merges callee sink records and keeps file-system paths in analysis entities. Component source providers can gain origins during the parent analysis, outside the cached invocation input. Validate those dependencies as well as receiver, ref/out and capture changes before enabling reuse. |
+| Additional reachability pruning | A sink type-name scan can miss interface dispatch, aliases and implicit calls such as disposal. Delegate discovery still binds possible method groups, while the arity index limits later matching. Source proofs that consult binder or component values can change on a retry. |
+| Compiler diagnostics and memory | `GetAllDiagnosticsAsync` also requests method-body compiler errors. Keep that coverage when testing warning suppression or nullable-flow changes, and account for projects that promote compiler warnings to errors. Project references keep parts of the workspace compilation graph alive. Projecting diagnostics would reduce retained locations but would need a separate compilation-lifetime change to address the project graph. |
+| Loader and Razor parallelism | Reference-pack inventories and SDK probes are shared. `GlobMatches` still rebuilds the escaped pattern, and property evaluation makes temporary XML documents to preserve item order and origin. Batch document loading and parallel Razor generation need separate measurements. A dependent Razor project needs its dependencies' generated documents first. Generated texts still become workspace documents with their own syntax trees. |
+| Multi-targeted projects and profiles | Identical source text can bind differently by framework, and generated code and analyzer options can differ. The CLI already has explicit `--framework` and `--analysis-profile` choices. Earlier 1,000-work measurements missed findings recovered at 2,500. [Budget comparison](performance-budget-matrix.md) |
+| SARIF | Mapped Razor locations can be computed repeatedly, and fingerprints reopen source files. Both are independent of taint work. Existing smoke tests require method-level budget notifications, so rolling those notifications up would change the reporting contract. |
+
 ## How the main scanner differs
 
 The tool reconstructs SDK inputs by default, without executing custom targets.

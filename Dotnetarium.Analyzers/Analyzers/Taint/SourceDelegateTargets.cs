@@ -20,13 +20,13 @@ namespace Dotnetarium.Analyzers.Taint
     {
         private static readonly ConditionalWeakTable<Compilation, SourceDelegateTargets> Cache = new();
         private readonly Compilation compilation;
-        private readonly Lazy<ImmutableArray<IMethodSymbol>> methods;
+        private readonly Lazy<CandidateIndex> methods;
         private readonly ConcurrentDictionary<IMethodSymbol, TargetScan> targets = new(SymbolEqualityComparer.Default);
 
         private SourceDelegateTargets(Compilation compilation)
         {
             this.compilation = compilation;
-            methods = new Lazy<ImmutableArray<IMethodSymbol>>(Collect, LazyThreadSafetyMode.ExecutionAndPublication);
+            methods = new Lazy<CandidateIndex>(Collect, LazyThreadSafetyMode.ExecutionAndPublication);
         }
 
         internal static SourceDelegateTargets GetOrCreate(Compilation compilation) => Cache.GetValue(compilation, current => new(current));
@@ -45,13 +45,13 @@ namespace Dotnetarium.Analyzers.Taint
                 lock (gate)
                 {
                     if (!completed.IsDefault) return completed;
-                    var candidates = owner.methods.Value;
-                    while (nextCandidate < candidates.Length)
+                    var (exact, adaptable) = owner.methods.Value.GetCandidates(invoke);
+                    while (nextCandidate < exact.Length + adaptable.Length)
                     {
                         // Compatible charges before evaluating the candidate.
                         // Keep its cursor uncommitted on a budget/cancellation
                         // exception; a partial target set is never returned.
-                        var candidate = candidates[nextCandidate];
+                        var candidate = nextCandidate < exact.Length ? exact[nextCandidate] : adaptable[nextCandidate - exact.Length];
                         if (owner.Compatible(candidate, invoke)) matches.Add(candidate);
                         nextCandidate++;
                     }
@@ -66,7 +66,7 @@ namespace Dotnetarium.Analyzers.Taint
             }
         }
 
-        private ImmutableArray<IMethodSymbol> Collect()
+        private CandidateIndex Collect()
         {
             var found = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
             foreach (var tree in compilation.SyntaxTrees)
@@ -88,7 +88,29 @@ namespace Dotnetarium.Analyzers.Taint
                         found.Add(method);
                 }
             }
-            return found.ToImmutableArray();
+            return new CandidateIndex(found);
+        }
+
+        private sealed class CandidateIndex
+        {
+            private const int AdaptableArity = -1;
+            private readonly Dictionary<(bool ReturnsVoid, int Arity), ImmutableArray<IMethodSymbol>> buckets;
+
+            internal CandidateIndex(HashSet<IMethodSymbol> methods)
+            {
+                // Optional and params methods also participated in mismatched
+                // arity queries before indexing. Keep that conservative fallback.
+                buckets = methods.GroupBy(method => (method.ReturnsVoid,
+                        method.Parameters.Any(parameter => parameter.IsOptional || parameter.IsParams)
+                            ? AdaptableArity : method.Parameters.Length))
+                    .ToDictionary(group => group.Key, group => group.ToImmutableArray());
+            }
+
+            internal (ImmutableArray<IMethodSymbol> Exact, ImmutableArray<IMethodSymbol> Adaptable) GetCandidates(IMethodSymbol invoke) =>
+                (GetBucket(invoke.ReturnsVoid, invoke.Parameters.Length), GetBucket(invoke.ReturnsVoid, AdaptableArity));
+
+            private ImmutableArray<IMethodSymbol> GetBucket(bool returnsVoid, int arity) =>
+                buckets.TryGetValue((returnsVoid, arity), out var methods) ? methods : ImmutableArray<IMethodSymbol>.Empty;
         }
 
         private static bool IsPossibleMethodGroup(SyntaxNode node)

@@ -43,7 +43,6 @@ namespace Dotnetarium.Analyzers.Taint
         private readonly TaintedDataSymbolMap<SourceInfo> sources;
         private readonly ConcurrentDictionary<ControlFlowGraph, bool> results = new();
         private readonly ConcurrentDictionary<IMethodSymbol, bool> sourceFreeMethods = new(SymbolEqualityComparer.Default);
-        private readonly ConcurrentDictionary<INamedTypeSymbol, ImmutableArray<SourceInfo>> sourceTypes = new(SymbolEqualityComparer.Default);
         private readonly ConcurrentDictionary<IParameterSymbol, bool> sourceParameters = new(SymbolEqualityComparer.Default);
         private readonly ConcurrentDictionary<ControlFlowGraph, SourceScan> scans = new();
         private readonly ConcurrentDictionary<(SyntaxTree Tree, TextSpan Span), GraphLookup> containingGraphs = new();
@@ -211,7 +210,7 @@ namespace Dotnetarium.Analyzers.Taint
             sourceParameters.GetOrAdd(parameter, candidate => sources.IsSourceParameter(candidate, types));
 
         private bool IsSourceMethod(IMethodSymbol method, ImmutableArray<IArgumentOperation> arguments, bool argumentsKnown) =>
-            sourceTypes.GetOrAdd(method.ContainingType, candidate => sources.GetInfosForType(candidate).ToImmutableArray()).Any(info =>
+            sources.GetInfosForType(method.ContainingType).Any(info =>
                 info.TaintedMethods.Any(model => !argumentsKnown || model.Item1(method.Name, arguments)) ||
                 info.TaintedMethodsNeedsPointsToAnalysis.Any(model => !argumentsKnown || model.Item1(method.Name, arguments)) ||
                 info.TaintedMethodsNeedsValueContentAnalysis.Any(model => !argumentsKnown || model.Item1(method.Name, arguments)));

@@ -44,7 +44,8 @@ namespace Dotnetarium.Config
                             contract.Name == "IConsumer")) consumers.Add(type.OriginalDefinition);
                 }
                 foreach (var syntax in tree.GetRoot().DescendantNodes().OfType<AssignmentExpressionSyntax>())
-                    if (model.GetOperation(syntax) is IEventAssignmentOperation { Adds: true } assignment &&
+                    if (InvocationSyntax.Name(syntax.Left) == "ReceivedAsync" &&
+                        model.GetOperation(syntax) is IEventAssignmentOperation { Adds: true } assignment &&
                         assignment.EventReference is IEventReferenceOperation reference &&
                         reference.Event.Name == "ReceivedAsync" &&
                         reference.Event.ContainingType.ToDisplayString() == "RabbitMQ.Client.Events.AsyncEventingBasicConsumer")

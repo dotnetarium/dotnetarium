@@ -59,7 +59,7 @@ internal static class Program
                 throw new ArgumentException("SARIF output must differ from the local suppression file.");
             using var verifier = options.VerifySecrets ? new ProviderSecretVerifier() : null;
             var configScanner = new ConfigurationFileScanner(report, options.ConfigScope, verifier);
-            var diagnostics = new ConcurrentBag<Diagnostic>(configScanner.Scan(configRoot));
+            var configScan = Task.Run(() => configScanner.Scan(configRoot));
             ScanInputs? loadedInputs = null;
             var loadingStarted = Stopwatch.GetTimestamp();
             progress?.Phase("Loading projects");
@@ -89,6 +89,7 @@ internal static class Program
             }
             finally { report.RecordElapsed("loading", loadingStarted); }
             using var inputs = loadedInputs;
+            var diagnostics = new ConcurrentBag<Diagnostic>(await configScan);
             var projects = inputs?.Projects.ToArray() ?? Array.Empty<Project>();
             if (progress != null && inputs != null)
                 foreach (var project in inputs.Workspace.CurrentSolution.Projects.OrderBy(project => project.Name, StringComparer.Ordinal))

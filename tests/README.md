@@ -8,8 +8,9 @@ There are two suites, both run with PowerShell 7 and the .NET 11 SDK (with .NET 
 ```
 
 **PR** runs all unit tests and the existing package, CLI, loader, suppression,
-credentials, Razor/Blazor, Godot and security-rule regression checks. It keeps
-the .NET 8/10/11 and .NET Standard fixtures. Independent integration groups run
+credentials, Razor/Blazor, Godot and security-rule regression checks. Smoke
+fixtures that run across frameworks cover .NET 8, 10 and 11, with .NET Standard
+coverage in the loader checks. Independent integration groups run
 with a maximum of three jobs at once. The long no-build suite is split into
 core and reference-graph checks; its assertions are unchanged.
 

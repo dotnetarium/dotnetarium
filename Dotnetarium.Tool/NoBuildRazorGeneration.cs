@@ -62,12 +62,11 @@ internal sealed class NoBuildRazorGeneration(ScanReport report)
                 var options = new RazorOptions(project.AnalyzerOptions.AnalyzerConfigOptionsProvider, request, project);
                 GeneratorDriver driver = CSharpGeneratorDriver.Create([generator], files,
                     parseOptions, options);
-                driver = driver.RunGeneratorsAndUpdateCompilation(csharp, out _, out var diagnostics);
-                var notices = diagnostics.Where(value => value.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning).ToArray();
+                var result = driver.RunGenerators(csharp).GetRunResult();
+                var notices = result.Diagnostics.Where(value => value.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning).ToArray();
                 foreach (var diagnostic in notices.Take(20))
                     report.Warn("razor-generation", $"{project.Name}: {diagnostic}");
                 if (notices.Length > 20) report.Warn("razor-generation-summary", $"{project.Name}: {notices.Length} Razor generation diagnostics; the first 20 are shown.");
-                var result = driver.GetRunResult();
                 var generated = result.Results.SelectMany(value => value.GeneratedSources).ToArray();
                 if (result.Results.Any(value => value.Exception != null))
                     report.Warn("razor-generation", $"{project.Name}: Razor generation failed; ordinary C# analysis continues.");
@@ -91,10 +90,11 @@ internal sealed class NoBuildRazorGeneration(ScanReport report)
 
     private async Task<string?> FindSdkAsync(string directory)
     {
-        if (sdkDirectories.TryGetValue(directory, out var cached)) return cached;
+        var scope = FindSdkScope(directory);
+        if (sdkDirectories.TryGetValue(scope, out var cached)) return cached;
         var runtimeRoot = Path.GetFullPath(Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", ".."));
         var host = Path.Combine(runtimeRoot, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
-        if (!File.Exists(host)) return sdkDirectories[directory] = null;
+        if (!File.Exists(host)) return sdkDirectories[scope] = null;
         var start = new ProcessStartInfo(host) { WorkingDirectory = directory, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
         start.ArgumentList.Add("--info");
         start.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en-US";
@@ -110,7 +110,22 @@ internal sealed class NoBuildRazorGeneration(ScanReport report)
         }
         await errors;
         var match = Regex.Match(await output, @"^\s*Base Path:\s*(.+?)\s*$", RegexOptions.Multiline);
-        return sdkDirectories[directory] = process.ExitCode == 0 && match.Success ? match.Groups[1].Value.Trim() : null;
+        return sdkDirectories[scope] = process.ExitCode == 0 && match.Success ? match.Groups[1].Value.Trim() : null;
+    }
+
+    private static string FindSdkScope(string directory)
+    {
+        string? scope = null;
+        for (var current = new DirectoryInfo(directory); current != null; current = current.Parent)
+        {
+            // The host may resolve a linked working directory before looking
+            // for global.json. Use its own probe for that directory.
+            if ((current.Attributes & FileAttributes.ReparsePoint) != 0) return directory;
+            if (scope != null) continue;
+            var globalJson = Path.Combine(current.FullName, "global.json");
+            if (File.Exists(globalJson)) scope = globalJson;
+        }
+        return scope ?? string.Empty;
     }
 
     private static ISourceGenerator LoadGenerator(string path)

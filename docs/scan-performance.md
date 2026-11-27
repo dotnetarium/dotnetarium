@@ -172,6 +172,46 @@ fewer shared component notice. Runtime and individual cutoffs vary across
 bounded scans. Each LANCommander comparison uses one baseline and one final
 coordinator run. Sarifintown and LANCommander retain degraded input notices.
 
+### Combined end-to-end evaluation
+
+The combined build at `5b6047f` includes shared taint discovery (`0ff4d5b`),
+exception-flow reuse (`125945e`), and coordinated taint dispatch (`5b6047f`).
+It was compared with the `v2.9.0` baseline at `ab08234`.
+
+The release CI suite passed all 1,717 analyzer tests and five integration
+groups. It packed both NuGet packages, installed the freshly built CLI, and
+checked the packaged analyzers and CLI on .NET 8, 10, and 11. Release checks
+included taint precision and threat modeling in both CLI loading modes.
+
+The timed scans used the no-build loader on the same restored inputs as above,
+with Release, net10.0, and remote and local sources. Each application and
+profile ran twice per build on Linux with SDK 11.0.100 and a four-CPU quota.
+Scans ran sequentially in fresh processes with the build order reversed for
+the second pair. Cutoffs count bounded stops reported in SARIF.
+
+| Application | Profile | Median wall seconds, baseline → combined | Wall time reduction | Cutoffs, baseline → combined | Findings on each build |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Vulnerable app | Fast | 16.9 → 14.7 | 13.4% | 75 → 74 | 33 |
+| Vulnerable app | Full | 17.5 → 15.1 | 13.7% | 43 → 42 | 42 |
+| Sarifintown | Fast | 9.7 → 7.7 | 20.5% | 243 → 243 | 0 |
+| Sarifintown | Full | 9.9 → 7.6 | 23.7% | 221 → 221 | 0 |
+| LANCommander | Fast | 70.0 → 61.4 | 12.3% | 1,459–1,462 → 1,459–1,466 | 14 |
+| LANCommander | Full | 74.9 → 63.0 | 15.9% | 1,269–1,311 → 1,262–1,276 | 15 |
+
+On LANCommander, both combined runs beat both baseline runs for each profile.
+Median peak scanner memory was 1,464 → 1,534 MiB in fast and 1,615 → 1,574 MiB
+in full. The median full-profile cutoff count fell by 21, with overlapping
+ranges. The vulnerable app emitted one fewer component-state budget notice
+in each profile.
+
+All 24 scans completed without analyzer failures. Finding rule IDs, locations,
+and messages matched in every pair, including multiple sources at the same
+sink. The fast pairs also matched complete SARIF results. In full, some
+vulnerable-app flows added or dropped an intermediate Razor callback step
+with the same source and sink. One LANCommander flow selected the adjacent
+read of the same archive entry property. Sarifintown and LANCommander reported
+degraded inputs on both builds.
+
 ### Remaining candidates
 
 | Candidate | Evidence and constraints |

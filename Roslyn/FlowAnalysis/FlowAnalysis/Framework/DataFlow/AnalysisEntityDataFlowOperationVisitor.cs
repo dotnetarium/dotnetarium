@@ -854,7 +854,7 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
                 }
 
                 yield return operation;
-                foreach (var child in operation.Children)
+                foreach (var child in operation.ChildOperations)
                 {
                     if (child is not null)
                     {

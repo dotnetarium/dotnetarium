@@ -48,7 +48,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 var child = result.GetInterproceduralResults()
                     .Where(entry => entry.Value is TaintedDataAnalysisResult nested &&
                         nested.TaintedDataSourceSinks.Any(candidate =>
-                            candidate.Sink.Equals(finding.Sink) && candidate.SourceOrigins.Contains(origin)))
+                            candidate.Kind == finding.Kind && candidate.Sink.Equals(finding.Sink) && candidate.SourceOrigins.Contains(origin)))
                     .OrderBy(entry => entry.Key.Syntax.SyntaxTree?.FilePath)
                     .ThenBy(entry => entry.Key.Syntax.SpanStart)
                     .FirstOrDefault();

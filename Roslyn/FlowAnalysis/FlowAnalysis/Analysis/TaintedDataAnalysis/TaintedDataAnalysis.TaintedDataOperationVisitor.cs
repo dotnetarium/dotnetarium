@@ -28,28 +28,22 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
             private BufferAliasAnalysis? _bufferAliases;
 
             /// <summary>
-            /// Mapping of a tainted data sinks to their originating sources.
+            /// Source origins are scoped to the sink and the rule that matched it.
             /// </summary>
-            /// <remarks>Keys are <see cref="SymbolAccess"/> sinks where the tainted data entered, values are <see cref="SymbolAccess"/>s where the tainted data originated from.</remarks>
-            private Dictionary<SymbolAccess, (ImmutableHashSet<SinkKind>.Builder SinkKinds, ImmutableHashSet<SymbolAccess>.Builder SourceOrigins)> TaintedSourcesBySink { get; }
+            private readonly Dictionary<(SymbolAccess Sink, SinkKind Kind), ImmutableHashSet<SymbolAccess>.Builder> _taintedSourcesBySink = new();
 
             public TaintedDataOperationVisitor(TaintedDataAnalysisDomain taintedDataAnalysisDomain, TaintedDataAnalysisContext analysisContext)
                 : base(analysisContext)
             {
                 _taintedDataAnalysisDomain = taintedDataAnalysisDomain;
-                this.TaintedSourcesBySink = new Dictionary<SymbolAccess, (ImmutableHashSet<SinkKind>.Builder SinkKinds, ImmutableHashSet<SymbolAccess>.Builder SourceOrigins)>();
             }
 
             public ImmutableArray<TaintedDataSourceSink> GetTaintedDataSourceSinkEntries()
             {
                 ImmutableArray<TaintedDataSourceSink>.Builder builder = ImmutableArray.CreateBuilder<TaintedDataSourceSink>();
-                foreach (KeyValuePair<SymbolAccess, (ImmutableHashSet<SinkKind>.Builder SinkKinds, ImmutableHashSet<SymbolAccess>.Builder SourceOrigins)> kvp in this.TaintedSourcesBySink)
+                foreach (var entry in _taintedSourcesBySink)
                 {
-                    builder.Add(
-                        new TaintedDataSourceSink(
-                            kvp.Key,
-                            kvp.Value.SinkKinds.ToImmutable(),
-                            kvp.Value.SourceOrigins.ToImmutable()));
+                    builder.Add(new TaintedDataSourceSink(entry.Key.Sink, entry.Key.Kind, entry.Value.ToImmutable()));
                 }
 
                 return builder.ToImmutableArray();
@@ -875,19 +869,18 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 IEnumerable<SymbolAccess> sources)
             {
                 SymbolAccess sink = new SymbolAccess(sinkSymbol, sinkLocation, sinkSymbol.ContainingSymbol);
-                this.TrackTaintedDataEnteringSink(sink, sinkKinds, sources);
+                foreach (var kind in sinkKinds) TrackTaintedDataEnteringSink(sink, kind, sources);
             }
 
-            private void TrackTaintedDataEnteringSink(SymbolAccess sink, IEnumerable<SinkKind> sinkKinds, IEnumerable<SymbolAccess> sources)
+            private void TrackTaintedDataEnteringSink(SymbolAccess sink, SinkKind kind, IEnumerable<SymbolAccess> sources)
             {
-                if (!this.TaintedSourcesBySink.TryGetValue(sink, out (ImmutableHashSet<SinkKind>.Builder SinkKinds, ImmutableHashSet<SymbolAccess>.Builder SourceOrigins) data))
+                if (!_taintedSourcesBySink.TryGetValue((sink, kind), out var origins))
                 {
-                    data = (ImmutableHashSet.CreateBuilder<SinkKind>(), ImmutableHashSet.CreateBuilder<SymbolAccess>());
-                    this.TaintedSourcesBySink.Add(sink, data);
+                    origins = ImmutableHashSet.CreateBuilder<SymbolAccess>();
+                    _taintedSourcesBySink.Add((sink, kind), origins);
                 }
 
-                data.SinkKinds.UnionWith(sinkKinds);
-                data.SourceOrigins.UnionWith(sources);
+                origins.UnionWith(sources);
             }
 
             /// <summary>
@@ -948,16 +941,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 {
                     foreach (TaintedDataSourceSink sourceSink in subResult.TaintedDataSourceSinks)
                     {
-                        if (!this.TaintedSourcesBySink.TryGetValue(
-                                sourceSink.Sink,
-                                out (ImmutableHashSet<SinkKind>.Builder SinkKinds, ImmutableHashSet<SymbolAccess>.Builder SourceOrigins) data))
-                        {
-                            data = (ImmutableHashSet.CreateBuilder<SinkKind>(), ImmutableHashSet.CreateBuilder<SymbolAccess>());
-                            this.TaintedSourcesBySink.Add(sourceSink.Sink, data);
-                        }
-
-                        data.SinkKinds.UnionWith(sourceSink.SinkKinds);
-                        data.SourceOrigins.UnionWith(sourceSink.SourceOrigins);
+                        TrackTaintedDataEnteringSink(sourceSink.Sink, sourceSink.Kind, sourceSink.SourceOrigins);
                     }
                 }
             }

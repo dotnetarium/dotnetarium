@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the MIT license.  See License.txt in the project root for license information.
 
+using System.Collections.Generic;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
@@ -45,7 +46,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 taintedSanitizerInfos, taintedSinkInfos, interproceduralAnalysisConfig, cacheResult);
         }
 
-        private static TaintedDataAnalysisResult? TryGetOrComputeResult(
+        internal static TaintedDataAnalysisResult? TryGetOrComputeResult(
             ControlFlowGraph cfg,
             Compilation compilation,
             ISymbol containingMethod,
@@ -54,7 +55,8 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
             TaintedDataSymbolMap<SanitizerInfo> taintedSanitizerInfos,
             TaintedDataSymbolMap<SinkInfo> taintedSinkInfos,
             InterproceduralAnalysisConfiguration interproceduralAnalysisConfig,
-            bool cacheResult)
+            bool cacheResult = true,
+            HashSet<PointsToAnalysisResult>? retainedPointsTo = null)
         {
             if (cfg == null)
             {
@@ -102,6 +104,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 }
             }
 
+            if (pointsToAnalysisResult != null) retainedPointsTo?.Add(pointsToAnalysisResult);
             TaintedDataAnalysisContext analysisContext = TaintedDataAnalysisContext.Create(
                 TaintedDataAbstractValueDomain.Default,
                 wellKnownTypeProvider,

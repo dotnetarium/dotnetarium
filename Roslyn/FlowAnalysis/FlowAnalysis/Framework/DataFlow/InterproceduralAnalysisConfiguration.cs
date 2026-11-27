@@ -49,7 +49,7 @@ namespace Microsoft.CodeAnalysis.FlowAnalysis.DataFlow
         => Create(analyzerOptions, rule, cfg.OriginalOperation.Syntax.SyntaxTree, compilation, defaultInterproceduralAnalysisKind,
                 cancellationToken, defaultMaxInterproceduralMethodCallChain, defaultMaxInterproceduralLambdaOrLocalFunctionCallChain);
 
-        private static InterproceduralAnalysisConfiguration Create(
+        internal static InterproceduralAnalysisConfiguration Create(
             AnalyzerOptions analyzerOptions,
             DiagnosticDescriptor rule,
             SyntaxTree tree,

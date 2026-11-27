@@ -505,6 +505,7 @@ namespace Dotnetarium.Config
             // Refresh CFG identity too, so nested interprocedural caches cannot
             // reuse results obtained against an earlier component state.
             if (pendingChanges.Count == 0) return;
+            configuration.InvalidateSharedSourceProofs(kind);
             var changed = new HashSet<ISymbol>(pendingChanges, SymbolEqualityComparer.Default);
             pendingChanges.Clear();
             bool Affected(IMethodSymbol method)

@@ -162,9 +162,9 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
         protected override bool ComputeEqualsByHashCodeParts(AbstractDataFlowAnalysisContext<TaintedDataAnalysisData, TaintedDataAnalysisContext, TaintedDataAnalysisResult, TaintedDataAbstractValue> obj)
         {
             var other = (TaintedDataAnalysisContext)obj;
-            return SourceInfos.GetHashCode() == other.SourceInfos.GetHashCode()
-                && SanitizerInfos.GetHashCode() == other.SanitizerInfos.GetHashCode()
-                && SinkInfos.GetHashCode() == other.SinkInfos.GetHashCode();
+            return SourceInfos.Equals(other.SourceInfos)
+                && SanitizerInfos.Equals(other.SanitizerInfos)
+                && SinkInfos.Equals(other.SinkInfos);
         }
     }
 }

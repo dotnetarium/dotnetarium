@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using Analyzer.Utilities;
 using Analyzer.Utilities.Extensions;
 using Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis;
@@ -11,6 +12,8 @@ using Analyzer.Utilities.PooledObjects;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.FlowAnalysis;
+using Microsoft.CodeAnalysis.FlowAnalysis.DataFlow;
 using Microsoft.CodeAnalysis.FlowAnalysis.DataFlow.ValueContentAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using Dotnetarium.Analyzers.Taint;
@@ -62,6 +65,9 @@ namespace Dotnetarium.Config
         private readonly ConcurrentDictionary<SinkKind, TaintedDataSymbolMap<SinkInfo>> sinkMaps = new();
         private readonly ConcurrentDictionary<SinkKind, SinkReachability> sinkReachability = new();
         private readonly ConcurrentDictionary<SinkKind, SourceReachability> sourceReachability = new();
+        private readonly Dictionary<SinkKind, SinkKind> equivalentProfiles = new();
+        private readonly HashSet<SinkKind> sharedProfiles = new();
+        private readonly ConcurrentDictionary<(DiagnosticDescriptor Rule, SyntaxTree Tree), InterproceduralAnalysisConfiguration> flowOptions = new();
         internal TaintAnalysisSettings AnalysisSettings { get; }
 
         public TaintConfiguration(ConfigData model, Compilation compilation, AnalyzerOptions options)
@@ -96,20 +102,73 @@ namespace Dotnetarium.Config
             }
         }
 
+        // Called at compilation start, before any rule resolves its maps. Equal
+        // definitions must also use equal flow options in every tree: component
+        // and binder prerequisites can analyze methods outside the root's tree.
+        internal void ShareEquivalentProfiles(IEnumerable<(SinkKind Kind, DiagnosticDescriptor Rule)> rules, CancellationToken cancellationToken)
+        {
+            var sources = (model.TaintSources ?? new List<TaintSource>()).Where(source =>
+                Includes(source.Scope) && types.TryGetOrCreateTypeByMetadataName(source.Type, out _)).ToArray();
+            var sanitizers = (model.Sanitizers ?? new List<Sanitizer>()).Where(sanitizer =>
+                types.TryGetOrCreateTypeByMetadataName(sanitizer.Type, out _)).ToArray();
+            var profiles = new List<(SinkKind Kind, DiagnosticDescriptor Rule, TaintSource[] Sources, Sanitizer[] Sanitizers)>();
+            foreach (var (kind, rule) in rules)
+            {
+                // XSS has a distinct component execution model and stored files.
+                // SSRF also updates destination state using its own sink map.
+                if ((TaintType)(int)kind is TaintType.CrossSiteScripting or TaintType.ServerSideRequestForgery) continue;
+                var ruleSources = sources.Where(source => Applies(source.TaintTypes, kind)).ToArray();
+                var ruleSanitizers = sanitizers.Where(sanitizer => Applies(sanitizer.TaintTypes, kind)).ToArray();
+                var same = profiles.FindIndex(profile => profile.Sources.SequenceEqual(ruleSources) &&
+                    profile.Sanitizers.SequenceEqual(ruleSanitizers) &&
+                    (profile.Rule == rule || compilation.SyntaxTrees.All(tree =>
+                        GetFlowOptions(profile.Rule, tree, cancellationToken) == GetFlowOptions(rule, tree, cancellationToken))));
+                if (same < 0) profiles.Add((kind, rule, ruleSources, ruleSanitizers));
+                else
+                {
+                    equivalentProfiles.Add(kind, profiles[same].Kind);
+                    sharedProfiles.Add(profiles[same].Kind);
+                }
+            }
+        }
+
+        internal SinkKind GetModelProfile(SinkKind kind) => equivalentProfiles.TryGetValue(kind, out var profile) ? profile : kind;
+
+        internal InterproceduralAnalysisConfiguration GetFlowOptions(DiagnosticDescriptor rule, SyntaxTree tree, CancellationToken cancellationToken) =>
+            flowOptions.TryGetValue((rule, tree), out var existing) ? existing :
+            flowOptions.GetOrAdd((rule, tree), key => InterproceduralAnalysisConfiguration.Create(options, key.Rule, key.Tree,
+                compilation, InterproceduralAnalysisKind.ContextSensitive, cancellationToken, AnalysisSettings.MethodDepth, AnalysisSettings.LambdaDepth));
+
         public TaintedDataSymbolMap<SourceInfo> GetSourceSymbolMap(SinkKind kind) =>
-            sourceMaps.GetOrAdd(kind, current => new TaintedDataSymbolMap<SourceInfo>(types, CompileSources(current)));
+            sourceMaps.GetOrAdd(GetModelProfile(kind), current => new TaintedDataSymbolMap<SourceInfo>(types, CompileSources(current)));
 
         public TaintedDataSymbolMap<SanitizerInfo> GetSanitizerSymbolMap(SinkKind kind) =>
-            sanitizerMaps.GetOrAdd(kind, current => new TaintedDataSymbolMap<SanitizerInfo>(types, CompileSanitizers(current)));
+            sanitizerMaps.GetOrAdd(GetModelProfile(kind), current => new TaintedDataSymbolMap<SanitizerInfo>(types, CompileSanitizers(current)));
 
         public TaintedDataSymbolMap<SinkInfo> GetSinkSymbolMap(SinkKind kind) =>
             sinkMaps.GetOrAdd(kind, current => new TaintedDataSymbolMap<SinkInfo>(types, CompileSinks(current)));
+
+        internal TaintedDataSymbolMap<SinkInfo> CombineSinkSymbolMaps(IEnumerable<SinkKind> kinds) =>
+            new(types, kinds.SelectMany(CompileSinks));
 
         internal SinkReachability GetSinkReachability(SinkKind kind) =>
             sinkReachability.GetOrAdd(kind, current => new SinkReachability(compilation, GetSinkSymbolMap(current)));
 
         internal SourceReachability GetSourceReachability(SinkKind kind) =>
-            sourceReachability.GetOrAdd(kind, current => new SourceReachability(compilation, GetSourceSymbolMap(current)));
+            sourceReachability.GetOrAdd(GetModelProfile(kind), current => new SourceReachability(compilation, GetSourceSymbolMap(current)));
+
+        internal bool MayReachSource(SinkKind kind, ControlFlowGraph graph, CancellationToken cancellationToken)
+        {
+            var checker = GetSourceReachability(kind);
+            // A component summary may add a new origin during this proof.
+            // Retain eligibility if its negative result predates the current state.
+            return checker.MayReachSource(graph, cancellationToken) || !ReferenceEquals(checker, GetSourceReachability(kind));
+        }
+
+        internal void InvalidateSharedSourceProofs(SinkKind kind)
+        {
+            if (sharedProfiles.Contains(kind)) sourceReachability.TryRemove(kind, out _);
+        }
 
         private static bool Applies(HashSet<TaintType> contexts, SinkKind kind) =>
             contexts == null || contexts.Any(context => (int)context == (int)kind);
@@ -255,7 +314,7 @@ namespace Dotnetarium.Config
 
         private ComponentStateInputModel ComponentInputs(SinkKind kind) => componentInputs.GetOrAdd(kind,
             current => new Lazy<ComponentStateInputModel>(() => new ComponentStateInputModel(compilation, options, this, current, componentExecution))).Value;
-        internal bool HasIncompleteComponentState(SinkKind kind) => componentInputs.TryGetValue(kind, out var model) &&
+        internal bool HasIncompleteComponentState(SinkKind kind) => componentInputs.TryGetValue(GetModelProfile(kind), out var model) &&
             model.IsValueCreated && model.Value.HasIncompleteAnalysis;
 
         private TaintedDataAbstractValue? GetComponentPropertyValue(IPropertyReferenceOperation property, SinkKind kind)

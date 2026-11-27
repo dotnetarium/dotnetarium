@@ -126,12 +126,57 @@ pass. Earlier timings show that runtime and cutoff counts vary between runs.
 The new regression covers tainted state flowing through a filtered catch, an
 explicit `finally`, and source-defined disposal. All 1,711 analyzer tests passed.
 
+### Coordinated taint dispatch
+
+Roslyn discovers one taint analyzer for the built-in rules. The individual rule
+types remain available to hosts that instantiate analyzers directly. The
+coordinator gets the root CFG once and keeps completed points-to results alive
+for the duration of the root. Cache hits replay the recorded analysis work.
+
+Rules can share a profile when their resolved source and sanitizer definitions
+and effective flow settings agree across the compilation. XSS has its own
+browser execution and file-persistence model. SSRF has its own destination-state
+transfers. When a shared component summary changes, the coordinator invalidates
+that profile's source reachability proofs.
+
+Each rule checks sink eligibility and analyzes relevant standalone callbacks
+under its own budget. Rules with matching source profiles and callback costs run
+one parent dataflow pass. Results retain the rule for each sink and source
+origin, including interprocedural witnesses. Each reporting rule receives its
+own budget with the analysis work already charged. A grouped stop is reported
+for each affected rule. An incomplete shared component model emits one notice
+with the profile's rule IDs. Grouped taint results are scoped to that pass so
+later passes can observe newly learned component state.
+
+All 1,717 analyzer tests passed, including comparison with standalone rules,
+custom model separation, per-rule EditorConfig settings, and budget notices.
+The packaged Razor smoke test, CLI Razor tests for .NET 8, 10, and 11, and CLI
+and package taint-precision fixtures passed.
+
+Sequential no-build Release/net10.0 checks used the same restored inputs,
+remote and local sources, and `125945e` as the baseline. The table uses the
+final coordinator build. Fast timings on the smaller apps use the paired
+recheck. The candidate-only fast runs on those apps took 16.98 and 9.19 seconds
+respectively, so their turnaround varies between runs.
+
+| Application | Fast wall seconds, baseline → coordinator | Full wall seconds | Fast cutoffs | Full cutoffs | Findings, fast / full |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulnerable app | 14.29 → 14.81 | 14.97 → 14.79 | 75 → 74 | 43 → 42 | 33 / 42 |
+| Sarifintown | 7.43 → 6.77 | 8.03 → 7.77 | 243 → 243 | 221 → 221 | 0 / 0 |
+| LANCommander | 61.76 → 57.12 | 72.87 → 60.46 | 1,459 → 1,438 | 1,284 → 1,303 | 14 / 15 |
+
+The final scans matched baseline SARIF findings and code flows in each cell.
+LANCommander's full-profile project stage took 62.10 → 48.79 wall seconds.
+The vulnerable app's fast work and depth totals match the baseline, with one
+fewer shared component notice. Runtime and individual cutoffs vary across
+bounded scans. Each LANCommander comparison uses one baseline and one final
+coordinator run. Sarifintown and LANCommander retain degraded input notices.
+
 ### Remaining candidates
 
 | Candidate | Evidence and constraints |
 | --- | --- |
-| Multi-rule dispatch | Eleven analyzer types register independent actions. The built-in JSON entries align for SQL, command, XPath, dynamic code, XML entity and deserialization. Compiled sources also close over binder and component summaries. A coordinator needs equal resolved models, equal effective per-rule EditorConfig flow options, and independent reporting and budget accounting. SSRF destination tracking writes to the taint state. Combined sink reporting also needs to associate each origin with its rule. |
-| Points-to reuse across rules | Completed root results already share a weak cache with a 32-result recent window. Reuse replays logical work so warm caches preserve per-rule budgets. Measure recomputation after eviction before committing to a coordinator for this reason. |
+| Callback dataflow | The coordinator groups parent passes after measuring each rule's standalone callback work. Sharing callback passes would need compatible eligibility, remaining work, and source-model state at the callback. |
 | Completed taint invocations | The framework restores exit state, returns, exceptions, and nested results. The taint visitor merges callee sink records and keeps file-system paths in analysis entities. Component source providers can gain origins during the parent analysis, outside the cached invocation input. Validate those dependencies as well as receiver, ref/out and capture changes before enabling reuse. |
 | Additional reachability pruning | A sink type-name scan can miss interface dispatch, aliases and implicit calls such as disposal. Delegate discovery still binds possible method groups, while the arity index limits later matching. Source proofs that consult binder or component values can change on a retry. |
 | Compiler diagnostics and memory | `GetAllDiagnosticsAsync` also requests method-body compiler errors. Keep that coverage when testing warning suppression or nullable-flow changes, and account for projects that promote compiler warnings to errors. Project references keep parts of the workspace compilation graph alive. Projecting diagnostics would reduce retained locations but would need a separate compilation-lifetime change to address the project graph. |

@@ -3,11 +3,9 @@ using System.IO;
 using System.Linq;
 using Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace Dotnetarium.Analyzers.Taint
 {
-    [DiagnosticAnalyzer(LanguageNames.CSharp)]
     public sealed class BinaryFormatterTaintAnalyzer : TaintAnalyzer
     {
         protected override SinkKind SinkKind => (SinkKind)(int)TaintType.UnsafeDeserialization;

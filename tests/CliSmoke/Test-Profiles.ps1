@@ -29,7 +29,7 @@ public static class Flows {
     static void Hop8(string command) => Process.Start(command);
 }
 '@ | Set-Content -LiteralPath (Join-Path $profileRoot 'Flows.cs')
-foreach ($framework in @('net8.0', 'net10.0')) {
+foreach ($framework in @('net8.0', 'net10.0', 'net11.0')) {
     @"
 <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>$framework</TargetFramework></PropertyGroup>
 <ItemGroup><PackageReference Include="Dotnetarium.Analyzers" Version="$analyzerVersion" /></ItemGroup></Project>
@@ -114,4 +114,4 @@ foreach ($framework in @('net8.0', 'net10.0')) {
 }
 & $tool $profileProject --analysis-profile invalid *> $null
 if ($LASTEXITCODE -ne 2) { throw 'Invalid CLI profile was accepted.' }
-'PASS analysis profiles: fast/full/max through package and CLI, bounded summaries and safe deeper helpers on .NET 8/10'
+'PASS analysis profiles: fast/full/max through package and CLI, bounded summaries and safe deeper helpers on .NET 8/10/11'

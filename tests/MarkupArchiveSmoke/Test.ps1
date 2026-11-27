@@ -20,7 +20,7 @@ $config = Join-Path $scratch 'NuGet.Config'
 </packageSourceMapping>
 </configuration>
 "@ | Set-Content -LiteralPath $config -Encoding utf8
-foreach ($framework in @('net8.0', 'net10.0')) {
+foreach ($framework in @('net8.0', 'net10.0', 'net11.0')) {
     $projectRoot = Join-Path $scratch $framework
     New-Item -ItemType Directory -Path $projectRoot | Out-Null
     $project = Join-Path $projectRoot 'Markup.csproj'

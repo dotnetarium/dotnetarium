@@ -188,7 +188,7 @@ dotnet_diagnostic.DNA0022.severity = none
 [*.cs]
 dotnet_diagnostic.DNA0009.severity = none
 '@ | Set-Content (Join-Path $scratch '.editorconfig')
-foreach ($framework in @('net8.0', 'net10.0')) {
+foreach ($framework in @('net8.0', 'net10.0', 'net11.0')) {
     Set-Content $projectFile ($originalProject.Replace('net10.0', $framework))
     & dotnet build $projectFile -c Release -v quiet -p:ErrorLog="$scratch/suppressed-$framework.sarif,version=2.1" *> (Join-Path $scratch "suppressed-$framework.log")
     if ($LASTEXITCODE -ne 0) { throw "Suppressed package build failed: $framework" }

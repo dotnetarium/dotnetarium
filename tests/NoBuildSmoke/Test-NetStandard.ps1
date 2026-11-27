@@ -1,6 +1,6 @@
 # Real reference contracts, compatible source edges and taint across
 # net8/net10 -> Standard 2.1 -> Standard 2.0, without application emission.
-foreach ($framework in @('net8.0', 'net10.0')) {
+foreach ($framework in @('net8.0', 'net10.0', 'net11.0')) {
     $standard = Join-Path $scratch "standard-$framework"
     foreach ($name in @('App', 'Bridge', 'Data')) {
         New-Item -ItemType Directory -Path (Join-Path $standard $name) -Force | Out-Null

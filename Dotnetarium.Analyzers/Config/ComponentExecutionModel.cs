@@ -78,7 +78,7 @@ namespace Dotnetarium.Config
             if (!seen.Add(type) || seen.Count > 128) return Mode.Unknown;
             foreach (var attribute in type.GetAttributes().Select(value => value.AttributeClass).OfType<INamedTypeSymbol>())
             {
-                if (!DerivesFrom(attribute, "Microsoft.AspNetCore.Components.RenderModeAttribute")) continue;
+                if (!DerivesFrom(attribute, "RenderModeAttribute", "Microsoft.AspNetCore.Components.RenderModeAttribute")) continue;
                 foreach (var syntax in ModeSyntax(attribute))
                 {
                     var model = compilation.GetSemanticModel(syntax.SyntaxTree);
@@ -157,11 +157,13 @@ namespace Dotnetarium.Config
             return result;
         }
 
-        internal static bool IsComponent(INamedTypeSymbol type) => DerivesFrom(type, "Microsoft.AspNetCore.Components.ComponentBase");
-        private static bool DerivesFrom(INamedTypeSymbol type, string name)
+        internal static bool IsComponent(INamedTypeSymbol? type) =>
+            DerivesFrom(type, "ComponentBase", "Microsoft.AspNetCore.Components.ComponentBase");
+
+        private static bool DerivesFrom(INamedTypeSymbol? type, string name, string qualifiedName)
         {
             for (var current = type; current != null; current = current.BaseType)
-                if (current.ToDisplayString() == name) return true;
+                if (current.Name == name && current.ToDisplayString() == qualifiedName) return true;
             return false;
         }
     }

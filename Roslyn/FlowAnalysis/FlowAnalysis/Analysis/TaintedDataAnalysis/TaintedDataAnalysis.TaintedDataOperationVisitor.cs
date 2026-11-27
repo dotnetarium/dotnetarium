@@ -1,29 +1,29 @@
 // Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the MIT license.  See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Analyzer.Utilities.Extensions;
 using Analyzer.Utilities.PooledObjects;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.FlowAnalysis.DataFlow;
 using Microsoft.CodeAnalysis.FlowAnalysis.DataFlow.PointsToAnalysis;
-using Microsoft.CodeAnalysis.FlowAnalysis.DataFlow.ValueContentAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
 {
-    using ValueContentAnalysisResult = DataFlowAnalysisResult<ValueContentBlockAnalysisResult, ValueContentAbstractValue>;
-
     internal partial class TaintedDataAnalysis
     {
         private sealed class TaintedDataOperationVisitor : AnalysisEntityDataFlowOperationVisitor<TaintedDataAnalysisData, TaintedDataAnalysisContext, TaintedDataAnalysisResult, TaintedDataAbstractValue>
         {
+            private static readonly ConditionalWeakTable<Compilation, ConcurrentDictionary<IFieldSymbol, Lazy<bool>>> s_constructorInjectedFields = new();
             private readonly TaintedDataAnalysisDomain _taintedDataAnalysisDomain;
             private BufferAliasAnalysis? _bufferAliases;
 
@@ -444,8 +444,8 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
 
                 // Filtering does not copy predicate inputs into a row. Projection
                 // does copy the selector's returned payload, including captures.
-                if (method.ContainingType.ToDisplayString() is "System.Linq.Enumerable" or "System.Linq.Queryable" &&
-                    method.Name == "Select")
+                if (method.Name == "Select" && method.ContainingType.Name is "Enumerable" or "Queryable" &&
+                    method.ContainingType.ToDisplayString() is "System.Linq.Enumerable" or "System.Linq.Queryable")
                 {
                     foreach (var selector in visitedArguments.Where(input => input.Parameter?.Name == "selector"))
                         foreach (var lambda in selector.Value.DescendantsAndSelf().OfType<IFlowAnonymousFunctionOperation>())
@@ -456,37 +456,27 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 PooledHashSet<string>? taintedTargets = null;
                 PooledHashSet<(string, string)>? taintedParameterPairs = null;
                 PooledHashSet<(string, string)>? sanitizedParameterPairs = null;
-                PooledHashSet<string>? taintedParameterNamesCached = null;
+
+                bool IsTaintedParameter(string name)
+                {
+                    if (name == TaintedTargetValue.This && visitedInstance != null &&
+                        GetCachedAbstractValue(visitedInstance).Kind == TaintedDataAbstractValueKind.Tainted)
+                        return true;
+                    foreach (var input in visitedArguments)
+                        if (input.Parameter?.Name == name && GetCachedAbstractValue(input).Kind == TaintedDataAbstractValueKind.Tainted)
+                            return true;
+                    return false;
+                }
+
                 try
                 {
-                    IEnumerable<string> GetTaintedParameterNames()
-                    {
-                        IEnumerable<string> taintedParameterNames = visitedArguments
-                                .Where(s => this.GetCachedAbstractValue(s).Kind == TaintedDataAbstractValueKind.Tainted)
-                                .Select(s => s.Parameter.Name);
-
-                        if (visitedInstance != null && this.GetCachedAbstractValue(visitedInstance).Kind == TaintedDataAbstractValueKind.Tainted)
-                        {
-                            taintedParameterNames = taintedParameterNames.Concat(TaintedTargetValue.This);
-                        }
-
-                        return taintedParameterNames;
-                    }
-
-                    taintedParameterNamesCached = PooledHashSet<string>.GetInstance();
-                    taintedParameterNamesCached.UnionWith(GetTaintedParameterNames());
-
-                    var valueContentFactory = new Lazy<(PointsToAnalysisResult?, ValueContentAnalysisResult?)>(() => (DataFlowAnalysisContext.PointsToAnalysisResult, DataFlowAnalysisContext.ValueContentAnalysisResult));
-
                     if (this.DataFlowAnalysisContext.SourceInfos.IsSourceMethod(
                         method,
                         visitedArguments,
-                        new Lazy<PointsToAnalysisResult?>(() => DataFlowAnalysisContext.PointsToAnalysisResult),
-                        valueContentFactory,
+                        DataFlowAnalysisContext.PointsToAnalysisResult,
+                        DataFlowAnalysisContext.ValueContentAnalysisResult,
                         out taintedTargets))
                     {
-                        bool rebuildTaintedParameterNames = false;
-
                         foreach (string taintedTarget in taintedTargets)
                         {
                             if (taintedTarget != TaintedTargetValue.Return)
@@ -494,7 +484,6 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                                 IArgumentOperation argumentOperation = visitedArguments.FirstOrDefault(o => o.Parameter.Name == taintedTarget);
                                 if (argumentOperation != null)
                                 {
-                                    rebuildTaintedParameterNames = true;
                                     this.CacheAbstractValue(argumentOperation, TaintedDataAbstractValue.CreateTainted(argumentOperation.Parameter, argumentOperation.Syntax, method));
                                 }
                                 else
@@ -507,18 +496,12 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                                 result = TaintedDataAbstractValue.CreateTainted(method, originalOperation.Syntax, this.OwningSymbol);
                             }
                         }
-
-                        if (rebuildTaintedParameterNames)
-                        {
-                            taintedParameterNamesCached.Clear();
-                            taintedParameterNamesCached.UnionWith(GetTaintedParameterNames());
-                        }
                     }
 
                     if (this.DataFlowAnalysisContext.SourceInfos.IsSourceTransferMethod(
                         method,
                         visitedArguments,
-                        taintedParameterNamesCached,
+                        IsTaintedParameter,
                         out taintedParameterPairs))
                     {
                         foreach ((string ifTaintedParameter, string thenTaintedTarget) in taintedParameterPairs)
@@ -557,8 +540,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                         method,
                         visitedInstance?.Type as INamedTypeSymbol,
                         visitedArguments,
-                        taintedParameterNamesCached,
-                        valueContentFactory,
+                        IsTaintedParameter,
                         out sanitizedParameterPairs))
                     {
                         if (sanitizedParameterPairs.Count == 0)
@@ -595,7 +577,6 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                     taintedTargets?.Dispose();
                     taintedParameterPairs?.Dispose();
                     sanitizedParameterPairs?.Dispose();
-                    taintedParameterNamesCached?.Dispose();
                 }
 
                 if (destinationState != null)
@@ -697,11 +678,18 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                     return false;
                 }
 
-                var owner = fieldReference.Field.ContainingType;
+                var compilation = WellKnownTypeProvider.Compilation;
+                var fields = s_constructorInjectedFields.GetValue(compilation, _ => new(SymbolEqualityComparer.Default));
+                return fields.GetOrAdd(fieldReference.Field, field => new Lazy<bool>(() => IsConstructorInjectedField(compilation, field))).Value;
+            }
+
+            private static bool IsConstructorInjectedField(Compilation compilation, IFieldSymbol field)
+            {
+                var owner = field.ContainingType;
                 var isController = false;
                 for (var baseType = owner; baseType != null; baseType = baseType.BaseType)
                 {
-                    if (baseType.ToDisplayString() == "Microsoft.AspNetCore.Mvc.ControllerBase")
+                    if (baseType.Name == "ControllerBase" && baseType.ToDisplayString() == "Microsoft.AspNetCore.Mvc.ControllerBase")
                     {
                         isController = true;
                         break;
@@ -720,22 +708,22 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                     // A base controller may be declared in a referenced source
                     // project. Do not assume a constructor-injection refinement
                     // without a semantic model owned by this compilation.
-                    if (!WellKnownTypeProvider.Compilation.ContainsSyntaxTree(syntax.SyntaxTree))
+                    if (!compilation.ContainsSyntaxTree(syntax.SyntaxTree))
                     {
                         return false;
                     }
-                    var semanticModel = WellKnownTypeProvider.Compilation.GetSemanticModel(syntax.SyntaxTree);
+                    var semanticModel = compilation.GetSemanticModel(syntax.SyntaxTree);
                     foreach (var assignmentSyntax in syntax.DescendantNodes().OfType<AssignmentExpressionSyntax>())
                     {
                         if (semanticModel.GetOperation(assignmentSyntax) is not ISimpleAssignmentOperation assignment ||
                             assignment.Target is not IFieldReferenceOperation target ||
-                            !SymbolEqualityComparer.Default.Equals(target.Field, fieldReference.Field))
+                            !SymbolEqualityComparer.Default.Equals(target.Field, field))
                         {
                             continue;
                         }
 
                         if (assignment.Value is not IParameterReferenceOperation parameter ||
-                            !SymbolEqualityComparer.Default.Equals(parameter.Parameter.Type, serviceType) ||
+                            !SymbolEqualityComparer.Default.Equals(parameter.Parameter.Type, field.Type) ||
                             parameter.Parameter.ContainingSymbol is not IMethodSymbol constructor ||
                             constructor.MethodKind != MethodKind.Constructor)
                         {
@@ -1040,8 +1028,8 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
             }
 
             private static bool IsDestinationProperty(ISymbol? symbol) => symbol is IPropertySymbol property &&
-                (property.ContainingType.ToDisplayString() == "System.Net.Http.HttpClient" && property.Name == "BaseAddress" ||
-                 property.ContainingType.ToDisplayString() == "System.Net.Http.HttpRequestMessage" && property.Name == "RequestUri");
+                (property.Name == "BaseAddress" && property.ContainingType.ToDisplayString() == "System.Net.Http.HttpClient" ||
+                 property.Name == "RequestUri" && property.ContainingType.ToDisplayString() == "System.Net.Http.HttpRequestMessage");
 
             private void ProcessAssignmentOperation(IAssignmentOperation assignmentOperation)
             {
@@ -1075,24 +1063,24 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
             }
 
             /// <summary>
-            /// Determines if the instance method call returns tainted data.
+            /// Determines whether the call matches a sanitizer model.
             /// </summary>
             /// <param name="method">Instance method being called.</param>
+            /// <param name="receiverType">Type of the receiver at the call site.</param>
             /// <param name="arguments">Arguments passed to the method.</param>
-            /// <param name="taintedParameterNames">Names of the tainted input parameters.</param>
+            /// <param name="isTaintedParameter">Tests the cached value for a named input.</param>
             /// <param name="taintedParameterPairs">Matched pairs of "tainted parameter name" to "sanitized parameter name".</param>
             /// <returns>True if the method sanitizes data (returned or as an output parameter), false otherwise.</returns>
             private bool IsSanitizingMethod(
                 IMethodSymbol method,
                 INamedTypeSymbol? receiverType,
                 ImmutableArray<IArgumentOperation> arguments,
-                ISet<string> taintedParameterNames,
-                Lazy<(PointsToAnalysisResult? p, ValueContentAnalysisResult? v)> valueContentFactory,
+                Func<string, bool> isTaintedParameter,
                 [NotNullWhen(returnValue: true)] out PooledHashSet<(string, string)>? taintedParameterPairs)
             {
                 taintedParameterPairs = null;
-                PointsToAnalysisResult? pointsToAnalysisResult = null;
-                ValueContentAnalysisResult? valueContentAnalysisResult = null;
+                var pointsToAnalysisResult = DataFlowAnalysisContext.PointsToAnalysisResult;
+                var valueContentAnalysisResult = DataFlowAnalysisContext.ValueContentAnalysisResult;
                 // An extension block's receiver does not own its methods. Use
                 // the extension container contract, not a same-named receiver API.
                 var sanitizerType = method.ContainingType.IsExtension ? method.ContainingType : receiverType ?? method.ContainingType;
@@ -1114,7 +1102,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                                 taintedParameterPairs = PooledHashSet<(string, string)>.GetInstance();
                             }
 
-                            taintedParameterPairs.UnionWith(sourceToEnds.Where(s => taintedParameterNames.Contains(s.source)));
+                            taintedParameterPairs.UnionWith(sourceToEnds.Where(s => isTaintedParameter(s.source)));
                         }
                     }
 
@@ -1122,8 +1110,6 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                     {
                         if (sourceToEnds.Any() && methodMatcher(method.Name, arguments))
                         {
-                            pointsToAnalysisResult ??= valueContentFactory.Value.p;
-                            valueContentAnalysisResult ??= valueContentFactory.Value.v;
                             if (pointsToAnalysisResult == null || valueContentAnalysisResult == null)
                             {
                                 break;
@@ -1141,7 +1127,7 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                                 taintedParameterPairs = PooledHashSet<(string, string)>.GetInstance();
                             }
 
-                            taintedParameterPairs.UnionWith(sourceToEnds.Where(s => taintedParameterNames.Contains(s.source)));
+                            taintedParameterPairs.UnionWith(sourceToEnds.Where(s => isTaintedParameter(s.source)));
                         }
                     }
                 }

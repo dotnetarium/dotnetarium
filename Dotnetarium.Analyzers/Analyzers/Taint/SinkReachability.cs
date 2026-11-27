@@ -26,7 +26,6 @@ namespace Dotnetarium.Analyzers.Taint
         private readonly TaintedDataSymbolMap<SinkInfo> sinks;
         private readonly ConcurrentDictionary<ControlFlowGraph, bool> results = new();
         private readonly ConcurrentDictionary<IMethodSymbol, bool> sinkFreeMethods = new(SymbolEqualityComparer.Default);
-        private readonly ConcurrentDictionary<INamedTypeSymbol, ImmutableArray<SinkInfo>> sinkTypes = new(SymbolEqualityComparer.Default);
 
         internal SinkReachability(Compilation compilation, TaintedDataSymbolMap<SinkInfo> sinks)
         {
@@ -108,14 +107,11 @@ namespace Dotnetarium.Analyzers.Taint
             return true;
         }
 
-        private ImmutableArray<SinkInfo> SinkInfos(INamedTypeSymbol type) =>
-            sinkTypes.GetOrAdd(type, candidate => sinks.GetInfosForType(candidate).ToImmutableArray());
-
         private bool IsSinkMember(ISymbol member) =>
-            SinkInfos(member.ContainingType).Any(info => info.SinkProperties.Contains(member.MetadataName));
+            sinks.GetInfosForType(member.ContainingType).Any(info => info.SinkProperties.Contains(member.MetadataName));
 
         private bool IsSinkMethod(IMethodSymbol method) =>
-            SinkInfos(method.ContainingType).Any(info =>
+            sinks.GetInfosForType(method.ContainingType).Any(info =>
                 info.SinkMethodParameters.ContainsKey(method.Name) ||
                 // Conditional matchers can require caller argument information.
                 // Keep these types eligible rather than guessing a condition false.
@@ -131,6 +127,7 @@ namespace Dotnetarium.Analyzers.Taint
             private readonly object gate = new();
             private readonly HashSet<ISymbol> members = new(SymbolEqualityComparer.Default);
             private readonly List<Call> methods = new();
+            private readonly HashSet<Call> seenMethods = new();
             private readonly Queue<ControlFlowGraph> graphs = new();
             private IEnumerator<IOperation>? enumerator;
             private IOperation? next;
@@ -155,6 +152,8 @@ namespace Dotnetarium.Analyzers.Taint
                                 members.Clear();
                                 methods.Clear();
                                 methods.Capacity = 0;
+                                seenMethods.Clear();
+                                seenMethods.TrimExcess();
                                 currentGraph = null;
                                 return completed;
                             }
@@ -212,13 +211,18 @@ namespace Dotnetarium.Analyzers.Taint
 
             private void AddMethod(IMethodSymbol method, IOperation? receiver = null)
             {
-                methods.Add(new Call(method, SourceInterfaceImplementationMap.GetReceiverType(receiver, currentGraph!)));
+                // Reachability uses neither the arguments nor the source location.
+                // Only interface dispatch uses a receiver type to pick candidates.
+                var receiverType = method.ContainingType.TypeKind == TypeKind.Interface
+                    ? SourceInterfaceImplementationMap.GetReceiverType(receiver, currentGraph!) : null;
+                var call = new Call(method, receiverType);
+                if (seenMethods.Add(call)) methods.Add(call);
                 if (method.MethodKind == MethodKind.DelegateInvoke || method.ContainingType.TypeKind == TypeKind.Error)
                     unknown = true;
             }
         }
 
-        private sealed record Call(IMethodSymbol Method, ITypeSymbol? ReceiverType);
+        private readonly record struct Call(IMethodSymbol Method, ITypeSymbol? ReceiverType);
         private sealed record Summary(ImmutableArray<ISymbol> Members,
             ImmutableArray<Call> Methods, bool Unknown);
     }

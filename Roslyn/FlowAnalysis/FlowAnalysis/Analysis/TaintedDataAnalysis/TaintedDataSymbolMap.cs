@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the MIT license.  See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
@@ -16,6 +17,8 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
     internal class TaintedDataSymbolMap<TInfo> : IEquatable<TaintedDataSymbolMap<TInfo>?>
         where TInfo : ITaintedDataInfo
     {
+        private readonly ConcurrentDictionary<INamedTypeSymbol, ImmutableArray<TInfo>> resolvedInfos = new(SymbolEqualityComparer.Default);
+
         private static bool TryResolveDependencies(TInfo info, WellKnownTypeProvider wellKnownTypeProvider)
         {
             foreach (string dependency in info.DependencyFullTypeNames)
@@ -110,14 +113,16 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
         /// </summary>
         /// <param name="namedTypeSymbol">Type to find infos for.</param>
         /// <returns>Relevant infos for the given type.</returns>
-        public IEnumerable<TInfo> GetInfosForType(INamedTypeSymbol namedTypeSymbol)
+        public ImmutableArray<TInfo> GetInfosForType(INamedTypeSymbol namedTypeSymbol)
         {
             if (namedTypeSymbol == null)
             {
                 Debug.Fail("Expected non-null 'namedTypeSymbol'");
 
-                yield break;
+                return ImmutableArray<TInfo>.Empty;
             }
+
+            if (IsEmpty) return ImmutableArray<TInfo>.Empty;
 
             // C# 14 extension blocks expose members on a synthetic extension
             // declaration. Models name the enclosing static class, just as for
@@ -125,25 +130,26 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
             if (namedTypeSymbol.IsExtension && namedTypeSymbol.ContainingType is { } extensionContainer)
                 namedTypeSymbol = extensionContainer;
 
+            return resolvedInfos.TryGetValue(namedTypeSymbol, out var infos)
+                ? infos : resolvedInfos.GetOrAdd(namedTypeSymbol, ResolveInfos);
+        }
+
+        private ImmutableArray<TInfo> ResolveInfos(INamedTypeSymbol namedTypeSymbol)
+        {
+            ImmutableArray<TInfo>.Builder? result = null;
             if (!this.InterfaceInfos.IsEmpty)
             {
                 if (namedTypeSymbol.TypeKind == TypeKind.Interface
                     && this.InterfaceInfos.TryGetValue(namedTypeSymbol.OriginalDefinition, out var infoForInterfaceSymbol))
                 {
-                    foreach (var info in infoForInterfaceSymbol)
-                    {
-                        yield return info;
-                    }
+                    (result ??= ImmutableArray.CreateBuilder<TInfo>()).AddRange(infoForInterfaceSymbol);
                 }
 
                 foreach (INamedTypeSymbol interfaceSymbol in namedTypeSymbol.AllInterfaces)
                 {
                     if (this.InterfaceInfos.TryGetValue(interfaceSymbol.OriginalDefinition, out var infos))
                     {
-                        foreach (var info in infos)
-                        {
-                            yield return info;
-                        }
+                        (result ??= ImmutableArray.CreateBuilder<TInfo>()).AddRange(infos);
                     }
                 }
             }
@@ -154,13 +160,12 @@ namespace Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis
                 {
                     if (this.ConcreteInfos.TryGetValue(typeSymbol.OriginalDefinition, out var infos))
                     {
-                        foreach (var info in infos)
-                        {
-                            yield return info;
-                        }
+                        (result ??= ImmutableArray.CreateBuilder<TInfo>()).AddRange(infos);
                     }
                 }
             }
+
+            return result?.ToImmutable() ?? ImmutableArray<TInfo>.Empty;
         }
 
         public bool Equals(TaintedDataSymbolMap<TInfo>? other)

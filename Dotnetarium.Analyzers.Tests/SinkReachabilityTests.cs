@@ -194,6 +194,26 @@ public sealed class SinkReachabilityTests
     }
 
     [Fact]
+    public void Interface_calls_keep_distinct_receiver_bounds_in_the_same_root()
+    {
+        var compilation = Compile("""
+            using System.Diagnostics;
+            public interface IRunner { void Run(string value); }
+            public sealed class Safe : IRunner { public void Run(string value) {} }
+            public sealed class Unsafe : IRunner { public void Run(string value) => Process.Start(value); }
+            public static class Demo
+            {
+                public static void Both(Safe first, Unsafe second, string value)
+                {
+                    ((IRunner)first).Run(value);
+                    ((IRunner)second).Run(value);
+                }
+            }
+            """);
+        Assert.True(Checker(compilation).MayReachSink(Graph(compilation, "Demo", "Both")));
+    }
+
+    [Fact]
     public void Includes_lowered_foreach_disposal_and_move_next_calls()
     {
         var compilation = Compile("""

@@ -18,6 +18,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
     private readonly Dictionary<string, List<ProjectSpec>> specs = new(ProjectLoader.PathComparer);
     private readonly HashSet<string> visited = new(ProjectLoader.PathComparer);
     private readonly List<string> packRoots = FindPackRoots();
+    private readonly Dictionary<(string Name, string Framework), string[]?> referencePacks = new();
     private readonly ScanSelection selection = selection ?? new();
     private readonly Dictionary<string, List<PortableExecutableReference>> metadata = new(ProjectLoader.PathComparer);
     private readonly Dictionary<string, string[]> sourceInventories = new(ProjectLoader.PathComparer);
@@ -136,10 +137,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
                     $"{Path.GetFileNameWithoutExtension(spec.Path)} ({spec.Framework})",
                     spec.Properties.GetValueOrDefault("AssemblyName", Path.GetFileNameWithoutExtension(spec.Path)), LanguageNames.CSharp,
                     filePath: spec.Path, compilationOptions: compilationOptions,
-                    parseOptions: new CSharpParseOptions(language,
-                        documentationMode: IsTrue(spec.Properties.GetValueOrDefault("GenerateDocumentationFile")) ||
-                            !string.IsNullOrEmpty(spec.Properties.GetValueOrDefault("DocumentationFile")) ? DocumentationMode.Diagnose : DocumentationMode.Parse,
-                        preprocessorSymbols: symbols),
+                    parseOptions: new CSharpParseOptions(language, documentationMode: DocumentationMode.Parse, preprocessorSymbols: symbols),
                     metadataReferences: ReadReferences(spec, inputs)));
                 foreach (var source in ReadSources(spec))
                     solution = solution.AddDocument(DocumentId.CreateNewId(spec.Id), Path.GetFileName(source),
@@ -995,6 +993,15 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
 
     private void AddPack(string name, string framework, string project, HashSet<string> paths)
     {
+        var key = (name, framework);
+        if (!referencePacks.TryGetValue(key, out var files))
+            referencePacks[key] = files = FindPack(name, framework);
+        if (files == null) Warn(project, "reference-pack", $"Missing {name} reference pack for {framework}; host runtime assemblies are not substituted.");
+        else paths.UnionWith(files);
+    }
+
+    private string[]? FindPack(string name, string framework)
+    {
         var major = framework == "netstandard2.1" ? 2 : int.Parse(framework[3..framework.IndexOf('.')]);
         var minor = framework == "netstandard2.1" ? 1 : 0;
         var candidates = packRoots.SelectMany(root => new[] { Path.Combine(root, name), Path.Combine(root, name.ToLowerInvariant()) })
@@ -1004,8 +1011,7 @@ internal sealed class DirectProjectLoader(ScanReport report, ScanSelection? sele
             .Where(candidate => candidate.Version?.Major == major && candidate.Version.Minor == minor)
             .OrderByDescending(candidate => candidate.Version);
         var reference = candidates.Select(candidate => Path.Combine(candidate.Path, "ref", framework)).FirstOrDefault(Directory.Exists);
-        if (reference == null) Warn(project, "reference-pack", $"Missing {name} reference pack for {framework}; host runtime assemblies are not substituted.");
-        else foreach (var file in Directory.EnumerateFiles(reference, "*.dll")) paths.Add(file);
+        return reference == null ? null : Directory.GetFiles(reference, "*.dll");
     }
 
     private IEnumerable<string> ReadSources(ProjectSpec spec)

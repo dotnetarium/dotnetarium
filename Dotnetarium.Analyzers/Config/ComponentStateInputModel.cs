@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using Analyzer.Utilities;
 using Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis;
@@ -11,19 +12,20 @@ using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using Dotnetarium.Analyzers;
 using Dotnetarium.Analyzers.Taint;
+using static Dotnetarium.Config.ComponentExecutionModel;
 
 namespace Dotnetarium.Config
 {
     /// <summary>Context-specific component state summaries with explicit execution evidence.</summary>
     internal sealed class ComponentStateInputModel
     {
+        private static readonly ConditionalWeakTable<Compilation, System.Lazy<ComponentIndex>> Indexes = new();
         private readonly Compilation compilation;
         private readonly AnalyzerOptions options;
         private readonly TaintConfiguration configuration;
         private readonly SinkKind kind;
         private readonly ComponentExecutionModel execution;
         private readonly HashSet<IMethodSymbol> callbacks = new(SymbolEqualityComparer.Default);
-        private readonly HashSet<IMethodSymbol> renders = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<ISymbol, TaintedDataAbstractValue> values = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<ISymbol, Dictionary<ISymbol, TaintedDataAbstractValue>> collectionValues = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<IMethodSymbol, ControlFlowGraph?> graphs = new(SymbolEqualityComparer.Default);
@@ -36,9 +38,8 @@ namespace Dotnetarium.Config
         private bool computing;
         internal bool HasIncompleteAnalysis { get; private set; }
         private readonly Dictionary<INamedTypeSymbol, ComponentGroup> groups = new(SymbolEqualityComparer.Default);
-        private readonly List<(INamedTypeSymbol Parent, INamedTypeSymbol Child)> links = new();
         private readonly HashSet<INamedTypeSymbol> callbackStateTypes = new(SymbolEqualityComparer.Default);
-        private readonly HashSet<ISymbol> parameterTargets = new(SymbolEqualityComparer.Default);
+        private readonly ImmutableHashSet<ISymbol> parameterTargets;
 
         private sealed class ComponentGroup
         {
@@ -57,6 +58,36 @@ namespace Dotnetarium.Config
             this.compilation = compilation; this.options = options; this.configuration = configuration;
             this.kind = kind; this.execution = execution ?? new ComponentExecutionModel(compilation, options);
             dependencies = new ComponentStateDependencies(compilation, GetGraph);
+            var index = Indexes.GetValue(compilation, current => new System.Lazy<ComponentIndex>(() => BuildIndex(current))).Value;
+            var isXss = kind == (SinkKind)(int)TaintType.CrossSiteScripting;
+            foreach (var (method, lifecycle) in index.Callbacks)
+                if (lifecycle ? !isXss && this.execution.HasServerLifecycle(method.ContainingType) :
+                    isXss || this.execution.HasServerCallbacks(method.ContainingType))
+                    callbacks.Add(method);
+            foreach (var callback in callbacks)
+                for (var type = callback.ContainingType; type != null && IsComponent(type); type = type.BaseType)
+                    callbackStateTypes.Add(type.OriginalDefinition);
+            foreach (var pair in index.RenderGraphs)
+                graphs.Add(pair.Key, pair.Value);
+            parameterTargets = index.ParameterTargets;
+            BuildGroups(index.Renders, index.Links);
+        }
+
+        // Execution policy and taint summaries are rule-specific. Discover
+        // immutable callback sites and render dependencies once per compilation.
+        private sealed record ComponentIndex(
+            ImmutableArray<(IMethodSymbol Method, bool Lifecycle)> Callbacks,
+            ImmutableArray<IMethodSymbol> Renders,
+            ImmutableArray<(INamedTypeSymbol Parent, INamedTypeSymbol Child)> Links,
+            ImmutableHashSet<ISymbol> ParameterTargets,
+            ImmutableDictionary<IMethodSymbol, ControlFlowGraph?> RenderGraphs);
+
+        private static ComponentIndex BuildIndex(Compilation compilation)
+        {
+            var callbacks = ImmutableArray.CreateBuilder<(IMethodSymbol, bool)>();
+            var renders = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
+            var links = ImmutableArray.CreateBuilder<(INamedTypeSymbol Parent, INamedTypeSymbol Child)>();
+            var parameterTargets = ImmutableHashSet.CreateBuilder<ISymbol>(SymbolEqualityComparer.Default);
             foreach (var tree in compilation.SyntaxTrees)
             {
                 var model = compilation.GetSemanticModel(tree);
@@ -91,21 +122,18 @@ namespace Dotnetarium.Config
                             operation.TargetMethod.Name is not ("Create" or "CreateBinder" or "CreateInferredEventCallback")) continue;
                         foreach (var argument in operation.Arguments)
                             foreach (var candidate in argument.Value.DescendantsAndSelf())
-                                if (candidate is IAnonymousFunctionOperation lambda && HasBrowserSources(lambda.Symbol.ContainingType)) callbacks.Add(lambda.Symbol);
-                                else if (candidate is IMethodReferenceOperation method && HasBrowserSources(method.Method.ContainingType)) callbacks.Add(method.Method);
+                                if (candidate is IAnonymousFunctionOperation lambda) callbacks.Add((lambda.Symbol, false));
+                                else if (candidate is IMethodReferenceOperation method) callbacks.Add((method.Method, false));
                     }
                 }
                 foreach (var syntax in tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>())
-                    if (model.GetDeclaredSymbol(syntax) is IMethodSymbol method && method.IsOverride && IsComponent(method.ContainingType))
+                    if (syntax.Identifier.ValueText is "BuildRenderTree" or "OnInitialized" or "OnInitializedAsync" or "OnParametersSet" or "OnParametersSetAsync" &&
+                        model.GetDeclaredSymbol(syntax) is IMethodSymbol method && method.IsOverride && IsComponent(method.ContainingType))
                     {
                         if (method.Name == "BuildRenderTree") renders.Add(method);
-                        else if (kind != (SinkKind)(int)TaintType.CrossSiteScripting && execution.HasServerLifecycle(method.ContainingType) &&
-                            method.Name is "OnInitialized" or "OnInitializedAsync" or "OnParametersSet" or "OnParametersSetAsync") callbacks.Add(method);
+                        else callbacks.Add((method, true));
                     }
             }
-            foreach (var callback in callbacks)
-                for (var type = callback.ContainingType; type != null && IsComponent(type); type = type.BaseType)
-                    callbackStateTypes.Add(type.OriginalDefinition);
             var potentialLinks = new Dictionary<INamedTypeSymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
             foreach (var (parent, child) in links)
             {
@@ -114,10 +142,13 @@ namespace Dotnetarium.Config
                 children.Add(child);
             }
             links.Clear();
+            var renderGraphs = ImmutableDictionary.CreateBuilder<IMethodSymbol, ControlFlowGraph?>(SymbolEqualityComparer.Default);
             foreach (var render in renders)
             {
                 var parent = render.ContainingType.OriginalDefinition;
-                if (!potentialLinks.TryGetValue(parent, out var children) || GetGraph(render) is not { } graph) continue;
+                if (!potentialLinks.TryGetValue(parent, out var children)) continue;
+                var graph = renderGraphs[render] = FrameworkGraph.ForMethod(render, compilation);
+                if (graph == null) continue;
                 var linkedChildren = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
                 foreach (var (component, property, _) in ParameterWrites(graph))
                 {
@@ -127,11 +158,9 @@ namespace Dotnetarium.Config
                     if (linkedChildren.Add(child)) links.Add((parent, child));
                 }
             }
-            BuildGroups();
+            return new ComponentIndex(callbacks.ToImmutable(), renders.ToImmutableArray(), links.ToImmutable(),
+                parameterTargets.ToImmutable(), renderGraphs.ToImmutable());
         }
-
-        private bool HasBrowserSources(INamedTypeSymbol type) =>
-            kind == (SinkKind)(int)TaintType.CrossSiteScripting || execution.HasServerCallbacks(type);
 
         private static IEnumerable<(INamedTypeSymbol Component, IPropertySymbol Property, IOperation Value)> ParameterWrites(ControlFlowGraph graph)
         {
@@ -161,7 +190,8 @@ namespace Dotnetarium.Config
             }
         }
 
-        private void BuildGroups()
+        private void BuildGroups(ImmutableArray<IMethodSymbol> renders,
+            ImmutableArray<(INamedTypeSymbol Parent, INamedTypeSymbol Child)> links)
         {
             // A child depends on parents that supply its parameters. The parent
             // does not depend on its children or the other parents of a shared
@@ -551,11 +581,5 @@ namespace Dotnetarium.Config
             return graph;
         }
 
-        private static bool IsComponent(INamedTypeSymbol? type)
-        {
-            for (var current = type; current != null; current = current.BaseType)
-                if (current.ToDisplayString() == "Microsoft.AspNetCore.Components.ComponentBase") return true;
-            return false;
-        }
     }
 }

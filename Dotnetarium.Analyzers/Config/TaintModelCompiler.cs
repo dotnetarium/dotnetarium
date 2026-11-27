@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Analyzer.Utilities;
 using Analyzer.Utilities.Extensions;
 using Analyzer.Utilities.FlowAnalysis.Analysis.TaintedDataAnalysis;
@@ -45,15 +46,13 @@ namespace Dotnetarium.Config
 
     internal sealed class TaintConfiguration
     {
+        private static readonly ConditionalWeakTable<Compilation, FrameworkInputs> FrameworkInputsCache = new();
         private readonly ConfigData model;
         private readonly bool remoteEnabled;
         private readonly bool localEnabled;
         private readonly Compilation compilation;
-        private readonly Lazy<ImmutableDictionary<IMethodSymbol, bool>> minimalApiHandlers;
-        private readonly Lazy<SignalRInputModel> signalRInputs;
-        private readonly Lazy<MessageInputModel> messageInputs;
+        private readonly FrameworkInputs frameworkInputs;
         private readonly BinderInputModel binderInputs;
-        private readonly Lazy<EndpointFilterInputModel> endpointFilters;
         private readonly ConcurrentDictionary<SinkKind, Lazy<ComponentStateInputModel>> componentInputs = new();
         private readonly ComponentExecutionModel componentExecution;
         private readonly AnalyzerOptions options;
@@ -72,14 +71,29 @@ namespace Dotnetarium.Config
             remoteEnabled = model.ThreatModels == null || model.ThreatModels.Contains(SourceScope.Remote);
             localEnabled = model.ThreatModels?.Contains(SourceScope.Local) == true;
             this.compilation = compilation;
-            minimalApiHandlers = new Lazy<ImmutableDictionary<IMethodSymbol, bool>>(FindMinimalApiHandlers);
-            signalRInputs = new Lazy<SignalRInputModel>(() => new SignalRInputModel(compilation));
-            messageInputs = new Lazy<MessageInputModel>(() => new MessageInputModel(compilation));
+            frameworkInputs = FrameworkInputsCache.GetValue(compilation, current => new FrameworkInputs(current));
             binderInputs = new BinderInputModel(compilation, options, this);
-            endpointFilters = new Lazy<EndpointFilterInputModel>(() => new EndpointFilterInputModel(compilation));
             this.options = options;
             componentExecution = new ComponentExecutionModel(compilation, options);
             types = WellKnownTypeProvider.GetOrCreate(compilation);
+        }
+
+        // These indexes depend only on bound syntax in the compilation. Rules
+        // still apply their own source scope and entry points to these facts.
+        private sealed class FrameworkInputs
+        {
+            internal readonly Lazy<ImmutableDictionary<IMethodSymbol, bool>> MinimalApiHandlers;
+            internal readonly Lazy<SignalRInputModel> SignalR;
+            internal readonly Lazy<MessageInputModel> Messages;
+            internal readonly Lazy<EndpointFilterInputModel> EndpointFilters;
+
+            internal FrameworkInputs(Compilation compilation)
+            {
+                MinimalApiHandlers = new(() => FindMinimalApiHandlers(compilation));
+                SignalR = new(() => new SignalRInputModel(compilation));
+                Messages = new(() => new MessageInputModel(compilation));
+                EndpointFilters = new(() => new EndpointFilterInputModel(compilation));
+            }
         }
 
         public TaintedDataSymbolMap<SourceInfo> GetSourceSymbolMap(SinkKind kind) =>
@@ -157,7 +171,7 @@ namespace Dotnetarium.Config
                     .ToImmutableHashSet();
                 if (remoteEnabled && type == "Microsoft.AspNetCore.Http.EndpointFilterInvocationContext")
                     methods = methods.Add(((name, arguments) => name == "GetArgument" && arguments.Length == 1 &&
-                        endpointFilters.Value.GetBoundParameters(arguments[0].Parent).Any(parameter => IsMinimalApiInputParameter(parameter, compilation)),
+                        frameworkInputs.EndpointFilters.Value.GetBoundParameters(arguments[0].Parent).Any(parameter => IsMinimalApiInputParameter(parameter, compilation)),
                         ImmutableHashSet<string>.Empty.Add(TaintedTargetValue.Return)));
                 if (remoteEnabled && type == "System.IO.File" && kind == (SinkKind)(int)TaintType.CrossSiteScripting && model.ExperimentalFilePersistence == true)
                     methods = methods.Add(((name, arguments) => StoredFiles.IsUntrustedRead(name, arguments),
@@ -222,9 +236,9 @@ namespace Dotnetarium.Config
                             kind == (SinkKind)(int)TaintType.ServerSideRequestForgery && property.Property.Name is "BaseUri" or "Uri" &&
                             componentExecution.IsServerNavigation(property)) ||
                         (type == "System.Object" && IsMixedAggregateRequestProperty(property)) ||
-                        endpointFilters.Value.GetBoundParameters(property).Any(parameter => IsMinimalApiInputParameter(parameter, compilation)) ||
-                        messageInputs.Value.IsPropertyInput(property)),
-                    fieldReferenceMatcher: field => remoteEnabled && messageInputs.Value.IsFieldInput(field),
+                        frameworkInputs.EndpointFilters.Value.GetBoundParameters(property).Any(parameter => IsMinimalApiInputParameter(parameter, compilation)) ||
+                        frameworkInputs.Messages.Value.IsPropertyInput(property)),
+                    fieldReferenceMatcher: field => remoteEnabled && frameworkInputs.Messages.Value.IsFieldInput(field),
                     propertyValueProvider: property => remoteEnabled ? GetBinderPropertyValue(property, kind) ??
                         GetComponentPropertyValue(property, kind) : null,
                     fieldValueProvider: field => remoteEnabled ? GetBinderMemberValue(field.Field, field.Instance, kind) ??
@@ -246,7 +260,8 @@ namespace Dotnetarium.Config
 
         private TaintedDataAbstractValue? GetComponentPropertyValue(IPropertyReferenceOperation property, SinkKind kind)
         {
-            if (property.Property.ContainingType.ToDisplayString() == "Microsoft.AspNetCore.Components.ChangeEventArgs")
+            if (property.Property.ContainingType.Name == "ChangeEventArgs" &&
+                property.Property.ContainingType.ToDisplayString() == "Microsoft.AspNetCore.Components.ChangeEventArgs")
                 return ComponentInputs(kind).GetPropertyInput(property);
             if (!ComponentExecutionModel.IsComponent(property.Property.ContainingType))
             {
@@ -360,9 +375,9 @@ namespace Dotnetarium.Config
             {
                 "GodotRpc" => GameRpcInputModel.IsGodotInput(parameter),
                 "UnityServerRpc" => GameRpcInputModel.IsUnityServerInput(parameter),
-                "SignalR" => signalRInputs.Value.IsInput(parameter),
+                "SignalR" => frameworkInputs.SignalR.Value.IsInput(parameter),
                 "AzureFunctions" => IsAzureFunctionInput(parameter, method),
-                "Messaging" => messageInputs.Value.IsParameterInput(parameter),
+                "Messaging" => frameworkInputs.Messages.Value.IsParameterInput(parameter),
                 "Blazor" => ComponentExecutionModel.IsComponent(method.ContainingType) && ComponentInputs(kind).IsParameterInput(parameter),
                 "CommandLine" => SymbolEqualityComparer.Default.Equals(method, compilation.GetEntryPoint(default)) &&
                     parameter.Type is IArrayTypeSymbol { ElementType.SpecialType: SpecialType.System_String },
@@ -448,7 +463,7 @@ namespace Dotnetarium.Config
                 IsMinimalApiMapMethod(compilation.GetSemanticModel(invocation.SyntaxTree)
                     .GetSymbolInfo(invocation).Symbol as IMethodSymbol);
             var isNamedHandler = parameter.ContainingSymbol is IMethodSymbol { MethodKind: not MethodKind.AnonymousFunction } owner &&
-                minimalApiHandlers.Value.ContainsKey(owner);
+                frameworkInputs.MinimalApiHandlers.Value.ContainsKey(owner);
             return isLambdaHandler || isNamedHandler;
         }
 
@@ -462,7 +477,7 @@ namespace Dotnetarium.Config
                 compilation.GetSemanticModel(invocation.SyntaxTree).GetSymbolInfo(invocation).Symbol is IMethodSymbol map)
                 return SupportsInferredBody(map);
             return parameter.ContainingSymbol is IMethodSymbol owner &&
-                minimalApiHandlers.Value.TryGetValue(owner, out var allowed) && allowed;
+                frameworkInputs.MinimalApiHandlers.Value.TryGetValue(owner, out var allowed) && allowed;
         }
 
         private static bool SupportsInferredBody(IMethodSymbol map) => map.Name is "MapPost" or "MapPut" or "MapPatch";
@@ -512,7 +527,7 @@ namespace Dotnetarium.Config
         private TaintedDataAbstractValue? GetBinderMemberValue(ISymbol member, IOperation? instance, SinkKind kind)
         {
             var direct = MessageInputModel.StableParameter(instance, compilation);
-            var parameters = direct != null ? new[] { direct } : endpointFilters.Value.GetBoundParameters(instance);
+            var parameters = direct != null ? new[] { direct } : frameworkInputs.EndpointFilters.Value.GetBoundParameters(instance);
             // Ordinary DTO properties cannot be custom-binder inputs. Check
             // their type before triggering compilation-wide handler discovery.
             var values = parameters.Where(parameter => parameter.Type is INamedTypeSymbol bound && HasCustomRequestBinder(bound) &&
@@ -572,7 +587,7 @@ namespace Dotnetarium.Config
         private static bool HasAttribute(ISymbol symbol, string name) =>
             symbol.GetAttributes().Any(attribute => attribute.AttributeClass?.ToDisplayString() == name);
 
-        private ImmutableDictionary<IMethodSymbol, bool> FindMinimalApiHandlers()
+        private static ImmutableDictionary<IMethodSymbol, bool> FindMinimalApiHandlers(Compilation compilation)
         {
             var handlers = ImmutableDictionary.CreateBuilder<IMethodSymbol, bool>(SymbolEqualityComparer.Default);
             foreach (var tree in compilation.SyntaxTrees)

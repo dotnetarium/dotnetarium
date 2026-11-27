@@ -31,6 +31,85 @@ Disposal tracking, configured interprocedural depth and framework-specific sourc
 models remain enabled. Ordinary code is not excluded because its directory or
 class happens to be named `Migration`.
 
+## .NET 11 checkout performance follow-up
+
+Component callback sites, forwarding edges and prerequisite render CFGs are
+indexed once per compilation. Each rule still applies its own browser execution
+policy and computes state with its configured source and sanitizer maps. Minimal
+API handlers, endpoint-filter bindings, SignalR registration facts and incoming
+messaging registrations now also share compilation-scoped indexes. They contain
+bound program facts and expire with the compilation.
+
+Delegate targets are indexed by return shape and arity. Optional and `params`
+methods remain eligible through a separate lookup. Sink reachability visits each
+distinct method and interface receiver bound once per structural summary. A
+source, sanitizer or sink map resolves inherited models once for a given type.
+The taint visitor caches constructor-injected field classification and checks
+argument taint only when a matching transfer or sanitizer needs it.
+
+No-build loading overlaps the initial configuration-file scan, reuses reference
+pack inventories, and parses XML documentation without diagnostics. Razor SDK
+probes are shared by nearest `global.json` scope, with a directory-specific probe
+for linked paths. The generator driver produces the sources without constructing
+an intermediate compilation that the workspace would discard.
+
+### No-build comparison
+
+Sequential Release/net10.0 scans on Linux, with a four-CPU quota, SDK 11.0.100,
+and remote and local sources enabled. Baseline `ab08234` and the candidate ran
+against the same restored checkouts. Sarifintown (`c30a5d0`) and LANCommander
+(`4a2eef7e`) still report degraded inputs. The vulnerable app (`60d060f`) has
+available inputs and budget notices. No analyzer failures occurred.
+
+| Application | Fast median wall seconds, baseline → candidate | Fast median project-stage wall seconds | Fast cutoff range | Fast findings |
+| --- | ---: | ---: | ---: | ---: |
+| Vulnerable app | 16.42 → 15.08 | 11.40 → 10.13 | 74–75 → 74–75 | 33–34 → 33–34 |
+| Sarifintown | 8.80 → 7.52 | 5.59 → 4.48 | 243 → 243 | 0 → 0 |
+| LANCommander | 61.51 → 58.12 | 49.65 → 47.05 | 1,415–1,447 → 1,440–1,444 | 14 → 14 |
+
+The fast medians use three or four baseline runs and two candidate runs per
+application. Finding locations and messages had the same union across repeats.
+One vulnerable-app finding appeared intermittently on both builds. One candidate
+fast run produced a shorter code flow for an otherwise identical finding. The
+baseline flow appeared in the other candidate repeat. LANCommander reached
+1,134–1,138 depth stops and 306 work stops on the candidate, versus 1,123–1,141
+and 292–306 on the baseline. Depth remains its largest cutoff family.
+
+| Application | Full wall seconds, baseline → candidate | Full cutoffs | Full findings |
+| --- | ---: | ---: | ---: |
+| Vulnerable app | 17.14 → 14.76 | 43 → 43 | 42 → 42 |
+| Sarifintown | 9.38 → 8.14 | 221 → 221 | 0 → 0 |
+| LANCommander | 68.14 → 67.02 | 1,268–1,300 → 1,287–1,302 | 15 → 15 |
+
+Full uses one pair per smaller application. The LANCommander median uses two
+pairs, with the order reversed for the second pair. Its baseline and candidate
+ranges overlap at 64.33–71.96 and 65.04–69.00 seconds respectively. All full
+finding locations and messages matched. On LANCommander, one code flow selected
+a different read of the same archive entry property as its source.
+
+### Exception-path post-pass
+
+A temporary instrumented fast LANCommander scan recorded 1,191 points-to
+post-pass visits and 2,106 taint post-pass visits. The work inside those passes
+took 10.38 of 36.24 summed dataflow worker-seconds, about 29%, with nested passes
+counted once in the timing. The sample includes compilations with degraded
+inputs. A synthetic `finally` can still call source-defined disposal logic.
+Any pruning needs to preserve catch and finally reachability, changes to tracked
+state, and calls made during disposal.
+
+### Remaining candidates
+
+| Candidate | Evidence and constraints |
+| --- | --- |
+| Multi-rule dispatch | Eleven analyzer types register independent actions. The built-in JSON entries align for SQL, command, XPath, dynamic code, XML entity and deserialization. Compiled sources also close over binder and component summaries. A coordinator needs equal resolved models, equal effective per-rule EditorConfig flow options, and independent reporting and budget accounting. SSRF destination tracking writes to the taint state. Combined sink reporting also needs to associate each origin with its rule. |
+| Points-to reuse across rules | Completed root results already share a weak cache with a 32-result recent window. Reuse replays logical work so warm caches preserve per-rule budgets. Measure recomputation after eviction before committing to a coordinator for this reason. |
+| Completed taint invocations | The framework restores exit state, returns, exceptions, and nested results. The taint visitor merges callee sink records and keeps file-system paths in analysis entities. Component source providers can gain origins during the parent analysis, outside the cached invocation input. Validate those dependencies as well as receiver, ref/out and capture changes before enabling reuse. |
+| Additional reachability pruning | A sink type-name scan can miss interface dispatch, aliases and implicit calls such as disposal. Delegate discovery still binds possible method groups, while the arity index limits later matching. Source proofs that consult binder or component values can change on a retry. |
+| Compiler diagnostics and memory | `GetAllDiagnosticsAsync` also requests method-body compiler errors. Keep that coverage when testing warning suppression or nullable-flow changes, and account for projects that promote compiler warnings to errors. Project references keep parts of the workspace compilation graph alive. Projecting diagnostics would reduce retained locations but would need a separate compilation-lifetime change to address the project graph. |
+| Loader and Razor parallelism | Reference-pack inventories and SDK probes are shared. `GlobMatches` still rebuilds the escaped pattern, and property evaluation makes temporary XML documents to preserve item order and origin. Batch document loading and parallel Razor generation need separate measurements. A dependent Razor project needs its dependencies' generated documents first. Generated texts still become workspace documents with their own syntax trees. |
+| Multi-targeted projects and profiles | Identical source text can bind differently by framework, and generated code and analyzer options can differ. The CLI already has explicit `--framework` and `--analysis-profile` choices. Earlier 1,000-work measurements missed findings recovered at 2,500. [Budget comparison](performance-budget-matrix.md) |
+| SARIF | Mapped Razor locations can be computed repeatedly, and fingerprints reopen source files. Both are independent of taint work. Existing smoke tests require method-level budget notifications, so rolling those notifications up would change the reporting contract. |
+
 ## How the main scanner differs
 
 The tool reconstructs SDK inputs by default, without executing custom targets.

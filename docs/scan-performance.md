@@ -212,6 +212,78 @@ with the same source and sink. One LANCommander flow selected the adjacent
 read of the same archive entry property. Sarifintown and LANCommander reported
 degraded inputs on both builds.
 
+### Max profile, MSBuild project mode, and build-time analyzers
+
+This follow-up uses the same scanner builds, restored checkouts, Release
+configuration, `net10.0`, and remote and local sources. The no-build `max`
+profile uses depth 10 and 10,000 work units. Each application ran twice on
+each build, with the order reversed for the second pair.
+
+| No-build `max` | Median wall seconds, baseline → combined | Cutoffs, baseline → combined | Findings on each build |
+| --- | ---: | ---: | ---: |
+| Vulnerable app | 17.28 → 14.28 | 12 → 11 | 42 |
+| Sarifintown | 10.58 → 8.68 | 196 → 196 | 0 |
+| LANCommander | 76.36 → 65.93 | 1,190–1,192 → 1,183–1,199 | 15 |
+
+Finding locations, messages and sources matched. One LANCommander witness
+used a different call site to the same method between the same source and
+sink. Sarifintown and LANCommander continued to report degraded inputs in
+no-build mode.
+
+The `--project` runs use MSBuild design-time loading. LANCommander `full` and
+`max` use two pairs with reversed build order. The vulnerable app's `fast`
+result uses three pairs to check a finding difference. The other rows use
+one pair. Wall times are medians where there were repeats.
+
+| MSBuild project mode | Profile | Wall seconds, baseline → combined | Cutoffs, baseline → combined | Findings, baseline → combined |
+| --- | --- | ---: | ---: | ---: |
+| Vulnerable app | Fast | 16.48 → 15.19 | 72–74 → 73–74 | 34 → 33 |
+| Vulnerable app | Full | 17.70 → 15.96 | 43 → 42 | 42 → 42 |
+| Vulnerable app | Max | 17.97 → 16.18 | 12 → 11 | 42 → 42 |
+| Sarifintown | Fast | 10.99 → 10.36 | 243 → 243 | 0 → 0 |
+| Sarifintown | Full | 12.29 → 10.81 | 221 → 221 | 0 → 0 |
+| Sarifintown | Max | 13.96 → 12.48 | 196 → 196 | 0 → 0 |
+| LANCommander | Fast | 99.05 → 85.86 | 3,578 → 3,609 | 14 → 14 |
+| LANCommander | Full | 110.32 → 91.35 | 3,376–3,402 → 3,404–3,417 | 15 → 15 |
+| LANCommander | Max | 115.19 → 92.82 | 3,166–3,168 → 3,136–3,143 | 15 → 15 |
+
+The baseline reported `DNA0011` at `XssFileUpload.razor:244` in all three
+MSBuild `fast` runs. It was absent from all three combined runs. Both builds
+reported it in `full` and `max`. This finding also varied across earlier
+no-build `fast` repeats. Two additional MSBuild `fast` runs per intermediate
+build reported it twice at `0ff4d5b` and once at `125945e`. Other finding
+identities matched in the paired baseline and combined runs. Some code flows
+chose different intermediate calls or adjacent reads of the same archive
+entry property.
+
+All CLI scans completed without analyzer failures. Both builds reported
+available project-mode inputs for the vulnerable app and Sarifintown, and
+degraded inputs for LANCommander. LANCommander's median `max` project stage
+fell from 88.15 to 63.95 seconds.
+
+For build-time analysis, copies of the vulnerable app reference the actual
+`Dotnetarium.Analyzers` NuGet packages and use the package's default `fast`
+profile. The two packages used separate NuGet caches. The package assemblies were
+verified against the respective scanner builds. Two trials per package used
+opposite package order. Each trial used `dotnet build -c Release --no-restore`
+with a fresh C# compiler server, then reused that server after a comment-only
+source edit. A third invocation used identical inputs to check MSBuild's
+up-to-date behavior.
+
+| Package build phase | Median build wall seconds, baseline → combined | Median accumulated Dotnetarium analyzer seconds |
+| --- | ---: | ---: |
+| First build, fresh compiler server | 11.95 → 11.31 | 15.24 → 12.46 |
+| Second build, warm recompilation | 10.17 → 8.24 | 21.24 → 13.57 |
+| Unchanged inputs | 1.13 → 1.08 | Compiler skipped |
+
+The analyzer column is the compiler's `ReportAnalyzer` total for the package.
+It sums overlapping work and can exceed build wall time. The first two
+invocations ran the compiler and loaded the package in all trials. All builds
+succeeded without analyzer failures. Both packages reported 42 compiler-SARIF
+security diagnostics on each first build. One combined warm build reported 41
+because it emitted one fewer callback trace for the existing `DNA0011` sink at
+`BrokenJwt.razor:159`. Both packages still reported the same set of sink locations.
+
 ### Remaining candidates
 
 | Candidate | Evidence and constraints |
